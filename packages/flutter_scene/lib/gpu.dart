@@ -4,8 +4,9 @@
 /// flutter_scene ships an internal `flutter_gpu` shim (a WebGL2 backend on
 /// web; a zero-cost re-export of `package:flutter_gpu` on native). Most of it
 /// is implementation detail. This library exposes only the handful of types a
-/// caller needs to author a custom material: load a compiled shader bundle and
-/// hand its fragment shader to a [ShaderMaterial].
+/// caller needs to author a custom material: load a compiled shader bundle,
+/// hand its fragment shader to a [ShaderMaterial], and name the pass and
+/// context types a `Material` override binds against.
 ///
 /// ```dart
 /// import 'package:flutter_scene/gpu.dart' as gpu;
@@ -22,8 +23,12 @@ export 'src/generated_assets/generated_asset_lookup.dart'
 
 export 'src/gpu/gpu.dart'
     show
+        GpuContext,
+        RenderPass,
         Shader,
         ShaderLibrary,
+        StorageMode,
+        gpuContext,
         loadShaderLibraryAsync,
         Texture,
         SamplerOptions,
