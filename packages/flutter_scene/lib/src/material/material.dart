@@ -516,7 +516,6 @@ abstract class Material {
   /// The radiance-layout variant wins over the shadow one: a shadow variant
   /// in the wrong layout would be handed a texture its sampler cannot read,
   /// while dropping the no-shadow variant only costs dead shadow code.
-  @internal
   gpu.Shader fragmentShaderForLighting(Lighting lighting) {
     final noShadow = usesNoShadowVariant(lighting);
     if (usesRadianceCubeVariant(lighting)) {
@@ -536,7 +535,6 @@ abstract class Material {
   /// `vertex { }` block (see [PreprocessedMaterial]) returns the matching
   /// generated variant, which the encoder pairs with this material's fragment
   /// shader.
-  @internal
   gpu.Shader? materialVertexShader(String variant) => null;
 
   /// The per-instance attributes this material declares, or null when it
@@ -578,7 +576,6 @@ abstract class Material {
   /// the encoder only when it used a material-supplied vertex shader (see
   /// [materialVertexShader]). The base implementation is a no-op; a material
   /// with vertex-stage parameters binds them here.
-  @internal
   void bindVertexStage(
     gpu.RenderPass pass,
     gpu.Shader vertexShader,
@@ -780,7 +777,6 @@ abstract class Material {
   /// true, those passes draw with a masked fragment shader (which needs the
   /// full-vertex varyings, so the position-only depth path is skipped) and
   /// call [bindDepthAlphaMask]. The base material writes full geometry.
-  @internal
   bool get depthAlphaMasked => false;
 
   /// The material's own fragment for a depth-writing pass, or null to use
@@ -807,7 +803,6 @@ abstract class Material {
   /// Binds the mask texture and MaskInfo parameters consumed by the masked
   /// depth fragment shaders; [shader] is the masked variant the pass drew
   /// with. Called only when [depthAlphaMasked] is true.
-  @internal
   void bindDepthAlphaMask(
     gpu.RenderPass pass,
     gpu.Shader shader,

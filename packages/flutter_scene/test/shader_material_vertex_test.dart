@@ -2,15 +2,98 @@
 // registered for, and that the two stages keep separate uniform and texture
 // bindings. The GPU-side binding is covered by the raw_shader_pair smoke scene.
 
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter_scene/gpu.dart' as gpu;
 import 'package:flutter_scene/scene.dart';
 // ignore: implementation_imports
 import 'package:flutter_scene/src/material/shader_material.dart'
     show missingVertexVariantMessage;
 import 'package:flutter_test/flutter_test.dart';
 
+class _OverridingMaterial extends ShaderMaterial {
+  final List<String> calls = [];
+
+  @override
+  gpu.Shader fragmentShaderForLighting(Lighting lighting) {
+    calls.add('fragmentShaderForLighting');
+    return super.fragmentShaderForLighting(lighting);
+  }
+
+  @override
+  gpu.Shader? materialVertexShader(String variant) {
+    calls.add('materialVertexShader:$variant');
+    return null;
+  }
+
+  @override
+  void bindVertexStage(
+    gpu.RenderPass pass,
+    gpu.Shader vertexShader,
+    TransientWriter transientsBuffer,
+  ) {
+    calls.add('bindVertexStage');
+  }
+
+  @override
+  bool get depthAlphaMasked => true;
+
+  @override
+  void bindDepthAlphaMask(
+    gpu.RenderPass pass,
+    gpu.Shader shader,
+    TransientWriter transientsBuffer,
+  ) {
+    calls.add('bindDepthAlphaMask');
+  }
+}
+
 void main() {
+  group('material hooks outside src/', () {
+    test('a subclass overrides every hook a custom pass hands it', () {
+      final material = _OverridingMaterial();
+
+      expect(material.materialVertexShader('depth'), isNull);
+      expect(material.depthAlphaMasked, isTrue);
+      expect(material.calls, ['materialVertexShader:depth']);
+    });
+
+    test('no hook is marked internal', () {
+      const hooks = [
+        'fragmentShaderForLighting',
+        'materialVertexShader',
+        'bindVertexStage',
+        'depthAlphaMasked',
+        'bindDepthAlphaMask',
+      ];
+      final internal = <String>[];
+      for (final path in [
+        'lib/src/material/material.dart',
+        'lib/src/material/preprocessed_material.dart',
+      ]) {
+        final lines = File(path).readAsLinesSync();
+        final declared = <String>{};
+        for (final hook in hooks) {
+          final declaration = RegExp('^  [^/@ ].*\\b$hook\\b');
+          for (var i = 0; i < lines.length; i++) {
+            if (!declaration.hasMatch(lines[i])) continue;
+            declared.add(hook);
+            for (var j = i - 1; j >= 0; j--) {
+              final text = lines[j].trim();
+              if (text == '@internal') internal.add('$path $hook');
+              if (!text.startsWith('@') && !text.startsWith('///')) break;
+            }
+          }
+        }
+        if (path.endsWith('/material.dart')) {
+          expect(declared, hooks.toSet());
+        }
+      }
+      expect(internal, isEmpty);
+    });
+  });
+
   test('no vertex shader means the engine drives the vertex stage', () {
     final material = ShaderMaterial();
     for (final variant in MeshVariant.values) {
