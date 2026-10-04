@@ -5,6 +5,7 @@ library;
 import 'package:flutter/foundation.dart';
 
 import 'importer/scene_registry.dart';
+import 'surface.dart';
 import 'texture/texture_registry.dart';
 
 /// One category of resident GPU memory.
@@ -34,11 +35,13 @@ class MemoryCategory {
 /// A snapshot of what flutter_scene is keeping resident.
 ///
 /// Covers what the engine's shared caches pin, which is the memory an app has
-/// no other way to see or release. It does not cover resources the app holds
-/// itself (a [Texture2D] you constructed and kept), and it is a measure of
-/// what is *pinned*, not of what the GPU has actually reclaimed. Dropping the
-/// last reference to a resource makes it collectable, but the reclaim happens
-/// on the engine's schedule.
+/// no other way to see or release, and the render targets every live
+/// [Surface] holds (each scene's and each [RenderTexture]'s view rings and
+/// attachment pools, see [Surface.heldBytes]). It does not cover other
+/// resources the app holds itself (a [Texture2D] you constructed and kept),
+/// and it is a measure of what is *pinned*, not of what the GPU has actually
+/// reclaimed. Dropping the last reference to a resource makes it collectable,
+/// but the reclaim happens on the engine's schedule.
 /// {@category Assets and loading}
 @immutable
 class MemoryReport {
@@ -57,18 +60,33 @@ class MemoryReport {
       '${categories.map((c) => '  $c').join('\n')}';
 }
 
-/// Takes a [MemoryReport] of what the engine's shared caches are holding.
+/// Takes a [MemoryReport] of what the engine's shared caches and the live
+/// render targets are holding.
 ///
-/// Cheap enough to poll (it walks the cache maps and reads each texture's
-/// reflected size), so it is reasonable to surface in a debug overlay.
+/// Cheap enough to poll (it walks the cache maps and the live surfaces and
+/// reads each texture's reflected size), so it is reasonable to surface in a
+/// debug overlay. The `render targets` category counts the device-private
+/// render targets; `transient attachments` counts the attachments whose
+/// memory the device decides, with no size.
 /// {@category Assets and loading}
 MemoryReport takeMemoryReport() {
   final textures = textureCacheFootprint();
+  final targets = renderTargetFootprint();
   return MemoryReport([
     MemoryCategory(
       name: 'textures',
       bytes: textures.bytes,
       count: textures.count,
+    ),
+    MemoryCategory(
+      name: 'render targets',
+      bytes: targets.bytes,
+      count: targets.count,
+    ),
+    MemoryCategory(
+      name: 'transient attachments',
+      bytes: null,
+      count: targets.transientCount,
     ),
     // A template's footprint is spread across the geometry, materials, and
     // textures it realized, which are not individually measurable from here

@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_scene/src/external_bytes.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/render_profile.dart';
+import 'package:flutter_scene/src/texture/texture_registry.dart';
 
 /// A typed scratch store passed between [RenderPass]es within a single
 /// frame.
@@ -233,6 +235,7 @@ class TransientTexturePool {
         enableRenderTargetUsage: true,
         enableShaderReadUsage: descriptor.enableShaderReadUsage,
       );
+      statesExternalBytes(texture, statedRenderTargetBytes(texture));
       ring[_frame] = texture;
     }
     return texture;
@@ -247,7 +250,41 @@ class TransientTexturePool {
   @internal
   int get heldTextureCount =>
       _rings.values.fold(0, (count, ring) => count + ring.nonNulls.length);
+
+  /// Every texture the pool holds across every descriptor's ring.
+  @internal
+  Iterable<gpu.Texture> get heldTextures =>
+      _rings.values.expand((ring) => ring.nonNulls);
+
+  /// The number of textures the pool holds for each descriptor.
+  @internal
+  Map<TransientTextureDescriptor, int> get heldDescriptors => {
+    for (final MapEntry(key: descriptor, value: ring) in _rings.entries)
+      if (ring.nonNulls.isNotEmpty) descriptor: ring.nonNulls.length,
+  };
 }
+
+/// The device memory [texture] takes as a render target: every mip level
+/// times its samples, and 0 for a [gpu.StorageMode.deviceTransient]
+/// attachment, which the device keeps in tile memory where it can.
+@internal
+int renderTargetBytes(gpu.Texture texture) =>
+    texture.storageMode == gpu.StorageMode.deviceTransient
+    ? 0
+    : gpuTextureBytes(texture) * texture.sampleCount;
+
+/// The device memory [texture] is stated to the VM with: its
+/// [renderTargetBytes], except on Windows and Linux, whose devices allocate
+/// a [gpu.StorageMode.deviceTransient] attachment in full and so state every
+/// mip level times its samples. Flutter GPU has no query for memoryless
+/// storage, so the platform decides.
+@internal
+int statedRenderTargetBytes(gpu.Texture texture) =>
+    switch (defaultTargetPlatform) {
+      TargetPlatform.windows ||
+      TargetPlatform.linux => gpuTextureBytes(texture) * texture.sampleCount,
+      _ => renderTargetBytes(texture),
+    };
 
 /// Per-frame state handed to every [RenderGraphPass] when the graph
 /// executes.

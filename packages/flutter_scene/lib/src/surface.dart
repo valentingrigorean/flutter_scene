@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter_scene/src/external_bytes.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 
 import 'package:flutter_scene/src/render/render_graph.dart';
@@ -26,9 +26,21 @@ import 'package:flutter_scene/src/render/render_graph.dart';
 /// driven internally by [Scene.render] / [Scene.renderViews].
 /// {@category Rendering}
 class Surface {
+  /// Creates a surface that holds no render target until a view draws.
+  Surface() {
+    _live.add(WeakReference(this));
+    if (_live.length >= _pruneAt) {
+      _live.removeWhere((surface) => surface.target == null);
+      _pruneAt = 2 * _live.length + 16;
+    }
+  }
+
   // TODO(bdero): There should be a method on the Flutter GPU context to pull
   //              this information.
   static const int _maxFramesInFlight = 2;
+
+  static final List<WeakReference<Surface>> _live = [];
+  static int _pruneAt = 16;
 
   final List<_ViewSurface> _views = [];
 
@@ -66,11 +78,37 @@ class Surface {
       _view(viewIndex)._lastIssued;
 
   /// The number of textures every view's ring and transient pool holds.
-  @visibleForTesting
+  @internal
   int get debugHeldTextureCount => _views.fold(
     0,
     (count, view) =>
         count + view._swapchainColors.length + view.pool.heldTextureCount,
+  );
+
+  /// Every texture every view's ring and transient pool holds.
+  @internal
+  Iterable<gpu.Texture> get debugHeldTextures => _heldTextures;
+
+  Iterable<gpu.Texture> get _heldTextures => _views.expand(
+    (view) => view._swapchainColors.followedBy(view.pool.heldTextures),
+  );
+
+  /// The device memory, in bytes, of the render targets every view's ring
+  /// and transient pool holds: each texture's mip levels times its samples.
+  ///
+  /// A [gpu.StorageMode.deviceTransient] attachment (the depth and the
+  /// multisampled colour of the main pass) counts 0, since the device keeps
+  /// it in tile memory where it can (Metal on an Apple GPU, Vulkan with
+  /// lazily allocated memory); a device with no such memory allocates it in
+  /// full. The surface also states every texture it holds to the VM as
+  /// external memory, so a collection follows the render targets a dropped
+  /// surface leaves: the bytes counted here, plus the full bytes of each
+  /// transient attachment on Windows and Linux, whose devices allocate it in
+  /// full (Flutter GPU has no query for memoryless storage). [dispose] and a
+  /// resize drop what this counts.
+  int get heldBytes => _heldTextures.fold(
+    0,
+    (bytes, texture) => bytes + renderTargetBytes(texture),
   );
 
   /// Drops every view's ring and transient pool, so their textures are
@@ -114,6 +152,8 @@ class _ViewSurface {
           enableShaderReadUsage: true,
         ),
       );
+      final texture = _swapchainColors.last;
+      statesExternalBytes(texture, statedRenderTargetBytes(texture));
     }
     final result = _swapchainColors[_cursor];
     _cursor = (_cursor + 1) % Surface._maxFramesInFlight;
@@ -128,4 +168,28 @@ class _ViewSurface {
     _previousSize = const Size(0, 0);
     _lastIssued = null;
   }
+}
+
+/// The render targets every live [Surface] holds: the device-private
+/// textures with their bytes, and the count of the transient attachments,
+/// whose bytes the device decides.
+@internal
+({int bytes, int count, int transientCount}) renderTargetFootprint() {
+  var bytes = 0;
+  var count = 0;
+  var transientCount = 0;
+  Surface._live.removeWhere((surface) => surface.target == null);
+  for (final reference in Surface._live) {
+    final surface = reference.target;
+    if (surface == null) continue;
+    for (final texture in surface._heldTextures) {
+      if (texture.storageMode == gpu.StorageMode.deviceTransient) {
+        transientCount++;
+      } else {
+        count++;
+        bytes += renderTargetBytes(texture);
+      }
+    }
+  }
+  return (bytes: bytes, count: count, transientCount: transientCount);
 }
