@@ -244,6 +244,8 @@ class RenderPassContext {
   /// green/blue when [RenderInput.normals] was requested. Non-null when the pass
   /// declared [RenderInput.depth] (or [RenderInput.normals]) and the camera is
   /// perspective; also present when ambient occlusion or reflections ran.
+  /// Its format is `r32Float` when no pass of the frame wrote normals, and
+  /// `r32g32b32a32Float` when one did.
   gpu.Texture? get sceneDepthLinear =>
       _context.blackboard.get<gpu.Texture>(kLinearDepthBlackboardKey);
 
