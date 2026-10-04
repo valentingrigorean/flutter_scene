@@ -180,6 +180,7 @@ class MeshComponent extends Component {
           item.shadowStatic == node.shadowStatic &&
           item.castsShadows == (primitive.castsShadow && node.castsShadows) &&
           item.highlightColor == node.highlightColor &&
+          item.sortDepthBias == node.sortDepthBias &&
           _boundsVersions[index] == item.geometry.localBoundsVersion;
     }
     if (staticStateUnchanged) {
@@ -200,6 +201,7 @@ class MeshComponent extends Component {
     final renderScene = node.internalRenderScene;
     final frustumCulled = node.frustumCulled;
     final layers = node.layers;
+    final sortDepthBias = node.sortDepthBias;
     final lightChannelMask = node.lightChannelMask;
     final highlightColor = node.highlightColor;
     for (var index = 0; index < _renderItems.length; index++) {
@@ -222,6 +224,7 @@ class MeshComponent extends Component {
       final frustumCulledChanged = item.frustumCulled != frustumCulled;
       item.frustumCulled = frustumCulled;
       item.layers = layers;
+      item.sortDepthBias = sortDepthBias;
       item.lightChannelMask = lightChannelMask;
       final isMoving =
           transformChanged || (skin != null && jointsTexture != null);

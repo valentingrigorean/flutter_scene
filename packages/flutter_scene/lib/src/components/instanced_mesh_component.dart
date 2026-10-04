@@ -68,6 +68,7 @@ class InstancedMeshComponent extends Component {
         item.visible == visible &&
         item.frustumCulled == frustumCulled &&
         item.layers == node.layers &&
+        item.sortDepthBias == node.sortDepthBias &&
         item.shadowStatic == node.shadowStatic &&
         item.castsShadows == node.castsShadows &&
         item.lightChannelMask == lightChannelMask) {
@@ -76,6 +77,7 @@ class InstancedMeshComponent extends Component {
     final frustumCulledChanged = item.frustumCulled != frustumCulled;
     item.frustumCulled = frustumCulled;
     item.layers = node.layers;
+    item.sortDepthBias = node.sortDepthBias;
     final worldTransform = node.globalTransform;
     final boundsChangedByInput =
         worldTransformVersion != _worldTransformVersion ||

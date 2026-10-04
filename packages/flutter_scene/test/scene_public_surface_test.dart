@@ -47,6 +47,34 @@ void main() {
     expect(depth, 9);
   });
 
+  test('the translucent draw order is read from scene.dart', () {
+    final root = Node()
+      ..add(
+        Node(
+          mesh: Mesh(
+            UnskinnedGeometry()..setLocalBounds(
+              Aabb3.minMax(Vector3.all(-1), Vector3.all(1)),
+              null,
+            ),
+            UnlitMaterial()..alphaMode = AlphaMode.blend,
+          ),
+          localTransform: Matrix4.translationValues(0, 0, -10),
+        )..sortDepthBias = 2,
+      );
+    final camera = PerspectiveCamera(
+      position: Vector3.zero(),
+      target: Vector3(0, 0, -1),
+    );
+
+    final List<SceneTranslucentDraw> draws = sceneTranslucentDraws(
+      root,
+      camera,
+      const ui.Size(100, 100),
+    );
+
+    expect(draws.single.depth, 8);
+  });
+
   test('a polyline is expanded from scene.dart', () {
     final expanded = expandPolyline(
       [Vector3.zero(), Vector3(1, 0, 0)],
