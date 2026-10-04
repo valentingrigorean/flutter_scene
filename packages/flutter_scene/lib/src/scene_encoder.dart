@@ -949,9 +949,7 @@ base class SceneEncoder {
     // A material that cannot show the active debug view draws through the
     // engine's fallback debug fragment shader instead of its own.
     final fallback = _usesDebugFallback(item, material, geometry);
-    final materialVertex = material.materialVertexShader(
-      geometry.materialVertexVariant,
-    );
+    final materialVertex = material.vertexShaderForGeometry(geometry);
     final vertexShader = materialVertex ?? geometry.vertexShader;
     final fragmentShader = fallback
         ? _debugFallbackShader
@@ -1618,9 +1616,7 @@ base class SceneEncoder {
     // A `vertex { }` material supplies its own vertex shader for this mesh
     // type; the geometry must bind FrameInfo (and skinned's joints texture)
     // against it, since its uniform slots can differ from the engine default.
-    final materialVertex = material.materialVertexShader(
-      geometry.materialVertexVariant,
-    );
+    final materialVertex = material.vertexShaderForGeometry(geometry);
     if (item != null) {
       _describeDraw(
         item,
@@ -1745,9 +1741,7 @@ base class SceneEncoder {
       _clearBindings();
     }
     _bindPipeline(pipeline);
-    final materialVertex = material.materialVertexShader(
-      geometry.materialVertexVariant,
-    );
+    final materialVertex = material.vertexShaderForGeometry(geometry);
     if (item != null) {
       _describeDraw(
         item,
@@ -1877,9 +1871,7 @@ base class SceneEncoder {
       _clearBindings();
     }
     _bindPipeline(pipeline);
-    final materialVertex = material.materialVertexShader(
-      geometry.materialVertexVariant,
-    );
+    final materialVertex = material.vertexShaderForGeometry(geometry);
     if (item != null) {
       _describeDraw(
         item,

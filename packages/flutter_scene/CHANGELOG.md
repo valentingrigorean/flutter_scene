@@ -134,6 +134,7 @@
 * On web, `EnvironmentMap.fromEquirectImageAsset` and `imageFromBytes(maxWidth:)` no longer fail with "ImageDescriptor.width is not supported".
 * The Dart noise (`FastNoiseLite`, `noiseCurl3`, particle turbulence) now matches native exactly on web; 3D OpenSimplex2 previously returned huge values there, driving particles to NaN.
 * On web, an int `.fmat` parameter saved into an `.fscene` document keeps its int type instead of becoming a double.
+* `Geometry.materialVertexVariant`, `bindsModelTransformInstance`, `isDoubleSided`, `depthOnlyVertex`, and `Material.vertexShaderForGeometry` are public, so a custom `Geometry` subclass can drive its own vertex stage. A null `materialVertexVariant` means the geometry owns its vertex shader: no material vertex variant replaces it in any pass, which fixes a `ShaderMaterial` with an unskinned vertex shader running over `LineSegmentsGeometry`, `BillboardGeometry`, and `SplatGeometry`.
 
 ## 0.23.0
 
