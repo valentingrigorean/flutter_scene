@@ -6,6 +6,7 @@ import 'package:flutter_scene/src/geometry/vertex_layout.dart'
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart' show ShadowCasterFaces;
 import 'package:flutter_scene/src/render/draw_recorder.dart';
+import 'package:flutter_scene/src/material/material.dart' show MaskedDepthPass;
 import 'package:flutter_scene/src/render/instance_batching.dart';
 import 'package:flutter_scene/src/fmat/fmat_ast.dart' show DepthSurfaceKind;
 import 'package:flutter_scene/src/mesh_draw.dart';
@@ -253,7 +254,11 @@ class ShadowEncoder {
         : item.material.depthSurfaceShader(DepthSurfaceKind.shadow);
     final masked = surfaceShader != null || item.material.depthAlphaMasked;
     final fragmentShader =
-        surfaceShader ?? (masked ? _maskedDepthShader : _depthShader);
+        surfaceShader ??
+        (masked
+            ? item.material.maskedDepthFragmentShader(MaskedDepthPass.shadow) ??
+                  _maskedDepthShader
+            : _depthShader);
     // A double-sided caster records every face regardless of the light's
     // caster-face mode or the material's culling, which is what closes the
     // light leak through single-sided geometry. A double-sided material casts

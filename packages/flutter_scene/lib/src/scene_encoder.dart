@@ -789,6 +789,15 @@ base class SceneEncoder {
   static final gpu.Shader _coverageShader =
       baseShaderLibrary['CoverageFragment']!;
 
+  // The coverage pre-draw's fragment for [material]: an alpha-masked
+  // material's own (see [Material.maskedDepthFragmentShader]), or the
+  // engine's.
+  static gpu.Shader _coverageShaderFor(Material material) =>
+      (material.depthAlphaMasked
+          ? material.maskedDepthFragmentShader(MaskedDepthPass.coverage)
+          : null) ??
+      _coverageShader;
+
   // Whether an opaque draw of [material] at cross-fade coverage [fade] cuts
   // itself out, and so takes the coverage pre-draw.
   static bool _cutsOut(Material material, double fade) =>
@@ -995,7 +1004,7 @@ base class SceneEncoder {
       if (!fallback && _cutsOut(material, fade)) {
         coveragePipeline = tryResolvePipeline(
           materialVertex ?? geometry.vertexShader,
-          _coverageShader,
+          _coverageShaderFor(material),
           vertexLayout: geometry.instancedVertexLayoutFor(
             material.instanceAttributes,
             material.vertexAttributesFor(materialVertex),
@@ -1392,7 +1401,7 @@ base class SceneEncoder {
   // Binds the coverage pre-draw's fragment inputs: the cross-fade [fade] and
   // the material's alpha mask, or a mask that keeps everything.
   void _bindCoverage(Material material, double fade) {
-    final shader = _coverageShader;
+    final shader = _coverageShaderFor(material);
     _coverageInfoScratch[0] = fade;
     _renderPass.bindUniform(
       shader.getUniformSlot('CoverageInfo'),
@@ -1533,7 +1542,7 @@ base class SceneEncoder {
         material: material,
         vertexShader: materialVertex ?? geometry.vertexShader,
         fragmentShader: _coveragePass
-            ? _coverageShader
+            ? _coverageShaderFor(material)
             : material.fragmentShaderForLighting(_lighting),
         pipeline: pipeline,
         batchedItems: batchedItems,

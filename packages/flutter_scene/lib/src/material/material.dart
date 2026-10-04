@@ -52,6 +52,28 @@ gpu.Texture? resolveTextureSource(TextureSource? source) =>
 gpu.SamplerOptions? textureSourceSampler(TextureSource? source) =>
     source?.sampledSampler;
 
+/// A depth-writing pass that draws an alpha-masked material (see
+/// [Material.depthAlphaMasked]) through a masked fragment shader.
+enum MaskedDepthPass {
+  /// The main pass's coverage pre-draw, which cuts an opaque masked surface
+  /// out on screen: it writes depth where the surface is kept and the color
+  /// draw shades only there. Its fragment (`flutter_scene_coverage.frag`)
+  /// binds the `CoverageInfo` block.
+  coverage,
+
+  /// The camera depth prepass writing linear view depth. Its fragment binds
+  /// the `DepthInfo` block.
+  linearDepth,
+
+  /// The camera depth prepass writing linear view depth, the view normal and
+  /// the roughness. Its fragment binds the `DepthNormalInfo` block and the
+  /// `metallic_roughness_texture` sampler.
+  linearDepthNormal,
+
+  /// The shadow map pass writing window depth.
+  shadow,
+}
+
 /// Base class for shading a [MeshPrimitive].
 ///
 /// A material owns the fragment shader plus any per-material parameters
@@ -813,9 +835,23 @@ abstract class Material {
     required Vector3 cameraForward,
   }) {}
 
+  /// The masked depth fragment shader this material supplies for [pass], or
+  /// null to use the engine's. Asked only when [depthAlphaMasked] is true.
+  ///
+  /// A material whose color fragment computes its coverage differently from
+  /// the engine's mask (an atlas region, a procedural cutout) returns a
+  /// fragment that computes the same coverage, so its on-screen cutout, depth
+  /// and shadow cut the texels its colors cut. The fragment binds the uniforms
+  /// the pass binds for [pass] plus whatever [bindDepthAlphaMask] binds;
+  /// including the engine's masked fragment for the pass with
+  /// `DEPTH_MASK_COVERAGE` defined and a `float DepthMaskCoverage()` of its
+  /// own keeps that contract.
+  gpu.Shader? maskedDepthFragmentShader(MaskedDepthPass pass) => null;
+
   /// Binds the mask texture and MaskInfo parameters consumed by the masked
   /// depth fragment shaders; [shader] is the masked variant the pass drew
-  /// with. Called only when [depthAlphaMasked] is true.
+  /// with (the material's own from [maskedDepthFragmentShader], or the
+  /// engine's). Called only when [depthAlphaMasked] is true.
   void bindDepthAlphaMask(
     gpu.RenderPass pass,
     gpu.Shader shader,

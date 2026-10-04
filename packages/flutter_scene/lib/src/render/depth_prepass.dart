@@ -18,7 +18,8 @@ import 'package:vector_math/vector_math.dart';
 import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart'
     show Geometry, bindUnskinnedFrameInfo;
-import 'package:flutter_scene/src/material/material.dart' show Material;
+import 'package:flutter_scene/src/material/material.dart'
+    show MaskedDepthPass, Material;
 import 'package:flutter_scene/src/render/draw_recorder.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
@@ -414,9 +415,16 @@ class _DepthPrepassEncoder {
 
   // The fragment shader for this pass; alpha-masked materials draw through
   // the masked variant so only their opaque texels write depth.
-  gpu.Shader _fragmentShaderFor(bool masked) => _writeNormals
-      ? (masked ? _maskedDepthNormalShader : _depthNormalShader)
-      : (masked ? _maskedDepthShader : _depthShader);
+  gpu.Shader _fragmentShaderFor(Material material, bool masked) {
+    if (!masked) return _writeNormals ? _depthNormalShader : _depthShader;
+    return material.maskedDepthFragmentShader(
+          _writeNormals
+              ? MaskedDepthPass.linearDepthNormal
+              : MaskedDepthPass.linearDepth,
+        ) ??
+        (_writeNormals ? _maskedDepthNormalShader : _maskedDepthShader);
+  }
+
   String get _infoBlockName => _writeNormals ? 'DepthNormalInfo' : 'DepthInfo';
 
   /// Frustum of the camera view-projection, used for per-item culling.
@@ -520,7 +528,7 @@ class _DepthPrepassEncoder {
                 : DepthSurfaceKind.linearDepth,
           );
     final masked = surfaceShader != null || item.material.depthAlphaMasked;
-    final fragmentShader = surfaceShader ?? _fragmentShaderFor(masked);
+    final fragmentShader = surfaceShader ?? _fragmentShaderFor(item.material, masked);
     // Unskinned geometry draws depth through a position-only shader and layout
     // (fetching only position); skinned geometry has no such variant, so it
     // falls back to its full vertex shader and bind. The normal-writing path

@@ -18,12 +18,23 @@ mask_info;
 // The texture whose alpha carries the mask (the material's base color map).
 uniform sampler2D mask_texture;
 
+// The masked alpha tested against the cutoff. A material's own masked depth
+// fragment (Material.maskedDepthFragmentShader) defines DEPTH_MASK_COVERAGE,
+// includes an engine masked fragment and then defines this function to match
+// its color fragment's coverage.
+#ifdef DEPTH_MASK_COVERAGE
+float DepthMaskCoverage();
+#else
+float DepthMaskCoverage() {
+  highp vec2 uv = MaterialTextureUv(mask_info.uv_transform, mask_info.uv_rotation);
+  return texture(mask_texture, uv).a *
+         mix(1.0, v_color.a, mask_info.params.z) * mask_info.params.y;
+}
+#endif
+
 // Discards the fragment when its masked alpha falls below the cutoff.
 void ApplyDepthAlphaMask() {
-  highp vec2 uv = MaterialTextureUv(mask_info.uv_transform, mask_info.uv_rotation);
-  float alpha = texture(mask_texture, uv).a *
-                mix(1.0, v_color.a, mask_info.params.z) * mask_info.params.y;
-  if (alpha < mask_info.params.x) {
+  if (DepthMaskCoverage() < mask_info.params.x) {
     discard;
   }
 }
