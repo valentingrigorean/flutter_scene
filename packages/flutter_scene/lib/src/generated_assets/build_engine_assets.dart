@@ -22,6 +22,7 @@ import 'package:hooks/hooks.dart';
 
 import '../fmat/build_materials.dart'
     show MaterialAssetMode, buildBundledPhysicalMaterials;
+import '../fmat/framework_shaders.dart';
 import '../fmat/target_shader_bundle.dart';
 import '../importer/build_cache.dart';
 import 'engine_identity.dart';
@@ -33,13 +34,6 @@ const String _engineOwner = 'flutter_scene';
 
 /// The manifest of the engine's shader bundle, relative to flutter_scene's root.
 const String _baseBundleManifest = 'shaders/base.shaderbundle.json';
-
-/// GLSL ES 3.00 for the OpenGL ES dialect. The radiance sampling uses
-/// textureLod, which is core in 300 es; the 1.00 form needs
-/// GL_EXT_shader_texture_lod, which software GL stacks (Mesa llvmpipe, Android
-/// emulators) reject at compile time. Sets the native GLES floor at OpenGL
-/// ES 3.0.
-const int _glesLanguageVersion = 300;
 
 /// Builds the engine's shaders from flutter_scene's own hook into its own
 /// generated tree.
@@ -203,7 +197,7 @@ Future<void> _buildBaseShaderBundle({
     buildOutput: buildOutput,
     manifestFileName: manifestPath,
     includeDirectories: [shaders],
-    glesLanguageVersion: _glesLanguageVersion,
+    glesLanguageVersion: engineGlesLanguageVersion,
     assetMode: TargetShaderBundleAssetMode.generatedTree,
     owner: _engineOwner,
     stamp: stamp,

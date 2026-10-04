@@ -145,6 +145,7 @@
 * `Surface.heldBytes` and `RenderTexture.heldBytes` report the device memory of the render targets each view's output rings and attachment pools hold, counting a transient attachment, whose memory the device decides, as 0. Each ring and pool texture a surface allocates is stated to the VM as external memory on native, so a collection follows the targets a dropped scene leaves; on Windows and Linux a transient attachment is stated at its full size, since those devices allocate it in full. The static shadow cache tiles, the temporal, ambient occlusion, exposure, global illumination, probe and reflection history, and the planar capture target are not counted or stated yet.
 * `RenderTexture.dispose` releases its output ring and attachment pool and clears `texture`; it inherited `ChangeNotifier.dispose` and kept them until the target was collected.
 * The analyzer resolves the bundled GPU shim to the `package:flutter_gpu` types, so an app passes a `flutter_gpu` `BufferView`, `IndexType` or `Texture` to `Geometry.setVertices`, `setIndices` or `GpuTextureSource` without a cast; web and Wasm builds still select the WebGL2 backend.
+* `package:flutter_scene/build_hooks.dart` exports `engineShaderIncludeDirectory(BuildInput)`, the directory of the engine's shader includes, and `engineGlesLanguageVersion`, the GLSL ES version the engine compiles for, so a hook that runs `impellerc` itself compiles shaders that include the engine's GLSL.
 
 ## 0.23.0
 
