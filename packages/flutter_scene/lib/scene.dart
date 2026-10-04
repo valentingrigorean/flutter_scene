@@ -61,7 +61,12 @@ export 'src/geometry/primitives.dart'
         TorusGeometry,
         WedgeGeometry;
 export 'src/geometry/polyline_geometry.dart'
-    show DashPattern, PolylineCap, PolylineGeometry, PolylineWidthMode;
+    show
+        DashPattern,
+        PolylineCap,
+        PolylineGeometry,
+        PolylineWidthMode,
+        expandPolyline;
 export 'src/geometry/swept_geometry.dart'
     show ExtrudeGeometry, RibbonAlignment, RibbonGeometry, TubeGeometry;
 
@@ -261,10 +266,12 @@ export 'src/light.dart'
         SpotLight;
 export 'src/render/custom_render_pass.dart'
     show CustomRenderPass, RenderInput, RenderPassContext, RenderStage;
-export 'src/render/frame_transients.dart' show TransientWriter;
+export 'src/render/frame_transients.dart'
+    show GpuSubmissions, TransientWriter, gpuSubmissions;
 export 'src/render/shadow_pass.dart' show SpotShadowInfo;
 export 'src/render/draw_recorder.dart'
     show BatchBreakReason, DrawPhase, DrawSkipReason;
+export 'src/render/mip_sampling_probe.dart' show mipChainsAreSampled;
 export 'src/render/render_graph_capture.dart'
     show
         CapturedDraw,
@@ -337,7 +344,8 @@ export 'src/memory_report.dart'
     show MemoryCategory, MemoryReport, takeMemoryReport;
 export 'src/texture/texture_registry.dart'
     show clearTextureCache, loadTexture, releaseTexture;
-export 'src/texture/mipmap.dart' show TextureContent;
+export 'src/texture/mipmap.dart'
+    show MipLevel, TextureContent, generateMipChain;
 // Audio is an optional contract, exported from
 // `package:flutter_scene/audio.dart`.
 // Physics is an optional contract, exported from
@@ -372,7 +380,8 @@ export 'src/resource_group.dart' show ResourceGroup;
 export 'src/scene_pointer.dart' show ScenePointer;
 export 'src/scene.dart' show AntiAliasingMode, Scene, SceneGraph;
 export 'src/scene_tick_listener.dart' show SceneTickListener;
-export 'src/scene_encoder.dart' show maxSceneColorCaptureBatches;
+export 'src/scene_encoder.dart'
+    show maxSceneColorCaptureBatches, sceneSortDepth;
 export 'src/widget_texture.dart'
     show WidgetTexture, WidgetTextureController, WidgetUpdatePolicy;
 export 'src/shaders.dart' show baseShaderLibrary, loadBaseShaderLibrary;

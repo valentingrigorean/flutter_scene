@@ -135,6 +135,9 @@
 * The Dart noise (`FastNoiseLite`, `noiseCurl3`, particle turbulence) now matches native exactly on web; 3D OpenSimplex2 previously returned huge values there, driving particles to NaN.
 * On web, an int `.fmat` parameter saved into an `.fscene` document keeps its int type instead of becoming a double.
 * `Geometry.materialVertexVariant`, `bindsModelTransformInstance`, `isDoubleSided`, `depthOnlyVertex`, and `Material.vertexShaderForGeometry` are public, so a custom `Geometry` subclass can drive its own vertex stage. A null `materialVertexVariant` means the geometry owns its vertex shader: no material vertex variant replaces it in any pass, which fixes a `ShaderMaterial` with an unskinned vertex shader running over `LineSegmentsGeometry`, `BillboardGeometry`, and `SplatGeometry`.
+* `Texture2D.fromMipLevels` uploads a prebuilt mip chain (RGBA8888, straight alpha, row-major, base level first), so an app can build the chain on a background isolate; a level whose extent or length breaks the chain throws an `ArgumentError` naming it. `MipLevel`, `generateMipChain`, and `mipChainsAreSampled` are public with it.
+* `gpuSubmissions`, a read-only `GpuSubmissions` view of the renderer's command buffer submissions (`latestSubmission`, `completedThrough`), lets an app pace its frames or recycle its own buffers on GPU completion.
+* `sceneSortDepth`, the view-axis depth the encoder orders deferred draws by, and `expandPolyline`, the CPU polyline expansion, are public.
 
 ## 0.23.0
 

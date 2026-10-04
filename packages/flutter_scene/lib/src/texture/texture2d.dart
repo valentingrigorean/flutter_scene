@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show internal;
@@ -171,6 +172,64 @@ class Texture2D implements TextureSource {
   @internal
   Texture2D withSampler(gpu.SamplerOptions sampler) =>
       Texture2D._(_texture, sampler);
+
+  /// Builds a texture from a prebuilt mip chain ([levels], base level first,
+  /// each level RGBA8888, straight alpha, row-major), sized by its base level.
+  ///
+  /// Level `i` is `max(1, baseWidth >> i)` x `max(1, baseHeight >> i)` with
+  /// `width * height * 4` bytes; a chain that breaks this throws an
+  /// [ArgumentError] naming the level before anything is allocated.
+  ///
+  /// The chain is uploaded as given: build it with [generateMipChain] or on a
+  /// background isolate. It is capped at [TextureSampling.maxMipmapLevels]
+  /// and at the levels the allocator accepts for a non-square size, and only
+  /// the base level is uploaded where [TextureSampling.mipmaps] is off or
+  /// [mipChainsAreSampled] is false, as in [fromPixels].
+  static Texture2D fromMipLevels(
+    List<MipLevel> levels, {
+    TextureSampling sampling = const TextureSampling(),
+  }) {
+    if (levels.isEmpty) {
+      throw ArgumentError.value(levels, 'levels', 'holds no base level');
+    }
+    final base = levels.first;
+    if (base.width < 1 || base.height < 1) {
+      throw ArgumentError.value(
+        levels,
+        'levels',
+        'level 0 is ${base.width} x ${base.height}, not at least 1 x 1',
+      );
+    }
+    for (var i = 0; i < levels.length; i++) {
+      final level = levels[i];
+      final width = math.max(1, base.width >> i);
+      final height = math.max(1, base.height >> i);
+      if (level.width != width || level.height != height) {
+        throw ArgumentError.value(
+          levels,
+          'levels',
+          'level $i is ${level.width} x ${level.height}, not $width x $height',
+        );
+      }
+      if (level.pixels.length != width * height * 4) {
+        throw ArgumentError.value(
+          levels,
+          'levels',
+          'level $i holds ${level.pixels.length} bytes, not '
+              '${width * height * 4}',
+        );
+      }
+    }
+    return Texture2D._(
+      uploadMipLevels(
+        sampling.mipmaps && mipChainsAreSampled ? levels : [base],
+        base.width,
+        base.height,
+        maxMipmapLevels: sampling.maxMipmapLevels,
+      ),
+      sampling.toSamplerOptions(),
+    );
+  }
 
   /// Wraps an already-uploaded GPU [texture] with [sampling] (the KTX2 load
   /// paths, whose mip chains come from the file rather than the generator).

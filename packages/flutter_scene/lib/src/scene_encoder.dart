@@ -349,7 +349,6 @@ int sceneColorCaptureBatchCount(
 ui.Size currentSceneEncoderViewport = ui.Size.zero;
 
 /// Computes the view-axis depth used to order deferred scene draws.
-@visibleForTesting
 double sceneSortDepth(
   Matrix4 worldTransform,
   Aabb3? localBounds,

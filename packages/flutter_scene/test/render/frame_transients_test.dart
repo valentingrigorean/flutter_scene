@@ -92,6 +92,17 @@ void main() {
     });
   });
 
+  group('gpuSubmissions', () {
+    test('reads the renderer submissions without recording any', () {
+      expect(gpuSubmissions, isNot(isA<GpuSubmissionTracker>()));
+      final id = rendererSubmissions.record();
+      expect(gpuSubmissions.latestSubmission, id);
+      expect(gpuSubmissions.completedThrough, lessThan(id));
+      rendererSubmissions.complete(id);
+      expect(gpuSubmissions.completedThrough, id);
+    });
+  });
+
   group('TransientArena.planEmplacement', () {
     test('aligns within the block', () {
       final plan = TransientArena.planEmplacement(
