@@ -1,18 +1,23 @@
 // Morph target (blend shape) coverage over the pure-data layers: glTF
 // parsing and packing (dense and sparse deltas), additive CPU blending,
 // top-N weight selection, the delta-texture packing layout, node weight
-// defaults/overrides, and weights-channel playback. No GPU needed.
+// defaults/overrides, and weights-channel playback. No GPU needed, except
+// the GPU-gated draw group, which checks the scene encoder binds the morph
+// stage of an unskinned morphed mesh.
 
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter_scene/scene.dart';
 import 'package:flutter_scene/src/animation.dart' as engine;
 import 'package:flutter_scene/src/geometry/morph_targets.dart';
+import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/importer/constants.dart';
 import 'package:flutter_scene/src/importer/gltf.dart';
 import 'package:flutter_scene/src/runtime_importer/animation_builder.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vector_math/vector_math.dart' show Matrix4;
+import 'package:vector_math/vector_math.dart' show Matrix4, Vector3;
 
 // A single-triangle primitive with two morph targets. Target 0's POSITION
 // deltas are sparse-encoded over a null bufferView (the spec-recommended
@@ -148,6 +153,45 @@ MorphTargetData _dataFromFixture({GltfCoordinatePolicy? policy}) {
     normalDeltas: morph.normalDeltas,
     tangentDeltas: morph.tangentDeltas,
   );
+}
+
+bool _gpuAvailable() {
+  try {
+    Scene();
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Unskinned morphed geometry that counts the full binds the encoder issues.
+// The full bind is what binds the morph texture and MorphInfo.
+class _BindCountingMorphGeometry extends MorphedUnskinnedGeometry {
+  _BindCountingMorphGeometry(super.morphTargets);
+
+  int binds = 0;
+
+  @override
+  void bind(
+    gpu.RenderPass pass,
+    TransientWriter transientsBuffer,
+    Matrix4 modelTransform,
+    Matrix4 cameraTransform,
+    Vector3 cameraPosition, {
+    gpu.Shader? shaderOverride,
+    double depthBias = 0.0,
+  }) {
+    binds++;
+    super.bind(
+      pass,
+      transientsBuffer,
+      modelTransform,
+      cameraTransform,
+      cameraPosition,
+      shaderOverride: shaderOverride,
+      depthBias: depthBias,
+    );
+  }
 }
 
 void main() {
@@ -639,6 +683,49 @@ void main() {
       player.update(0.0);
       // rest 0.2 + (1.0 - 0.2) * 0.5
       expect(node.morphWeights![0], closeTo(0.6, 1e-6));
+    });
+  });
+
+  group('unskinned GPU morph draw', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    if (!_gpuAvailable()) {
+      test(
+        'unskinned GPU morph draw (skipped: no GPU device)',
+        () {},
+        skip: 'Requires a GPU device.',
+      );
+      return;
+    }
+
+    setUpAll(Scene.initializeStaticResources);
+
+    testWidgets('the scene encoder binds the morph stage', (tester) async {
+      expect(Scene.isReadyToRender, isTrue);
+      final geometry = _BindCountingMorphGeometry(_dataFromFixture());
+      expect(geometry.usesGpuMorphing, isTrue);
+      const stride = kUnskinnedPerVertexSize ~/ 4;
+      final vertices = Float32List(3 * stride);
+      const positions = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+      for (var v = 0; v < 3; v++) {
+        vertices.setRange(v * stride, v * stride + 3, positions, v * 3);
+        vertices[v * stride + 5] = 1.0;
+      }
+      geometry.uploadVertexData(ByteData.sublistView(vertices), 3, null);
+
+      final node = Node()..mesh = Mesh(geometry, UnlitMaterial());
+      node.setMorphWeights([0.5, 0.5]);
+      final scene = Scene()..add(node);
+
+      final recorder = ui.PictureRecorder();
+      scene.render(
+        PerspectiveCamera(position: Vector3(0.3, 0.3, 5)),
+        ui.Canvas(recorder),
+        viewport: const ui.Rect.fromLTWH(0, 0, 32, 32),
+        pixelRatio: 1.0,
+      );
+      recorder.endRecording();
+
+      expect(geometry.binds, greaterThan(0));
     });
   });
 }

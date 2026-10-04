@@ -5,6 +5,7 @@
 * `gpuSubmissions`, a read-only `GpuSubmissions` view of the renderer's command buffer submissions (`latestSubmission`, `completedThrough`), lets an app pace its frames or recycle its own buffers on GPU completion.
 * `sceneSortDepth`, the view-axis depth the encoder orders deferred draws by, and `expandPolyline`, the CPU polyline expansion, are public.
 * `Scene.dispose` releases the render targets the scene keeps across frames (each view's output ring and attachment pool, and the temporal, global illumination, exposure, shadow, probe and reflection history), so they become unreachable at the call instead of when the scene is collected; a disposed scene throws a `StateError` on render.
+* Fixed morph targets on unskinned meshes not deforming on the GPU path; their weights animated but the mesh drew in its base pose (#428).
 
 ## 0.23.0
 
