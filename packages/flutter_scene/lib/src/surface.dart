@@ -64,6 +64,23 @@ class Surface {
   /// it while the current frame draws is safe.
   gpu.Texture? lastSwapchainColorTexture([int viewIndex = 0]) =>
       _view(viewIndex)._lastIssued;
+
+  /// The number of textures every view's ring and transient pool holds.
+  @visibleForTesting
+  int get debugHeldTextureCount => _views.fold(
+    0,
+    (count, view) =>
+        count + view._swapchainColors.length + view.pool.heldTextureCount,
+  );
+
+  /// Drops every view's ring and transient pool, so their textures are
+  /// unreachable from this surface. A later frame allocates them again.
+  void dispose() {
+    for (final view in _views) {
+      view.dispose();
+    }
+    _views.clear();
+  }
 }
 
 /// One view's swapchain color ring plus its transient texture pool. View 0
@@ -102,5 +119,13 @@ class _ViewSurface {
     _cursor = (_cursor + 1) % Surface._maxFramesInFlight;
     _lastIssued = result;
     return result;
+  }
+
+  void dispose() {
+    _swapchainColors.clear();
+    pool.clear();
+    _cursor = 0;
+    _previousSize = const Size(0, 0);
+    _lastIssued = null;
   }
 }

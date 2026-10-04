@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/render_profile.dart';
@@ -241,6 +242,11 @@ class TransientTexturePool {
   /// reallocates. Call when the output size changes so stale-sized
   /// textures aren't kept alive.
   void clear() => _rings.clear();
+
+  /// The number of textures the pool holds across every descriptor's ring.
+  @internal
+  int get heldTextureCount =>
+      _rings.values.fold(0, (count, ring) => count + ring.nonNulls.length);
 }
 
 /// Per-frame state handed to every [RenderGraphPass] when the graph
