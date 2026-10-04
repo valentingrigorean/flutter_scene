@@ -381,7 +381,11 @@ export 'src/scene_pointer.dart' show ScenePointer;
 export 'src/scene.dart' show AntiAliasingMode, Scene, SceneGraph;
 export 'src/scene_tick_listener.dart' show SceneTickListener;
 export 'src/scene_encoder.dart'
-    show maxSceneColorCaptureBatches, sceneSortDepth;
+    show
+        SceneTranslucentDraw,
+        maxSceneColorCaptureBatches,
+        sceneSortDepth,
+        sceneTranslucentDraws;
 export 'src/widget_texture.dart'
     show WidgetTexture, WidgetTextureController, WidgetUpdatePolicy;
 export 'src/shaders.dart' show baseShaderLibrary, loadBaseShaderLibrary;

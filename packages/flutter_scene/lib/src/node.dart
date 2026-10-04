@@ -197,6 +197,15 @@ base class Node implements SceneGraph {
     return null;
   }
 
+  /// How far this node's meshes move toward the camera in the encoder's
+  /// depth sort, in world units along the view axis. A positive bias draws a
+  /// translucent mesh after the translucent draws up to that much nearer
+  /// than its bounds centre, as a line drawn over the surface it lies on.
+  /// The node keeps its own bounds for the frustum cull and raycasts. Not
+  /// inherited by children; set it on each mesh-bearing node.
+  /// {@category Rendering}
+  double sortDepthBias = 0.0;
+
   /// Marks this node's meshes as static shadow casters: their geometry,
   /// material coverage, and world transform are promised not to change while
   /// mounted, so the engine may render them into cached shadow-map tiles that

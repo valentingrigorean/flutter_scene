@@ -103,6 +103,10 @@ class RenderItem {
   /// The owning node's [Node.renderOrder], the first sort key of its pass.
   double renderOrder = 0.0;
 
+  /// The owning node's sort-depth bias, refreshed each frame. The encoder
+  /// takes it off the view-axis depth it sorts this item by.
+  double sortDepthBias = 0.0;
+
   /// The owning node's light channels (an 8-bit bitmask), refreshed each
   /// frame. A light shades this item only when its own channel mask
   /// intersects (`light.channelMask & lightChannelMask != 0`), and a

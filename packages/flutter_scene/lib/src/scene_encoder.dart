@@ -9,6 +9,8 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/camera.dart';
+import 'package:flutter_scene/src/components/instanced_mesh_component.dart';
+import 'package:flutter_scene/src/components/mesh_component.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart';
 import 'package:flutter_scene/src/geometry/vertex_layout.dart';
 import 'package:flutter_scene/src/light.dart';
@@ -17,6 +19,7 @@ import 'package:flutter_scene/src/fmat/material_registry.dart'
 import 'package:flutter_scene/src/material/instance_attributes.dart';
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/material/engine_lighting.dart';
+import 'package:flutter_scene/src/node.dart';
 import 'package:flutter_scene/src/render/projection_params.dart';
 import 'package:flutter_scene/src/render/custom_render_pass.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
@@ -26,6 +29,7 @@ import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/lod.dart';
+import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/render_profile.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
@@ -348,13 +352,16 @@ int sceneColorCaptureBatchCount(
 /// another consumer appears.
 ui.Size currentSceneEncoderViewport = ui.Size.zero;
 
-/// Computes the view-axis depth used to order deferred scene draws.
+/// Computes the view-axis depth used to order deferred scene draws: the
+/// depth of the centre of [localBounds] placed by [worldTransform], less a
+/// sort-depth [bias] (see [Node.sortDepthBias]).
 double sceneSortDepth(
   Matrix4 worldTransform,
   Aabb3? localBounds,
   Vector3 cameraPosition,
-  Vector3 cameraForward,
-) {
+  Vector3 cameraForward, {
+  double bias = 0.0,
+}) {
   // Kept allocation-free. This runs once per submitted draw per view, and
   // views multiply with the shadow, depth-prepass, and reflection passes.
   // `Aabb3.center` clones, `transformed3` clones, and `-` allocates again,
@@ -375,7 +382,136 @@ double sceneSortDepth(
   final worldZ = m[2] * cx + m[6] * cy + m[10] * cz + m[14];
   return (worldX - cameraPosition.x) * cameraForward.x +
       (worldY - cameraPosition.y) * cameraForward.y +
-      (worldZ - cameraPosition.z) * cameraForward.z;
+      (worldZ - cameraPosition.z) * cameraForward.z -
+      bias;
+}
+
+/// One translucent draw of a scene, as [sceneTranslucentDraws] reads it.
+final class SceneTranslucentDraw {
+  SceneTranslucentDraw._(
+    this.node,
+    this.geometry,
+    this.material,
+    this.bounds,
+    this.depth,
+  );
+
+  /// The node that draws it.
+  final Node node;
+
+  /// The geometry it draws.
+  final Geometry geometry;
+
+  /// The material it draws with.
+  final Material material;
+
+  /// The bounds the encoder culls and sorts it by, in the space of [node]:
+  /// the geometry's, or those of every instance for an instanced mesh. Null
+  /// when it has none.
+  final Aabb3? bounds;
+
+  /// The view-axis depth it sorts at, its node's sort-depth bias taken off.
+  final double depth;
+}
+
+/// The translucent draws of the subtree of [root] that a view of [camera] at
+/// [dimensions] through [layerMask] holds, by [Node.renderOrder] and then
+/// farthest first: the order [SceneEncoder] draws them in.
+///
+/// It reads the nodes as they stand, so it orders a frame before the frame
+/// draws, as a pass that places its own translucent draws among the others
+/// needs. It holds each visible translucent mesh primitive and instanced
+/// mesh of a visible node whose layers meet [layerMask], whose material
+/// draws in the scene's translucent pass (not display-referred), and whose
+/// bounds meet the view or whose node opts out of the
+/// frustum cull. Each sorts at [sceneSortDepth] of its bounds less its
+/// node's [Node.sortDepthBias]; an instanced mesh at the centre of its
+/// instances. A level-of-detail node sorts by its base level.
+///
+/// It leaves out the encoder's level-of-detail selection and its
+/// per-instance cull, so it may list more draws than the encoder makes: a
+/// level-of-detail node is listed by its base level even when the encoder
+/// draws another level or none, and an instanced mesh is listed even when
+/// the encoder culls every instance.
+List<SceneTranslucentDraw> sceneTranslucentDraws(
+  Node root,
+  Camera camera,
+  ui.Size dimensions, {
+  int layerMask = kRenderLayerAll,
+}) {
+  final eye = camera.position;
+  final forward = camera.forward;
+  final frustum = Frustum.matrix(camera.getViewTransform(dimensions));
+  final draws = <SceneTranslucentDraw>[];
+  final world = Aabb3();
+
+  bool placed(Node node, Aabb3? bounds) {
+    if (bounds == null) return true;
+    world
+      ..copyFrom(bounds)
+      ..transform(node.globalTransform);
+    return !node.frustumCulled || frustum.intersectsWithAabb3(world);
+  }
+
+  void visit(Node node) {
+    if (!node.visible) return;
+    if (node.layers & layerMask != 0) {
+      final transform = node.globalTransform;
+      final bias = node.sortDepthBias;
+      for (final component in node.getComponents<MeshComponent>()) {
+        for (final primitive in component.mesh.primitives) {
+          final material = primitive.material;
+          if (!primitive.visible ||
+              material.drawsNothing ||
+              material.displayReferred ||
+              material.isOpaque()) {
+            continue;
+          }
+          final bounds = primitive.geometry.localBounds;
+          if (!placed(node, bounds)) continue;
+          draws.add(
+            SceneTranslucentDraw._(
+              node,
+              primitive.geometry,
+              material,
+              bounds,
+              sceneSortDepth(transform, bounds, eye, forward, bias: bias),
+            ),
+          );
+        }
+      }
+      for (final component in node.getComponents<InstancedMeshComponent>()) {
+        final instanced = component.instancedMesh;
+        final material = instanced.material;
+        if (instanced.instanceCount == 0 ||
+            material.drawsNothing ||
+            material.displayReferred ||
+            material.isOpaque()) {
+          continue;
+        }
+        final bounds = instanced.aggregateBounds;
+        if (!placed(node, bounds)) continue;
+        draws.add(
+          SceneTranslucentDraw._(
+            node,
+            instanced.geometry,
+            material,
+            bounds,
+            bounds == null
+                ? sceneSortDepth(transform, null, eye, forward, bias: bias)
+                : (world.center - eye).dot(forward) - bias,
+          ),
+        );
+      }
+    }
+    node.children.forEach(visit);
+  }
+
+  visit(root);
+  return draws..sort((a, b) {
+    final byOrder = a.node.renderOrder.compareTo(b.node.renderOrder);
+    return byOrder != 0 ? byOrder : b.depth.compareTo(a.depth);
+  });
 }
 
 /// Render pipelines keyed by their (vertex shader, fragment shader, vertex
@@ -1085,12 +1221,13 @@ base class SceneEncoder {
           fade,
           pipeline,
           bounds == null
-              ? _depthOf(item.worldTransform)
+              ? _depthOf(item)
               : _depthOfPoint(
-                  (bounds.min.x + bounds.max.x) * 0.5,
-                  (bounds.min.y + bounds.max.y) * 0.5,
-                  (bounds.min.z + bounds.max.z) * 0.5,
-                ),
+                      (bounds.min.x + bounds.max.x) * 0.5,
+                      (bounds.min.y + bounds.max.y) * 0.5,
+                      (bounds.min.z + bounds.max.z) * 0.5,
+                    ) -
+                    item.sortDepthBias,
           item.windingFor(geometry),
           item.lightListOffset,
           item.lightListCount,
@@ -1107,7 +1244,7 @@ base class SceneEncoder {
           material,
           fade,
           pipeline,
-          _depthOf(item.worldTransform, geometry),
+          _depthOf(item, geometry),
           item.windingFor(geometry),
           item.lightListOffset,
           item.lightListCount,
@@ -1227,19 +1364,20 @@ base class SceneEncoder {
     return lod.resolve(size);
   }
 
-  double _depthOf(Matrix4 worldTransform, [Geometry? geometry]) {
+  double _depthOf(RenderItem item, [Geometry? geometry]) {
     return sceneSortDepth(
-      worldTransform,
+      item.worldTransform,
       geometry?.localBounds,
       _cameraPosition,
       _cameraForward,
+      bias: item.sortDepthBias,
     );
   }
 
   double _opaqueDepth(_OpaqueRecord record) {
     final cached = record.depth;
     if (!cached.isNaN) return cached;
-    return record.depth = _depthOf(record.item.worldTransform, record.geometry);
+    return record.depth = _depthOf(record.item, record.geometry);
   }
 
   double _depthOfPoint(double x, double y, double z) {
