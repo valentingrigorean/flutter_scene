@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_scene/src/external_bytes.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 
 import 'package:flutter_scene/src/render/render_graph.dart';
@@ -152,9 +153,33 @@ class Surface {
   }
 
   /// The number of textures every view's rings and transient pools hold.
-  @visibleForTesting
+  @internal
   int get debugHeldTextureCount =>
       _views.fold(0, (count, view) => count + view.heldTextureCount);
+
+  /// Every texture every view's rings and transient pools hold.
+  @internal
+  Iterable<gpu.Texture> get debugHeldTextures =>
+      _views.expand((view) => view.heldTextures);
+
+  /// The device memory, in bytes, of the render targets every view's rings
+  /// and transient pools hold: each texture's mip levels times its samples.
+  ///
+  /// A [gpu.StorageMode.deviceTransient] attachment (the depth and the
+  /// multisampled colour of the main pass) counts 0, since the device keeps
+  /// it in tile memory where it can (Metal on an Apple GPU, Vulkan with
+  /// lazily allocated memory); a device with no such memory allocates it in
+  /// full. The surface also states every texture it holds to the VM as
+  /// external memory, so a collection follows the render targets a dropped
+  /// surface leaves: the bytes counted here, plus the full bytes of each
+  /// transient attachment on Windows and Linux, whose devices allocate it in
+  /// full (Flutter GPU has no query for memoryless storage). [dispose] drops
+  /// what this counts; [releaseTransientRenderTargets] drops the attachment
+  /// pools.
+  int get heldBytes => debugHeldTextures.fold(
+    0,
+    (bytes, texture) => bytes + renderTargetBytes(texture),
+  );
 
   /// Drops every view's rings and transient pools, so their textures are
   /// unreachable from this surface. A later frame allocates them again.
@@ -254,6 +279,8 @@ class _ViewSurface {
           enableShaderReadUsage: true,
         ),
       );
+      final texture = colors.last;
+      statesExternalBytes(texture, statedRenderTargetBytes(texture));
     }
     final result = colors[sized.cursor];
     sized.cursor = (sized.cursor + 1) % Surface._maxFramesInFlight;
@@ -268,6 +295,10 @@ class _ViewSurface {
     }
     return count;
   }
+
+  Iterable<gpu.Texture> get heldTextures => _sizes.expand(
+    (sized) => sized.swapchainColors.followedBy(sized.pool.heldTextures),
+  );
 
   void dispose() {
     for (final sized in _sizes) {

@@ -174,6 +174,15 @@ class RenderTexture extends ChangeNotifier implements TextureSource {
   /// a feedback loop (see the class doc).
   gpu.Texture? get texture => _latest;
 
+  /// The device memory, in bytes, of the render targets this target holds
+  /// (its ring and attachment pool, counted as [Surface.heldBytes] counts
+  /// them), until [dispose].
+  int get heldBytes => _surface.heldBytes;
+
+  /// The number of textures this target's ring and attachment pool hold.
+  @visibleForTesting
+  int get debugHeldTextureCount => _surface.debugHeldTextureCount;
+
   /// Reallocates the target at a new size. Consumers pick up the new
   /// textures on the next render; the next [update] check re-renders
   /// regardless of policy so the target is never displayed stale-sized.
@@ -230,6 +239,17 @@ class RenderTexture extends ChangeNotifier implements TextureSource {
   @internal
   TransientTexturePool get transientTexturePool =>
       _surface.transientTexturePool();
+
+  /// Releases the ring and attachment pool this target holds, so their
+  /// textures become unreachable from it at this call, and clears
+  /// [texture]. A disposed target must not be rendered into again.
+  @override
+  void dispose() {
+    _surface.dispose();
+    _latest = null;
+    _pending = null;
+    super.dispose();
+  }
 
   /// Publishes the frame written since [acquireNextTexture] and notifies
   /// consumers.
