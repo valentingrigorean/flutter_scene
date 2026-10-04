@@ -161,7 +161,7 @@ void main() {
   testWidgets('a scene-owned texture view renders into its target', (
     tester,
   ) async {
-    await Scene.initializeStaticResources();
+    await tester.runAsync(Scene.initializeStaticResources);
 
     final scene = Scene();
     final target = RenderTexture(width: 16, height: 16);
