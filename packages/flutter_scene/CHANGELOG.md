@@ -147,6 +147,9 @@
 * The analyzer resolves the bundled GPU shim to the `package:flutter_gpu` types, so an app passes a `flutter_gpu` `BufferView`, `IndexType` or `Texture` to `Geometry.setVertices`, `setIndices` or `GpuTextureSource` without a cast; web and Wasm builds still select the WebGL2 backend.
 * `package:flutter_scene/build_hooks.dart` exports `engineShaderIncludeDirectory(BuildInput)`, the directory of the engine's shader includes, and `engineGlesLanguageVersion`, the GLSL ES version the engine compiles for, so a hook that runs `impellerc` itself compiles shaders that include the engine's GLSL.
 * A custom pass that declares `RenderInput.depth` without `RenderInput.normals` now sees `sceneDepthLinear.format == PixelFormat.r32Float`, since the depth-only prepass writes a one channel target; it reads planar depth from the red channel as before. Reflections, the irradiance field or a pass that declares normals keep the four channel `r32g32b32a32Float` target.
+* `Geometry.cpuMeshData` is public: unmodifiable views of the retained vertex and index data, with the joint indices and weights of a `SkinnedGeometry` in its interleaved vertices, so an app reads a skinned mesh's skin without copying it or parsing its glTF again.
+* Fixed a skinned mesh from the runtime glTF importer carrying no bounds, so it was never culled; it now carries the union of its rest pose and of each keyframe pose of each animation, as the offline importer bakes. A morphed skinned primitive still carries none, and `skinnedPoseBounds` names the poses the union leaves out, where an app widens or clears the bounds.
+* Fixed the skinned pose bounds the offline importer bakes holding only the last animation's poses of a joint that several animations drive, and leaving out the rest pose; each animation is now posed on its own over the rest pose.
 
 ## 0.23.0
 
