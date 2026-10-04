@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
+
 /// What a texture's pixels represent, which controls how mip levels are
 /// downsampled so the result is correct (color must average in linear light,
 /// normals must be averaged as vectors and renormalized).
@@ -45,6 +47,7 @@ List<MipLevel> generateMipChain(
   int height,
   TextureContent content,
 ) {
+  _mipChainsBuilt++;
   final levels = <MipLevel>[MipLevel(width, height, pixels)];
   var w = width;
   var h = height;
@@ -60,6 +63,13 @@ List<MipLevel> generateMipChain(
   }
   return levels;
 }
+
+/// How many chains [generateMipChain] has built on the current isolate. Each
+/// isolate counts its own, so a chain built on a background isolate leaves the
+/// caller's count unchanged.
+@visibleForTesting
+int get mipChainsBuiltOnThisIsolate => _mipChainsBuilt;
+int _mipChainsBuilt = 0;
 
 /// The number of mip levels for a [width] x [height] texture.
 int mipLevelCountFor(int width, int height) =>
