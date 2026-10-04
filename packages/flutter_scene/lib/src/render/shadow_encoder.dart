@@ -2,6 +2,7 @@ import 'package:flutter_scene/src/geometry/geometry.dart'
     show Geometry, bindUnskinnedFrameInfo;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart' show ShadowCasterFaces;
+import 'package:flutter_scene/src/material/material.dart' show MaskedDepthPass;
 import 'package:flutter_scene/src/render/instance_batching.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:vector_math/vector_math.dart';
@@ -188,7 +189,10 @@ class ShadowEncoder {
     // faces that are visible are the faces that cast; the caster-face mode's
     // second-depth trick has no meaning for cutout sheets.
     final masked = item.material.depthAlphaMasked;
-    final fragmentShader = masked ? _maskedDepthShader : _depthShader;
+    final fragmentShader = masked
+        ? item.material.maskedDepthFragmentShader(MaskedDepthPass.shadow) ??
+              _maskedDepthShader
+        : _depthShader;
     final cullMode = masked ? item.material.renderCullMode : _casterCullMode;
     if (cullMode != _currentCullMode) {
       _renderPass.setCullMode(cullMode);
