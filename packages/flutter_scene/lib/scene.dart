@@ -276,6 +276,7 @@ export 'src/texture/texture_registry.dart'
     show clearTextureCache, loadTexture, releaseTexture;
 export 'src/texture/mipmap.dart'
     show MipLevel, TextureContent, generateMipChain;
+export 'src/texture/mipmap_async.dart' show generateMipChainAsync;
 // Audio is an optional contract, exported from
 // `package:flutter_scene/audio.dart`.
 // Physics is an optional contract, exported from
