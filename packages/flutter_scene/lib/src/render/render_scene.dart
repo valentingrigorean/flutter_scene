@@ -15,6 +15,7 @@ import 'package:flutter_scene/src/components/reflection_probe_component.dart';
 import 'package:flutter_scene/src/components/semantics_component.dart';
 import 'package:flutter_scene/src/components/spot_light_component.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart';
+import 'package:flutter_scene/src/light.dart' show ShadowCasterFaces;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/render/bvh.dart';
@@ -106,6 +107,10 @@ class RenderItem {
 
   /// Mirrors the owning node's `castsShadows` setting, refreshed each frame.
   bool castsShadows = true;
+
+  /// Mirrors the owning node's `shadowCasterFaces`, refreshed each frame; null
+  /// casts with the light's faces.
+  ShadowCasterFaces? shadowCasterFaces;
 
   /// The owning node's joints texture and its edge length in texels, or
   /// null/0 for an unskinned node. Refreshed each frame from the node's

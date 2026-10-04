@@ -1,5 +1,6 @@
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/render_scene.dart';
+import 'package:flutter_scene/src/render/shadow_encoder.dart';
 import 'package:flutter_scene/scene.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
@@ -105,5 +106,124 @@ void main() {
     expect(item.frustumCulled, isFalse);
     expect(item.layers, 4);
     expect(item.highlightColor, Vector4(1, 0, 1, 1));
+  });
+
+  test('shadowCasterFaces reaches mesh and instanced render items', () {
+    final renderScene = RenderScene();
+    final root = Node()..debugMountInto(renderScene);
+    final meshNode = Node(mesh: Mesh(_StubGeometry(), _StubMaterial()))
+      ..shadowCasterFaces = ShadowCasterFaces.back;
+    final instancedNode = Node()..shadowCasterFaces = ShadowCasterFaces.both;
+    instancedNode.addComponent(
+      InstancedMeshComponent(
+        InstancedMesh(geometry: _StubGeometry(), material: _StubMaterial())
+          ..addInstance(Matrix4.identity()),
+      ),
+    );
+    root
+      ..add(Node(mesh: Mesh(_StubGeometry(), _StubMaterial())))
+      ..add(meshNode)
+      ..add(instancedNode);
+
+    root.scenePrePass(0);
+
+    expect(
+      renderScene.items.map((item) => item.shadowCasterFaces),
+      containsAll(<ShadowCasterFaces?>[
+        null,
+        ShadowCasterFaces.back,
+        ShadowCasterFaces.both,
+      ]),
+    );
+  });
+
+  test('a static caster that changes its faces changes the cached shadow', () {
+    final renderScene = RenderScene();
+    final root = Node()..debugMountInto(renderScene);
+    final caster = Node(mesh: Mesh(_StubGeometry(), _StubMaterial()))
+      ..shadowStatic = true;
+    final instanced = Node()..shadowStatic = true;
+    instanced.addComponent(
+      InstancedMeshComponent(
+        InstancedMesh(geometry: _StubGeometry(), material: _StubMaterial())
+          ..addInstance(Matrix4.identity()),
+      ),
+    );
+    root
+      ..add(caster)
+      ..add(instanced);
+    root.scenePrePass(0);
+    final initial = renderScene.staticShadowRevision;
+
+    caster.shadowCasterFaces = ShadowCasterFaces.back;
+    root.scenePrePass(0);
+    final meshChanged = renderScene.staticShadowRevision;
+    instanced.shadowCasterFaces = ShadowCasterFaces.back;
+    root.scenePrePass(0);
+
+    expect(meshChanged, greaterThan(initial));
+    expect(renderScene.staticShadowRevision, greaterThan(meshChanged));
+  });
+
+  test("a node's caster faces take the place of the light's", () {
+    RenderItem caster([ShadowCasterFaces? faces]) =>
+        RenderItem(geometry: _StubGeometry(), material: _StubMaterial())
+          ..shadowCasterFaces = faces;
+
+    expect(
+      shadowCasterCullMode(caster(), ShadowCasterFaces.front),
+      gpu.CullMode.backFace,
+    );
+    expect(
+      shadowCasterCullMode(caster(), ShadowCasterFaces.back),
+      gpu.CullMode.frontFace,
+    );
+    expect(
+      shadowCasterCullMode(
+        caster(ShadowCasterFaces.back),
+        ShadowCasterFaces.front,
+      ),
+      gpu.CullMode.frontFace,
+    );
+    expect(
+      shadowCasterCullMode(
+        caster(ShadowCasterFaces.front),
+        ShadowCasterFaces.back,
+      ),
+      gpu.CullMode.backFace,
+    );
+    expect(
+      shadowCasterCullMode(
+        caster(ShadowCasterFaces.both),
+        ShadowCasterFaces.front,
+      ),
+      gpu.CullMode.none,
+    );
+  });
+
+  test('one shadow draw holds casters of one cull mode', () {
+    final geometry = UnskinnedGeometry();
+    final material = _StubMaterial();
+    RenderItem caster([ShadowCasterFaces? faces]) =>
+        RenderItem(geometry: geometry, material: material)
+          ..shadowCasterFaces = faces;
+    final records = [
+      caster(),
+      caster(ShadowCasterFaces.front),
+      caster(ShadowCasterFaces.back),
+      caster(ShadowCasterFaces.back),
+      caster(),
+    ];
+
+    final starts = <int>[];
+    for (
+      var start = 0;
+      start < records.length;
+      start = shadowBatchEnd(records, start, ShadowCasterFaces.front)
+    ) {
+      starts.add(start);
+    }
+
+    expect(starts, [0, 2, 4]);
   });
 }

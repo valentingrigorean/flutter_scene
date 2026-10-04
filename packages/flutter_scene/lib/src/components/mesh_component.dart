@@ -179,6 +179,7 @@ class MeshComponent extends Component {
           item.lightChannelMask == node.lightChannelMask &&
           item.shadowStatic == node.shadowStatic &&
           item.castsShadows == (primitive.castsShadow && node.castsShadows) &&
+          item.shadowCasterFaces == node.shadowCasterFaces &&
           item.highlightColor == node.highlightColor &&
           item.sortDepthBias == node.sortDepthBias &&
           _boundsVersions[index] == item.geometry.localBoundsVersion;
@@ -204,6 +205,7 @@ class MeshComponent extends Component {
     final sortDepthBias = node.sortDepthBias;
     final lightChannelMask = node.lightChannelMask;
     final highlightColor = node.highlightColor;
+    final shadowCasterFaces = node.shadowCasterFaces;
     for (var index = 0; index < _renderItems.length; index++) {
       final item = _renderItems[index];
       final primitive = _mesh.primitives[index];
@@ -215,6 +217,7 @@ class MeshComponent extends Component {
           (item.visible != visible ||
               item.shadowStatic != node.shadowStatic ||
               item.castsShadows != effectiveCastsShadows ||
+              item.shadowCasterFaces != shadowCasterFaces ||
               item.lightChannelMask != lightChannelMask ||
               transformChanged) &&
           (item.shadowStatic || node.shadowStatic) &&
@@ -236,6 +239,7 @@ class MeshComponent extends Component {
       item.refreshWinding(windingFlipped);
       item.shadowStatic = node.shadowStatic;
       item.castsShadows = effectiveCastsShadows;
+      item.shadowCasterFaces = shadowCasterFaces;
       item.highlightColor = highlightColor;
       if (skin != null) {
         item.previousJointsTexture = skin.getPreviousJointsTexture();

@@ -40,6 +40,36 @@ bool shadowCasterAccepted(
   return item.visible;
 }
 
+/// The cull mode that keeps the faces [item] casts with: its node's
+/// [RenderItem.shadowCasterFaces], or the light's [lightFaces] when the node
+/// states none. Rendering front faces means culling back faces, and vice
+/// versa.
+gpu.CullMode shadowCasterCullMode(
+  RenderItem item,
+  ShadowCasterFaces lightFaces,
+) => switch (item.shadowCasterFaces ?? lightFaces) {
+  ShadowCasterFaces.front => gpu.CullMode.backFace,
+  ShadowCasterFaces.back => gpu.CullMode.frontFace,
+  ShadowCasterFaces.both => gpu.CullMode.none,
+};
+
+/// The end of the instanced shadow draw that starts at [start]: the casters
+/// [depthBatchEnd] merges, cut where a caster records other faces than the
+/// first under a light that casts with [lightFaces].
+int shadowBatchEnd(
+  List<RenderItem> records,
+  int start,
+  ShadowCasterFaces lightFaces,
+) {
+  final end = depthBatchEnd(records, start);
+  final faces = records[start].shadowCasterFaces ?? lightFaces;
+  var cut = start + 1;
+  while (cut < end && (records[cut].shadowCasterFaces ?? lightFaces) == faces) {
+    cut++;
+  }
+  return cut;
+}
+
 /// Records each opaque shadow caster's depth into a shadow-map render
 /// pass, from a directional light's point of view.
 ///
@@ -56,30 +86,30 @@ class ShadowEncoder {
     ShadowCasterFaces casterFaces, {
     ShadowCasterFilter filter = ShadowCasterFilter.all,
     int casterChannelMask = 0xFF,
-  }) : _filter = filter,
+  }) : _casterFaces = casterFaces,
+       _filter = filter,
        _casterChannelMask = casterChannelMask {
     frustum = Frustum.matrix(_lightSpaceMatrix);
     _renderPass.setDepthWriteEnable(true);
     _renderPass.setColorBlendEnable(false);
     _renderPass.setDepthCompareOperation(gpu.CompareFunction.lessEqual);
-    // Cull the complement of the faces that should cast: rendering front faces
-    // (the default) means culling back faces, and vice versa. With base CCW
+    // Cull the complement of the faces that should cast. With base CCW
     // winding (flipped per-item for mirrored casters below), back-face culling
     // keeps the light-facing faces. [ShadowCasterFaces.back] (second-depth)
     // suits solid geometry, recording the far face to avoid self-shadow acne.
-    _casterCullMode = switch (casterFaces) {
+    _currentCullMode = switch (casterFaces) {
       ShadowCasterFaces.front => gpu.CullMode.backFace,
       ShadowCasterFaces.back => gpu.CullMode.frontFace,
       ShadowCasterFaces.both => gpu.CullMode.none,
     };
-    _renderPass.setCullMode(_casterCullMode);
-    _currentCullMode = _casterCullMode;
+    _renderPass.setCullMode(_currentCullMode);
     _renderPass.setWindingOrder(gpu.WindingOrder.clockwise);
   }
 
   final gpu.RenderPass _renderPass;
   final TransientWriter _transientsBuffer;
   final Matrix4 _lightSpaceMatrix;
+  final ShadowCasterFaces _casterFaces;
   final ShadowCasterFilter _filter;
 
   // The light's shadow-caster channels. An item casts only when its node's
@@ -98,12 +128,9 @@ class ShadowEncoder {
   static final gpu.Shader _maskedDepthShader =
       baseShaderLibrary['DepthOnlyMaskedFragment']!;
 
-  /// The cull mode the light's caster-face setting maps to, applied to
-  /// non-masked casters.
-  late final gpu.CullMode _casterCullMode;
-
-  /// The cull mode currently set on the pass; alpha-masked casters switch to
-  /// their material's own culling and back (see [submit]).
+  /// The cull mode currently set on the pass. A non-masked caster switches to
+  /// the faces its node or the light casts with, and an alpha-masked caster to
+  /// its material's own culling (see [submit]).
   late gpu.CullMode _currentCullMode;
 
   /// Frustum of the light-space view-projection, used for per-item
@@ -151,14 +178,18 @@ class ShadowEncoder {
         a.material,
       ).compareTo(identityHashCode(b.material));
       if (byMaterial != 0) return byMaterial;
-      return identityHashCode(
+      final byGeometry = identityHashCode(
         a.geometry,
       ).compareTo(identityHashCode(b.geometry));
+      if (byGeometry != 0) return byGeometry;
+      return (a.shadowCasterFaces ?? _casterFaces).index.compareTo(
+        (b.shadowCasterFaces ?? _casterFaces).index,
+      );
     });
     var index = 0;
     while (index < _records.length) {
       final first = _records[index];
-      final end = depthBatchEnd(_records, index);
+      final end = shadowBatchEnd(_records, index, _casterFaces);
       if (end > index + 1) {
         final batches = <InstanceDataBatch>[];
         for (var batchIndex = index; batchIndex < end; batchIndex++) {
@@ -193,7 +224,9 @@ class ShadowEncoder {
         ? item.material.maskedDepthFragmentShader(MaskedDepthPass.shadow) ??
               _maskedDepthShader
         : _depthShader;
-    final cullMode = masked ? item.material.renderCullMode : _casterCullMode;
+    final cullMode = masked
+        ? item.material.renderCullMode
+        : shadowCasterCullMode(item, _casterFaces);
     if (cullMode != _currentCullMode) {
       _renderPass.setCullMode(cullMode);
       _currentCullMode = cullMode;
