@@ -11,6 +11,7 @@
 * `RenderTexture.dispose` releases its output ring and attachment pool and clears `texture`; it inherited `ChangeNotifier.dispose` and kept them until the target was collected.
 * Fixed morph targets on unskinned meshes not deforming on the GPU path; their weights animated but the mesh drew in its base pose (#428).
 * `Material.maskedDepthFragmentShader` lets an alpha-masked material supply its own masked fragment for each `MaskedDepthPass` (the linear depth prepass, the depth and normal prepass and the shadow pass), so its depth and shadow cut the texels its color fragment cuts. A material's fragment can include an engine masked fragment with `DEPTH_MASK_COVERAGE` defined and define `float DepthMaskCoverage()` itself.
+* The analyzer resolves the bundled GPU shim to the `package:flutter_gpu` types, so an app passes a `flutter_gpu` `BufferView`, `IndexType` or `Texture` to `Geometry.setVertices`, `setIndices` or `GpuTextureSource` without a cast; web and Wasm builds still select the WebGL2 backend.
 
 ## 0.23.0
 
