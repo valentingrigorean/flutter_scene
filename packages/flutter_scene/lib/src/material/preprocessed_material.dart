@@ -402,7 +402,6 @@ class PreprocessedMaterial extends Material implements HotReloadableFmat {
   bool isOpaque() => _blending == FmatBlending.opaque;
 
   @override
-  @internal
   bool get depthAlphaMasked => _depthMaskTexture != null;
 
   static final gpu.SamplerOptions _depthMaskSampler = gpu.SamplerOptions(
@@ -414,7 +413,6 @@ class PreprocessedMaterial extends Material implements HotReloadableFmat {
   );
 
   @override
-  @internal
   void bindDepthAlphaMask(
     gpu.RenderPass pass,
     gpu.Shader shader,
