@@ -150,6 +150,7 @@
 * `Geometry.cpuMeshData` is public: unmodifiable views of the retained vertex and index data, with the joint indices and weights of a `SkinnedGeometry` in its interleaved vertices, so an app reads a skinned mesh's skin without copying it or parsing its glTF again.
 * Fixed a skinned mesh from the runtime glTF importer carrying no bounds, so it was never culled; it now carries the union of its rest pose and of each keyframe pose of each animation, as the offline importer bakes. A morphed skinned primitive still carries none, and `skinnedPoseBounds` names the poses the union leaves out, where an app widens or clears the bounds.
 * Fixed the skinned pose bounds the offline importer bakes holding only the last animation's poses of a joint that several animations drive, and leaving out the rest pose; each animation is now posed on its own over the rest pose.
+* `DirectionalLight.invalidateStaticShadows` marks the cached static shadow tiles stale, so the next frame re-renders every cascade's tile at once into the textures it holds, where a static caster change refreshes one tile a frame. An app calls it when something the cache cannot see changes what the static casters draw, such as a clip a shader applies.
 
 ## 0.23.0
 

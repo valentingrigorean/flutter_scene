@@ -126,4 +126,30 @@ void main() {
     light.shadowCasterChannelMask = 0x0F;
     expect(plan(idealCascades()).refreshes.length, 2);
   });
+
+  test('invalidating the static shadows refreshes every cascade in one frame '
+      'and keeps the tiles', () {
+    final first = plan(idealCascades());
+    final entries = List.of(first.entries);
+    expect(plan(idealCascades()).refreshes, isEmpty);
+    light.invalidateStaticShadows();
+    final p = plan(idealCascades());
+    expect(p.refreshes.map((r) => r.cascadeIndex), [0, 1]);
+    expect(p.entries, orderedEquals(entries));
+    expect(plan(idealCascades()).refreshes, isEmpty);
+  });
+
+  test('invalidating the static shadows also refreshes a content change '
+      'without amortizing it', () {
+    plan(idealCascades());
+    light.invalidateStaticShadows();
+    expect(plan(idealCascades(), signature: 2).refreshes.length, 2);
+    expect(plan(idealCascades(), signature: 2).refreshes, isEmpty);
+  });
+
+  test('a new cache takes the light as it finds it', () {
+    light.invalidateStaticShadows();
+    expect(plan(idealCascades()).refreshes.length, 2);
+    expect(plan(idealCascades()).refreshes, isEmpty);
+  });
 }

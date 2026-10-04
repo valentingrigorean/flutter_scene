@@ -177,6 +177,20 @@ class DirectionalLight {
   /// cached cascades one per frame, so far cascades lag the turn briefly.
   bool cacheStaticShadows;
 
+  /// Counts [invalidateStaticShadows] calls; a shadow cache that saw an
+  /// older count re-renders its static tiles.
+  @internal
+  int get staticShadowRevision => _staticShadowRevision;
+  int _staticShadowRevision = 0;
+
+  /// Marks the cached static-caster shadow tiles stale.
+  ///
+  /// The next frame re-renders every cascade's static tile at once, instead of
+  /// the amortized refresh a static-caster set change gets, and keeps the
+  /// tile textures. Call it when something the cache cannot see changes what
+  /// the static casters draw, such as a clip a shader applies to them.
+  void invalidateStaticShadows() => _staticShadowRevision++;
+
   /// World-space width of the band at the far shadow cascade's edge
   /// over which shadowing fades back to lit, so the shadow distance
   /// limit is soft rather than a hard cutoff. `0` disables the fade.
