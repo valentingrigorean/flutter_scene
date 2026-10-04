@@ -747,8 +747,17 @@ abstract class Geometry {
   /// select a custom material's generated vertex shader (see
   /// [Material.materialVertexShader]). Unskinned geometry is `'unskinned'`;
   /// [SkinnedGeometry] overrides this to `'skinned'`.
-  @internal
-  String get materialVertexVariant => 'unskinned';
+  ///
+  /// Null means this geometry owns its vertex shader: every pass runs
+  /// [vertexShader] (or [depthOnlyVertex] in the depth-style passes) and no
+  /// material's vertex variant replaces it. A geometry whose vertex stage
+  /// expands or places its vertices (a ribbon, a camera-facing sprite) returns
+  /// null, since a material's variant would read its buffers as plain mesh
+  /// vertices. A non-null name selects a variant: `ShaderMaterial` maps a name
+  /// it does not know to its unskinned variant, so an unknown name does not
+  /// keep a material's vertex shader off this geometry.
+  /// {@category Geometry}
+  String? get materialVertexVariant => 'unskinned';
 
   /// The morph target deltas this geometry carries, or null for unmorphed
   /// geometry. Overridden by the morphed geometry subclasses.
@@ -913,7 +922,7 @@ abstract class Geometry {
   /// its own instance-rate buffer (a billboard's per-particle attributes) and
   /// takes the model transform some other way (a uniform) overrides this to
   /// false so the encoder leaves its slot alone.
-  @internal
+  /// {@category Geometry}
   bool get bindsModelTransformInstance =>
       _bindsModelTransformInstance ?? (instancedVertexLayout != null);
 
@@ -925,7 +934,7 @@ abstract class Geometry {
   /// reliable front/back (a camera-facing billboard, whose winding flips with
   /// the view) overrides this to true so those passes draw it from both sides
   /// instead of culling it away.
-  @internal
+  /// {@category Geometry}
   bool get isDoubleSided => false;
 
   /// Binds all of this geometry's vertex streams (to slots 0, 1, ...) and
@@ -988,7 +997,7 @@ abstract class Geometry {
   /// passes fetch only the position attribute. Skinned geometry returns
   /// null (its joints-driven shader has no position-only variant yet), so
   /// the depth passes drive it through [bind] like the color pass.
-  @internal
+  /// {@category Geometry}
   ({gpu.Shader shader, VertexLayoutDescriptor layout})? get depthOnlyVertex =>
       null;
 }

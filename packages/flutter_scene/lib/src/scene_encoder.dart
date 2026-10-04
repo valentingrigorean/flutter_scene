@@ -520,8 +520,7 @@ base class SceneEncoder {
     // A material with a `vertex { }` block supplies its own vertex shader for
     // this geometry's mesh type; otherwise the engine's standard one is used.
     final pipeline = resolvePipeline(
-      material.materialVertexShader(geometry.materialVertexVariant) ??
-          geometry.vertexShader,
+      material.vertexShaderForGeometry(geometry) ?? geometry.vertexShader,
       material.fragmentShaderForLighting(_lighting),
       // A material declaring `instance_attributes` widens the instance-rate
       // slot, so the pipeline depends on the material as well as the geometry.
@@ -857,9 +856,7 @@ base class SceneEncoder {
     // A `vertex { }` material supplies its own vertex shader for this mesh
     // type; the geometry must bind FrameInfo (and skinned's joints texture)
     // against it, since its uniform slots can differ from the engine default.
-    final materialVertex = material.materialVertexShader(
-      geometry.materialVertexVariant,
-    );
+    final materialVertex = material.vertexShaderForGeometry(geometry);
     _bindGeometry(geometry, worldTransform, materialVertex, material.depthBias);
     if (geometry.bindsModelTransformInstance) {
       // The model matrix arrives through the instance-rate vertex buffer,
@@ -915,9 +912,7 @@ base class SceneEncoder {
       _clearBindings();
     }
     _bindPipeline(pipeline);
-    final materialVertex = material.materialVertexShader(
-      geometry.materialVertexVariant,
-    );
+    final materialVertex = material.vertexShaderForGeometry(geometry);
     _bindMaterial(material, materialVertex, fade);
     _setPrimitiveType(geometry.primitiveType);
 
@@ -1003,9 +998,7 @@ base class SceneEncoder {
       _clearBindings();
     }
     _bindPipeline(pipeline);
-    final materialVertex = material.materialVertexShader(
-      geometry.materialVertexVariant,
-    );
+    final materialVertex = material.vertexShaderForGeometry(geometry);
     _bindMaterial(material, materialVertex, fade);
     _setPrimitiveType(geometry.primitiveType);
     _bindGeometry(

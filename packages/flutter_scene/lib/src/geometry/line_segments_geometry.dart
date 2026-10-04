@@ -137,9 +137,9 @@ class LineSegmentsGeometry extends Geometry {
   bool get isDoubleSided => true;
 
   // The expansion runs in the engine's own vertex shader; a custom
-  // material's generated vertex variants do not apply to this geometry.
+  // material's vertex variants do not apply to this geometry.
   @override
-  String get materialVertexVariant => 'line_segments';
+  String? get materialVertexVariant => null;
 
   @override
   void bind(

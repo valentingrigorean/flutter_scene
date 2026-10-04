@@ -1,3 +1,7 @@
+## Unreleased
+
+* `Geometry.materialVertexVariant`, `bindsModelTransformInstance`, `isDoubleSided`, `depthOnlyVertex`, and `Material.vertexShaderForGeometry` are public, so a custom `Geometry` subclass can drive its own vertex stage. A null `materialVertexVariant` means the geometry owns its vertex shader: no material vertex variant replaces it in any pass, which fixes a `ShaderMaterial` with an unskinned vertex shader running over `LineSegmentsGeometry`, `BillboardGeometry`, and `SplatGeometry`.
+
 ## 0.23.0
 
 * Build hooks no longer crash on a target OS `package:code_assets` cannot name, which is how a third-party embedder announces tvOS or visionOS.

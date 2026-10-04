@@ -167,6 +167,11 @@ class SplatGeometry extends Geometry {
   @override
   bool get isDoubleSided => true;
 
+  // The footprint expansion runs in the engine's own vertex shader; a custom
+  // material's vertex variants do not apply to this geometry.
+  @override
+  String? get materialVertexVariant => null;
+
   void _ensureGpuResources() {
     if (_quadVertices != null) return;
 

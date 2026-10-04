@@ -199,8 +199,9 @@ class ShadowEncoder {
     // A `vertex { }` material displaces geometry in the color pass, so run its
     // vertex variant here too or the shadow detaches from the visible surface.
     final depthVertex = masked ? null : geometry.depthOnlyVertex;
-    final materialVertex = item.material.materialVertexShader(
-      depthVertex != null ? 'depth' : geometry.materialVertexVariant,
+    final materialVertex = item.material.vertexShaderForGeometry(
+      geometry,
+      depth: depthVertex != null,
     );
     final activeVertex =
         materialVertex ?? depthVertex?.shader ?? geometry.vertexShader;

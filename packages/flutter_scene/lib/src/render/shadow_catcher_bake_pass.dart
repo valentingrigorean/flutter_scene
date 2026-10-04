@@ -193,9 +193,7 @@ class ShadowCatcherBakePass extends RenderGraphPass {
         ),
       );
       item.applyJointsTexture(geometry);
-      final materialVertex = material.materialVertexShader(
-        geometry.materialVertexVariant,
-      );
+      final materialVertex = material.vertexShaderForGeometry(geometry);
       final fragmentShader = material.fragmentShaderForLighting(lighting);
       final pipeline = resolvePipeline(
         materialVertex ?? geometry.vertexShader,

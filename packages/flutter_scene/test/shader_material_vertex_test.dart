@@ -63,6 +63,7 @@ void main() {
       const hooks = [
         'fragmentShaderForLighting',
         'materialVertexShader',
+        'vertexShaderForGeometry',
         'bindVertexStage',
         'depthAlphaMasked',
         'bindDepthAlphaMask',
