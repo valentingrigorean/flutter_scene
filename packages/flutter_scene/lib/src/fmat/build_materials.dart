@@ -298,7 +298,7 @@ Future<void> _buildMaterials({
   // output keyed to it is separated by target. Several builds share one tree.
   final target = shaderBundleTargetKey(buildInput);
 
-  final frameworkShaders = await frameworkShaderInclude();
+  final frameworkShaders = await engineShaderIncludeDirectory(buildInput);
 
   // Generated GLSL and the synthesized manifest live under the package's build
   // directory; they are regenerated each run.
@@ -517,7 +517,7 @@ Future<void> _buildMaterials({
         // Match the engine bundle's GLES dialect (GLSL ES 3.00); the
         // framework radiance sampling these materials can `#include` uses
         // textureLod, which is not available in 1.00 without an extension.
-        glesLanguageVersion: 300,
+        glesLanguageVersion: engineGlesLanguageVersion,
         // The material bundle ships under materials/ next to its sidecar and
         // index, not as a standalone shader bundle.
         copyToGeneratedTree: false,

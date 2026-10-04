@@ -6,7 +6,9 @@
 /// custom-material files into a Flutter GPU shader bundle plus a parameter
 /// sidecar, [buildTextures] cooks loose images into the engine's compressed
 /// `.fstex` container, and [buildTargetShaderBundleJson] compiles raw shader
-/// manifests without unused platform backends. [buildEngineAssets] is
+/// manifests without unused platform backends. A hook that runs `impellerc`
+/// itself passes [engineShaderIncludeDirectory] and [engineGlesLanguageVersion]
+/// so its shaders include the engine's GLSL. [buildEngineAssets] is
 /// optional, putting the shaders flutter_scene itself needs in this app's
 /// generated assets rather than in flutter_scene's own.
 ///
@@ -43,6 +45,9 @@ export 'src/fmat/build_materials.dart'
 export 'src/fmat/target_shader_bundle.dart'
     if (dart.library.js_interop) 'src/fmat/target_shader_bundle_unsupported.dart'
     show TargetShaderBundleAssetMode, buildTargetShaderBundleJson;
+export 'src/fmat/framework_shaders.dart'
+    if (dart.library.js_interop) 'src/fmat/framework_shaders_unsupported.dart'
+    show engineGlesLanguageVersion, engineShaderIncludeDirectory;
 export 'src/texture/build_textures.dart'
     if (dart.library.js_interop) 'src/texture/build_textures_unsupported.dart'
     show TextureAssetMode, buildTextures;
