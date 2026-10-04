@@ -10,7 +10,8 @@ import 'package:flutter_scene/src/components/mesh_component.dart';
 import 'package:flutter_scene/src/geometry/mesh_data.dart';
 import 'package:flutter_scene/src/geometry/morph_targets.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
-import 'package:flutter_scene/src/light.dart' show ShadowCastingMode;
+import 'package:flutter_scene/src/light.dart'
+    show DirectionalLight, ShadowCasterFaces, ShadowCastingMode, SpotLight;
 import 'package:flutter_scene/src/runtime_importer/runtime_importer.dart';
 import 'package:flutter_scene/src/scene.dart';
 import 'package:flutter_scene/src/animation.dart';
@@ -242,6 +243,17 @@ base class Node implements SceneGraph {
   @Deprecated('Use shadowCastingMode instead.')
   set castsShadows(bool value) =>
       shadowCastingMode = value ? ShadowCastingMode.on : ShadowCastingMode.off;
+
+  /// The faces of this node's meshes that a shadow map records, in place of
+  /// the light's [DirectionalLight.shadowCasterFaces] or
+  /// [SpotLight.shadowCasterFaces]; null (the default) takes the light's.
+  /// A height field lit from above, such as terrain, casts with
+  /// [ShadowCasterFaces.back] so its lit faces do not shadow themselves while
+  /// one-sided casters keep the light's [ShadowCasterFaces.front]. An
+  /// alpha-masked material casts with its own culling either way. Not
+  /// inherited by children; set it on each mesh-bearing node.
+  /// {@category Lighting and environment}
+  ShadowCasterFaces? shadowCasterFaces;
 
   /// Whether scene raycasts (`Scene.raycast`) test this node's meshes.
   ///

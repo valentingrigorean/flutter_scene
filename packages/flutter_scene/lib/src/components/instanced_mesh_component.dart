@@ -79,6 +79,7 @@ class InstancedMeshComponent extends Component {
         item.sortDepthBias == node.sortDepthBias &&
         item.shadowStatic == node.shadowStatic &&
         item.shadowCastingMode == node.shadowCastingMode &&
+        item.shadowCasterFaces == node.shadowCasterFaces &&
         item.lightChannelMask == lightChannelMask) {
       return;
     }
@@ -96,6 +97,7 @@ class InstancedMeshComponent extends Component {
         (item.visible != visible ||
             item.shadowStatic != node.shadowStatic ||
             item.shadowCastingMode != node.shadowCastingMode ||
+            item.shadowCasterFaces != node.shadowCasterFaces ||
             item.lightChannelMask != lightChannelMask ||
             boundsChangedByInput) &&
         (item.shadowStatic || node.shadowStatic) &&
@@ -107,6 +109,7 @@ class InstancedMeshComponent extends Component {
     item.refreshWinding(node.windingFlipped);
     item.shadowStatic = node.shadowStatic;
     item.shadowCastingMode = node.shadowCastingMode;
+    item.shadowCasterFaces = node.shadowCasterFaces;
     item.lightChannelMask = lightChannelMask;
     item.instanceTransforms = instancedMesh.instances;
     item.instanceColors = instancedMesh.colors;

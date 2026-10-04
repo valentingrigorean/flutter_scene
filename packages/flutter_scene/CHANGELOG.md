@@ -151,6 +151,7 @@
 * Fixed a skinned mesh from the runtime glTF importer carrying no bounds, so it was never culled; it now carries the union of its rest pose and of each keyframe pose of each animation, as the offline importer bakes. A morphed skinned primitive still carries none, and `skinnedPoseBounds` names the poses the union leaves out, where an app widens or clears the bounds.
 * Fixed the skinned pose bounds the offline importer bakes holding only the last animation's poses of a joint that several animations drive, and leaving out the rest pose; each animation is now posed on its own over the rest pose.
 * `DirectionalLight.invalidateStaticShadows` marks the cached static shadow tiles stale, so the next frame re-renders every cascade's tile at once into the textures it holds, where a static caster change refreshes one tile a frame. An app calls it when something the cache cannot see changes what the static casters draw, such as a clip a shader applies.
+* `Node.shadowCasterFaces` states the faces a node's meshes record into a shadow map in place of the light's `shadowCasterFaces`, so a height field such as terrain casts with its sun-away faces while every other caster keeps the light's front faces; null, the default, takes the light's. An alpha-masked material still casts with its own culling.
 
 ## 0.23.0
 
