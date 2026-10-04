@@ -500,11 +500,22 @@ abstract class Geometry {
     _cpuVertices = null;
   }
 
-  /// Internal: the retained CPU vertex/index data for scene raycasts. Either
-  /// [vertices] (interleaved) or [positions] (structure of arrays) is set
-  /// when the geometry is raycastable; both are null for caller-managed
-  /// buffers or before the first upload.
-  @internal
+  /// The retained CPU vertex and index data, as unmodifiable views of the
+  /// engine's own buffers rather than copies.
+  ///
+  /// Either `vertices` (interleaved) or `positions` (structure of arrays,
+  /// three floats per vertex, with `texCoords` at two) is set when
+  /// [isReadable] is true; both are null for caller-managed buffers and
+  /// before the first upload. Interleaved vertices are little-endian float32
+  /// in the order position (3), normal (3), tex_coords_0 (2), tex_coords_1
+  /// (2), color (4) and tangent (4), 18 floats per vertex; a
+  /// [SkinnedGeometry] follows them with its 4 joint indices and 4 joint
+  /// weights, 26 floats per vertex. `indices` holds `indexCount` indices of
+  /// `indexType`, or is null for a non-indexed list.
+  ///
+  /// The views alias live engine memory and throw on a write: read them and
+  /// copy what outlives the geometry. [extractMeshData] returns a copy.
+  /// {@category Geometry}
   ({
     ByteData? vertices,
     Float32List? positions,
@@ -515,10 +526,10 @@ abstract class Geometry {
     int indexCount,
   })
   get cpuMeshData => (
-    vertices: _cpuVertices,
-    positions: _cpuPositions,
-    texCoords: _cpuTexCoords,
-    indices: _cpuIndices,
+    vertices: _cpuVertices?.asUnmodifiableView(),
+    positions: _cpuPositions?.asUnmodifiableView(),
+    texCoords: _cpuTexCoords?.asUnmodifiableView(),
+    indices: _cpuIndices?.asUnmodifiableView(),
     indexType: _indexType,
     vertexCount: _vertexCount,
     indexCount: _indexCount,
@@ -542,7 +553,8 @@ abstract class Geometry {
   /// internally, so it is safe to send to a background isolate and derive
   /// new geometry from (see [MeshData.unweld], [MeshData.extractEdges]).
   /// Attributes the engine did not retain come back null; skinned geometry
-  /// returns bind-pose positions and no joint data.
+  /// returns bind-pose positions and no joint data, which [cpuMeshData]
+  /// holds.
   ///
   /// Throws a [StateError] when [isReadable] is false.
   /// {@category Geometry}
@@ -672,9 +684,10 @@ abstract class Geometry {
   /// default; [SkinnedGeometry] overrides it to `false` since the
   /// position scan would yield bind-pose extents, which under-cover
   /// the skinned mesh once joints animate. Skinned geometries get
-  /// their bounds from the offline-baked `skinned_pose_union_aabb`
-  /// instead, or fall back to the always-visible cull path when the
-  /// importer didn't bake one (notably the runtime GLB importer).
+  /// their bounds from the pose union of their joints instead (the
+  /// offline-baked `skinned_pose_union_aabb`, or the runtime importer's
+  /// `skinnedPoseBounds`), or fall back to the always-visible cull path
+  /// when there is none (a morphed skinned primitive).
   bool get _autoScanBoundsOnUpload => true;
 
   /// The exact interleaved vertex stride [uploadVertexData] expects, or

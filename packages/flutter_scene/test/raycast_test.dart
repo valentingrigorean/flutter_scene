@@ -274,9 +274,28 @@ void main() {
       final data = geometry.cpuMeshData;
       expect(data.positions, isNotNull);
       expect(data.texCoords, isNotNull);
-      expect(data.indices, same(indices));
+      expect(data.indices!.lengthInBytes, indices.lengthInBytes);
       // SoA geometry does not expose the interleaved buffer.
       expect(data.vertices, isNull);
+    });
+
+    test('cpuMeshData views the retained data and refuses a write', () {
+      final geometry = _RaycastDataGeometry();
+      final positions = Float32List(9);
+      final indices = ByteData(6);
+      geometry.setRaycastAttributes(
+        positions: positions,
+        texCoords: Float32List(6),
+        indices: indices,
+      );
+      final data = geometry.cpuMeshData;
+      positions[4] = 2;
+      indices.setUint16(2, 1, Endian.little);
+      expect(data.positions![4], 2);
+      expect(data.indices!.getUint16(2, Endian.little), 1);
+      expect(() => data.positions![0] = 1, throwsUnsupportedError);
+      expect(() => data.texCoords![0] = 1, throwsUnsupportedError);
+      expect(() => data.indices!.setUint16(0, 1), throwsUnsupportedError);
     });
   });
 

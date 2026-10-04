@@ -2,8 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter_scene/scene.dart';
 import 'package:flutter_scene/src/importer/gltf.dart';
+import 'package:flutter_scene/src/runtime_importer/skin_builder.dart';
 import 'package:test/test.dart';
+import 'package:vector_math/vector_math.dart';
 
 /// Tests for the pure-data layer of the runtime importer (no GPU required).
 ///
@@ -196,6 +199,230 @@ void main() {
     expect(vertices.sublist(18 + 14, 18 + 18), [0, 1, 0, -1]);
     expect(vertices.sublist(36 + 14, 36 + 18), [-1, 0, 0, 1]);
   });
+
+  group('a skinned import', () {
+    late SkinnedGeometry geometry;
+
+    setUpAll(() async {
+      final root = await Node.fromGlbBytes(_skinnedGlb());
+      geometry =
+          root.children.single.children.first.mesh!.primitives.single.geometry
+              as SkinnedGeometry;
+    });
+
+    test('keeps the joints and weights of each vertex', () {
+      final data = geometry.cpuMeshData;
+      final floats = Float32List.sublistView(data.vertices!);
+      const stride = 26;
+      expect(data.vertexCount, 3);
+      expect(floats.sublist(18, 26), [0, 0, 0, 0, 1, 0, 0, 0]);
+      expect(floats.sublist(stride + 18, stride + 26), [
+        0,
+        1,
+        0,
+        0,
+        0.75,
+        0.25,
+        0,
+        0,
+      ]);
+      expect(floats.sublist(2 * stride + 18, 2 * stride + 26), [
+        1,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+      ]);
+    });
+
+    test('bounds every keyframe pose of its joints, in the space of its '
+        'node, whose transform the skin ignores', () {
+      final bounds = geometry.localBounds;
+      expect(bounds, isNotNull);
+      expect(bounds!.min.x, -10);
+      expect(bounds.min.y, 0);
+      expect(bounds.max.x, -9);
+      expect(bounds.max.y, 6);
+      expect(bounds.min.z, 0);
+      expect(bounds.max.z, 0);
+      expect(geometry.localBoundingSphere, isNotNull);
+    });
+  }, skip: _gpuAvailable() ? null : 'Requires a GPU device.');
+
+  group('skinned pose bounds', () {
+    Aabb3 boundsOf(Uint8List glb) {
+      final container = parseGlb(glb);
+      return skinnedPoseBounds(
+        parseGltfJson(container.json),
+        container.binaryChunk,
+      )[0]!.single!;
+    }
+
+    test('cover the poses of every clip, not only the last one', () {
+      final bounds = boundsOf(_skinnedGlb(clips: [5, 0]));
+      expect(bounds.min.y, 0);
+      expect(bounds.max.y, 6);
+    });
+
+    test('cover the rest pose a model shows while no clip plays', () {
+      final bounds = boundsOf(_skinnedGlb(clips: [0], restY: 3));
+      expect(bounds.min.y, 0);
+      expect(bounds.max.y, 4);
+    });
+  });
+}
+
+bool _gpuAvailable() {
+  try {
+    Scene();
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// A triangle skinned to two joints: the first two vertices follow the root
+/// joint, the third its child, which rests [restY] up and which each of
+/// [clips] moves from 0 to its value up at 1 s. Both the skinned node and the
+/// skeleton hang under a node 2 along z, and the skinned node sits 10 along x,
+/// which glTF ignores for a skinned mesh.
+Uint8List _skinnedGlb({List<double> clips = const [5], double restY = 0}) {
+  final bin = BytesBuilder();
+  void floats(List<double> values) =>
+      bin.add(Float32List.fromList(values).buffer.asUint8List());
+  floats([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  floats([0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  bin.add([0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0]);
+  floats([1, 0, 0, 0, 0.75, 0.25, 0, 0, 1, 0, 0, 0]);
+  floats([0, 1]);
+  for (final clip in clips) {
+    floats([0, 0, 0, 0, clip, 0]);
+  }
+  final json = {
+    'asset': {'version': '2.0'},
+    'scene': 0,
+    'scenes': [
+      {
+        'nodes': [3],
+      },
+    ],
+    'nodes': [
+      {
+        'mesh': 0,
+        'skin': 0,
+        'translation': [10, 0, 0],
+      },
+      {
+        'children': [2],
+      },
+      {
+        'translation': [0, restY, 0],
+      },
+      {
+        'translation': [0, 0, 2],
+        'children': [0, 1],
+      },
+    ],
+    'skins': [
+      {
+        'joints': [1, 2],
+      },
+    ],
+    'meshes': [
+      {
+        'primitives': [
+          {
+            'attributes': {
+              'POSITION': 0,
+              'NORMAL': 1,
+              'JOINTS_0': 2,
+              'WEIGHTS_0': 3,
+            },
+          },
+        ],
+      },
+    ],
+    'animations': [
+      for (var clip = 0; clip < clips.length; clip++)
+        {
+          'channels': [
+            {
+              'sampler': 0,
+              'target': {'node': 2, 'path': 'translation'},
+            },
+          ],
+          'samplers': [
+            {'input': 4, 'output': 5 + clip},
+          ],
+        },
+    ],
+    'accessors': [
+      {
+        'bufferView': 0,
+        'componentType': 5126,
+        'count': 3,
+        'type': 'VEC3',
+        'min': [0, 0, 0],
+        'max': [1, 1, 0],
+      },
+      {'bufferView': 1, 'componentType': 5126, 'count': 3, 'type': 'VEC3'},
+      {'bufferView': 2, 'componentType': 5121, 'count': 3, 'type': 'VEC4'},
+      {'bufferView': 3, 'componentType': 5126, 'count': 3, 'type': 'VEC4'},
+      {
+        'bufferView': 4,
+        'componentType': 5126,
+        'count': 2,
+        'type': 'SCALAR',
+        'min': [0],
+        'max': [1],
+      },
+      for (var clip = 0; clip < clips.length; clip++)
+        {
+          'bufferView': 5 + clip,
+          'componentType': 5126,
+          'count': 2,
+          'type': 'VEC3',
+        },
+    ],
+    'bufferViews': [
+      {'buffer': 0, 'byteOffset': 0, 'byteLength': 36},
+      {'buffer': 0, 'byteOffset': 36, 'byteLength': 36},
+      {'buffer': 0, 'byteOffset': 72, 'byteLength': 12},
+      {'buffer': 0, 'byteOffset': 84, 'byteLength': 48},
+      {'buffer': 0, 'byteOffset': 132, 'byteLength': 8},
+      for (var clip = 0; clip < clips.length; clip++)
+        {'buffer': 0, 'byteOffset': 140 + 24 * clip, 'byteLength': 24},
+    ],
+    'buffers': [
+      {'byteLength': 140 + 24 * clips.length},
+    ],
+  };
+  return _glb(utf8.encode(jsonEncode(json)), bin.takeBytes());
+}
+
+Uint8List _glb(List<int> json, List<int> bin) {
+  List<int> padded(List<int> bytes, int fill) => [
+    ...bytes,
+    for (var at = bytes.length; at % 4 != 0; at++) fill,
+  ];
+  final jsonChunk = padded(json, 0x20);
+  final binChunk = padded(bin, 0);
+  final out = ByteData(28 + jsonChunk.length + binChunk.length);
+  out
+    ..setUint32(0, 0x46546C67, Endian.little)
+    ..setUint32(4, 2, Endian.little)
+    ..setUint32(8, out.lengthInBytes, Endian.little)
+    ..setUint32(12, jsonChunk.length, Endian.little)
+    ..setUint32(16, 0x4E4F534A, Endian.little);
+  final bytes = out.buffer.asUint8List()..setAll(20, jsonChunk);
+  out
+    ..setUint32(20 + jsonChunk.length, binChunk.length, Endian.little)
+    ..setUint32(24 + jsonChunk.length, 0x004E4942, Endian.little);
+  bytes.setAll(28 + jsonChunk.length, binChunk);
+  return bytes;
 }
 
 /// Locates the examples/assets_src/ directory in the workspace, regardless of
