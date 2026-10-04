@@ -51,6 +51,15 @@ class IrradianceFieldState {
   /// This frame's lattice placement, or null before the first update.
   IrradianceGridPlacement? get placement => _placement;
 
+  /// The history, sampled and accumulator textures the field holds.
+  Iterable<gpu.Texture> get heldTextures => [
+    _historyA,
+    _historyB,
+    _sampled,
+    _irradianceAccumulator,
+    _depthAccumulator,
+  ].nonNulls;
+
   gpu.Texture get _writeHistory => _historyIsA ? _historyB! : _historyA!;
   gpu.Texture get _readHistory => _historyIsA ? _historyA! : _historyB!;
 
@@ -141,13 +150,15 @@ class IrradianceFieldState {
 
   void _allocate(IrradianceFieldLayout layout) {
     if (_sampled != null) return;
-    gpu.Texture create(int width, int height) => gpu.gpuContext.createTexture(
-      gpu.StorageMode.devicePrivate,
-      width,
-      height,
-      format: gpu.PixelFormat.r16g16b16a16Float,
-      enableRenderTargetUsage: true,
-      enableShaderReadUsage: true,
+    gpu.Texture create(int width, int height) => statedRenderTarget(
+      gpu.gpuContext.createTexture(
+        gpu.StorageMode.devicePrivate,
+        width,
+        height,
+        format: gpu.PixelFormat.r16g16b16a16Float,
+        enableRenderTargetUsage: true,
+        enableShaderReadUsage: true,
+      ),
     );
     _historyA = create(layout.atlasWidth, layout.atlasHeight);
     _historyB = create(layout.atlasWidth, layout.atlasHeight);

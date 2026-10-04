@@ -406,20 +406,24 @@ class ShadowPass extends RenderGraphPass {
     for (final refresh in plan.refreshes) {
       final commandBuffer = gpu.gpuContext.createCommandBuffer();
       final entry = refresh.entry;
-      entry.tile ??= gpu.gpuContext.createTexture(
-        gpu.StorageMode.devicePrivate,
-        _tileResolution,
-        _tileResolution,
-        format: gpu.PixelFormat.r32Float,
+      entry.tile ??= statedRenderTarget(
+        gpu.gpuContext.createTexture(
+          gpu.StorageMode.devicePrivate,
+          _tileResolution,
+          _tileResolution,
+          format: gpu.PixelFormat.r32Float,
+        ),
       );
       // Every refresh clears it, so one texture serves all the tiles.
-      final depth = plan.cache.tileDepth ??= gpu.gpuContext.createTexture(
-        gpu.StorageMode.deviceTransient,
-        _tileResolution,
-        _tileResolution,
-        format: gpu.gpuContext.defaultDepthStencilFormat,
-        enableRenderTargetUsage: true,
-        enableShaderReadUsage: false,
+      final depth = plan.cache.tileDepth ??= statedRenderTarget(
+        gpu.gpuContext.createTexture(
+          gpu.StorageMode.deviceTransient,
+          _tileResolution,
+          _tileResolution,
+          format: gpu.gpuContext.defaultDepthStencilFormat,
+          enableRenderTargetUsage: true,
+          enableShaderReadUsage: false,
+        ),
       );
       final target = gpu.RenderTarget.singleColor(
         gpu.ColorAttachment(

@@ -59,6 +59,9 @@ class AutoExposureState {
   /// The 1x1 the adaptation pass writes this frame.
   gpu.Texture get next => _texture(1 - _current);
 
+  /// The adapted-factor textures this state holds.
+  Iterable<gpu.Texture> get heldTextures => [_a, _b].nonNulls;
+
   /// Swaps [previous] and [next] after a metered frame.
   void flip() => _current = 1 - _current;
 
@@ -73,13 +76,15 @@ class AutoExposureState {
   gpu.Texture _texture(int index) {
     final existing = index == 0 ? _a : _b;
     if (existing != null) return existing;
-    final texture = gpu.gpuContext.createTexture(
-      gpu.StorageMode.devicePrivate,
-      1,
-      1,
-      format: _format,
-      enableRenderTargetUsage: true,
-      enableShaderReadUsage: true,
+    final texture = statedRenderTarget(
+      gpu.gpuContext.createTexture(
+        gpu.StorageMode.devicePrivate,
+        1,
+        1,
+        format: _format,
+        enableRenderTargetUsage: true,
+        enableShaderReadUsage: true,
+      ),
     );
     if (index == 0) {
       _a = texture;

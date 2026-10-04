@@ -103,6 +103,11 @@ List<RenderView> _twoViews() => [
 Node _cube() =>
     Node(mesh: Mesh(CuboidGeometry(Vector3.all(1)), UnlitMaterial()));
 
+Node _mirror() =>
+    Node(mesh: Mesh(PlaneGeometry(width: 4, depth: 4), _MirrorMaterial()))
+      ..position = Vector3(0, -1, 0)
+      ..addComponent(PlanarReflectorComponent());
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final gpuSkip = _gpuAvailable() ? false : 'Requires a GPU device.';
@@ -305,6 +310,47 @@ void main() {
       expect(scene.surface.heldBytes, 0);
     }, skip: gpuSkip != false);
 
+    testWidgets('a scene counts and states the shadow cache tiles and the '
+        'history and capture targets it keeps across frames, and dispose '
+        'drops them', (tester) async {
+      await tester.runAsync(Scene.initializeStaticResources);
+      final scene = Scene()
+        ..antiAliasingMode = AntiAliasingMode.taa
+        ..directionalLight = DirectionalLight(castsShadow: true)
+        ..add(_cube()..shadowStatic = true)
+        ..add(_mirror());
+      scene.globalIllumination.enabled = true;
+      scene.autoExposure.enabled = true;
+      const region = ui.Rect.fromLTWH(0, 0, 64, 32);
+      _render(scene, _twoViews(), region);
+      _render(scene, _twoViews(), region);
+      scene.captureEnvironment(position: Vector3(0, 1, 0), faceResolution: 16);
+
+      final history = scene.debugHeldHistoryTextures;
+      for (final MapEntry(key: name, value: textures) in history.entries) {
+        expect(textures, isNotEmpty, reason: name);
+      }
+      expect(
+        history['shadowCache'],
+        containsAll(scene.debugStaticShadowTiles.nonNulls),
+      );
+      final historyTextures = history.values
+          .expand((textures) => textures)
+          .toSet();
+      final historyBytes = historyTextures.fold(
+        0,
+        (bytes, texture) => bytes + _descriptorBytes(texture),
+      );
+      for (final texture in historyTextures) {
+        expect(debugStatedExternalBytes(texture), _descriptorBytes(texture));
+      }
+      expect(scene.heldBytes, scene.surface.heldBytes + historyBytes);
+
+      scene.dispose();
+
+      expect(scene.heldBytes, 0);
+    }, skip: gpuSkip != false);
+
     test('bytes stated to the VM prompt the collection of their dropped '
         'owner with no other allocation', () async {
       const bytes = 256 << 20;
@@ -319,4 +365,9 @@ void main() {
       expect(owners.where((owner) => owner.target != null).length, lessThan(8));
     });
   });
+}
+
+class _MirrorMaterial extends UnlitMaterial {
+  @override
+  bool get usesPlanarReflection => true;
 }

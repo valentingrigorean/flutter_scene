@@ -103,6 +103,11 @@ class DirectionalShadowCache {
 
   /// The cache entries, by cascade, as the last [plan] left them.
   List<ShadowCascadeCacheEntry> get debugEntries => _entries;
+
+  /// The static tile textures the cascades hold, and the depth attachment
+  /// their refreshes render with.
+  Iterable<gpu.Texture> get heldTextures =>
+      _entries.map((entry) => entry.tile).nonNulls.followedBy([?tileDepth]);
   int _resolution = 0;
   ShadowCasterFaces _casterFaces = ShadowCasterFaces.front;
   int _casterChannelMask = 0xFF;

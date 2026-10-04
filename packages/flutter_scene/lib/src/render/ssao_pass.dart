@@ -511,13 +511,15 @@ class SceneColorHistoryPass extends RenderGraphPass {
     if (target == null ||
         target.width != source.width ||
         target.height != source.height) {
-      target = gpu.gpuContext.createTexture(
-        gpu.StorageMode.devicePrivate,
-        source.width,
-        source.height,
-        format: gpu.PixelFormat.r16g16b16a16Float,
-        enableRenderTargetUsage: true,
-        enableShaderReadUsage: true,
+      target = statedRenderTarget(
+        gpu.gpuContext.createTexture(
+          gpu.StorageMode.devicePrivate,
+          source.width,
+          source.height,
+          format: gpu.PixelFormat.r16g16b16a16Float,
+          enableRenderTargetUsage: true,
+          enableShaderReadUsage: true,
+        ),
       );
     }
     final commandBuffer = gpu.gpuContext.createCommandBuffer();
