@@ -69,6 +69,8 @@ class ShadowCachePlan {
 /// re-render, and content-stale tiles (a static caster appeared or vanished)
 /// refresh at most [maxAmortizedRefreshes] per frame, nearest cascade first,
 /// so streaming worlds never pay for every cascade at once.
+/// [DirectionalLight.invalidateStaticShadows] re-renders every tile in the
+/// next frame instead, into the textures the tiles already hold.
 class DirectionalShadowCache {
   /// How much larger than the ideal bounding sphere each tile is rendered.
   /// Costs ~13% effective resolution; buys re-render-free camera movement
@@ -79,17 +81,22 @@ class DirectionalShadowCache {
   static const int maxAmortizedRefreshes = 1;
 
   final List<ShadowCascadeCacheEntry> _entries = [];
+
+  /// The cache entries, by cascade, as the last [plan] left them.
+  List<ShadowCascadeCacheEntry> get debugEntries => _entries;
   final Vector3 _lightDir = Vector3.zero();
   int _resolution = 0;
   ShadowCasterFaces _casterFaces = ShadowCasterFaces.front;
   int _casterChannelMask = 0xFF;
+  int _staticShadowRevision = 0;
 
   /// Decides which tiles to re-render for this frame's [idealCascades] and
   /// returns the effective cascades to sample with.
   ///
   /// [staticSignature] fingerprints the static caster set; any change marks
   /// every tile stale. A change to the light basis or shadow parameters
-  /// rebuilds the cache outright.
+  /// rebuilds the cache outright, and a new
+  /// [DirectionalLight.staticShadowRevision] refreshes every tile this frame.
   ShadowCachePlan plan({
     required DirectionalLight light,
     required Vector3 lightDirection,
@@ -113,7 +120,10 @@ class DirectionalShadowCache {
       _casterFaces = light.shadowCasterFaces;
       _casterChannelMask = light.shadowCasterChannelMask;
       _lightDir.setFrom(dir);
+      _staticShadowRevision = light.staticShadowRevision;
     }
+    final invalidated = light.staticShadowRevision != _staticShadowRevision;
+    _staticShadowRevision = light.staticShadowRevision;
 
     final refreshes = <ShadowTileRefresh>[];
     final effective = <ShadowCascade>[];
@@ -129,9 +139,9 @@ class DirectionalShadowCache {
           (ideal.radius - entry.radius).abs() <= entry.radius * 1e-3 &&
           (center - entry.center).length <= entry.radius * (slackFactor - 1.0);
       var refresh = false;
-      if (!fits) {
-        // Unusable (first render, coverage drift, or parameter change):
-        // must render this frame or the cascade has no shadows.
+      if (!fits || invalidated) {
+        // Unusable (first render, coverage drift, parameter change, or an
+        // invalidated light): must render this frame.
         refresh = true;
       } else if (entry.renderedSignature != staticSignature &&
           amortized < maxAmortizedRefreshes) {

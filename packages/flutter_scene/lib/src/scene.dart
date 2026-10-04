@@ -494,6 +494,16 @@ base class Scene implements SceneGraph {
     );
   }
 
+  /// The directional light's cached static shadow tile textures, by cascade;
+  /// empty while no shadow cache is held.
+  @visibleForTesting
+  List<gpu.Texture?> get debugStaticShadowTiles => [
+    for (final entry
+        in _directionalShadowCache?.debugEntries ??
+            const <ShadowCascadeCacheEntry>[])
+      entry.tile,
+  ];
+
   /// The history holders that keep textures across frames, by name.
   @visibleForTesting
   Set<String> get debugHeldHistoryTargets => {
