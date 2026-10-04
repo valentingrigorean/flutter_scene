@@ -61,6 +61,36 @@ class GpuSubmissionTracker {
 /// The tracker for every command buffer the renderer submits.
 final GpuSubmissionTracker rendererSubmissions = GpuSubmissionTracker();
 
+/// A read-only view of the command buffers the renderer submits, on which an
+/// app paces its own frames or recycles its own buffers.
+///
+/// {@category Rendering}
+abstract interface class GpuSubmissions {
+  /// The id of the most recent submission.
+  int get latestSubmission;
+
+  /// The highest id such that all submissions up to and including it have
+  /// completed.
+  int get completedThrough;
+}
+
+/// The renderer's submissions, read-only.
+///
+/// {@category Rendering}
+final GpuSubmissions gpuSubmissions = _GpuSubmissionsView(rendererSubmissions);
+
+final class _GpuSubmissionsView implements GpuSubmissions {
+  _GpuSubmissionsView(this._tracker);
+
+  final GpuSubmissionTracker _tracker;
+
+  @override
+  int get latestSubmission => _tracker.latestSubmission;
+
+  @override
+  int get completedThrough => _tracker.completedThrough;
+}
+
 /// Destination for per-frame transient GPU data (uniform blocks, instance
 /// vertex data). Emplaced data is valid for the current frame only.
 ///
