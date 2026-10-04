@@ -8,6 +8,7 @@ import '../asset_helpers.dart';
 import '../gpu/gpu.dart' as gpu;
 import '../render/mip_sampling_probe.dart';
 import 'mipmap.dart';
+import 'mipmap_async.dart';
 
 /// Something a material can sample: it yields the GPU texture to sample for the
 /// current frame and the sampler to bind it with. Implemented by [Texture2D]
@@ -231,7 +232,10 @@ class Texture2D implements TextureSource {
     TextureSampling sampling = const TextureSampling(),
   }) => Texture2D._(texture, sampling.toSamplerOptions());
 
-  /// Builds a texture from a decoded [image].
+  /// Builds a texture from a decoded [image]. Where the platform has
+  /// isolates, its mip chain is built on a background isolate, so only the
+  /// pixel read and the upload run on the caller's isolate; on web the chain
+  /// is built on the calling thread.
   static Future<Texture2D> fromImage(
     ui.Image image, {
     TextureContent content = TextureContent.color,
@@ -243,11 +247,18 @@ class Texture2D implements TextureSource {
     if (bytes == null) {
       throw Exception('Failed to read RGBA data from image.');
     }
-    return fromPixels(
-      bytes.buffer.asUint8List(),
-      image.width,
-      image.height,
-      content: content,
+    final pixels = bytes.buffer.asUint8List();
+    if (!sampling.mipmaps || !mipChainsAreSampled) {
+      return fromPixels(
+        pixels,
+        image.width,
+        image.height,
+        content: content,
+        sampling: sampling,
+      );
+    }
+    return fromMipLevels(
+      await generateMipChainAsync(pixels, image.width, image.height, content),
       sampling: sampling,
     );
   }
