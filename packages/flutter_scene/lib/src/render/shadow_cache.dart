@@ -84,6 +84,10 @@ class DirectionalShadowCache {
 
   /// The cache entries, by cascade, as the last [plan] left them.
   List<ShadowCascadeCacheEntry> get debugEntries => _entries;
+
+  /// The static tile textures the cascades hold.
+  Iterable<gpu.Texture> get heldTextures =>
+      _entries.map((entry) => entry.tile).nonNulls;
   final Vector3 _lightDir = Vector3.zero();
   int _resolution = 0;
   ShadowCasterFaces _casterFaces = ShadowCasterFaces.front;

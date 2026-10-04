@@ -286,6 +286,14 @@ int statedRenderTargetBytes(gpu.Texture texture) =>
       _ => renderTargetBytes(texture),
     };
 
+/// States [texture] to the VM with its [statedRenderTargetBytes] and
+/// returns it, for a render target an owner keeps across frames.
+@internal
+gpu.Texture statedRenderTarget(gpu.Texture texture) {
+  statesExternalBytes(texture, statedRenderTargetBytes(texture));
+  return texture;
+}
+
 /// Per-frame state handed to every [RenderGraphPass] when the graph
 /// executes.
 ///

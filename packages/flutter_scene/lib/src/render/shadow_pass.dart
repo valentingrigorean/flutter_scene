@@ -243,11 +243,13 @@ class ShadowPass extends RenderGraphPass {
     for (final refresh in plan.refreshes) {
       final commandBuffer = gpu.gpuContext.createCommandBuffer();
       final entry = refresh.entry;
-      entry.tile ??= gpu.gpuContext.createTexture(
-        gpu.StorageMode.devicePrivate,
-        _tileResolution,
-        _tileResolution,
-        format: gpu.PixelFormat.r32Float,
+      entry.tile ??= statedRenderTarget(
+        gpu.gpuContext.createTexture(
+          gpu.StorageMode.devicePrivate,
+          _tileResolution,
+          _tileResolution,
+          format: gpu.PixelFormat.r32Float,
+        ),
       );
       // The depth attachment only backs this pass's depth test; the same
       // pooled texture serves every refresh this frame (passes run in order

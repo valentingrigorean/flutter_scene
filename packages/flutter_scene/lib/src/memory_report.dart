@@ -5,6 +5,7 @@ library;
 import 'package:flutter/foundation.dart';
 
 import 'importer/scene_registry.dart';
+import 'render/held_render_targets.dart';
 import 'surface.dart';
 import 'texture/texture_registry.dart';
 
@@ -36,8 +37,10 @@ class MemoryCategory {
 ///
 /// Covers what the engine's shared caches pin, which is the memory an app has
 /// no other way to see or release, and the render targets every live
-/// [Surface] holds (each scene's and each [RenderTexture]'s view rings and
-/// attachment pools, see [Surface.heldBytes]). It does not cover other
+/// [Surface] and [Scene] holds (each scene's and each [RenderTexture]'s view
+/// rings and attachment pools, see [Surface.heldBytes], and each scene's
+/// shadow cache tiles and history and capture targets, see
+/// [Scene.heldBytes]). It does not cover other
 /// resources the app holds itself (a [Texture2D] you constructed and kept),
 /// and it is a measure of what is *pinned*, not of what the GPU has actually
 /// reclaimed. Dropping the last reference to a resource makes it collectable,

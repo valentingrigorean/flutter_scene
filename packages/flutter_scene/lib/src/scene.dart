@@ -39,6 +39,7 @@ import 'render/bloom_pass.dart';
 import 'render/custom_render_pass.dart';
 import 'render/depth_prepass.dart';
 import 'render/fxaa_pass.dart';
+import 'render/held_render_targets.dart';
 import 'render/scene_color_blit_pass.dart';
 import 'render/sky_bake.dart'
     show
@@ -165,6 +166,7 @@ base class Scene implements SceneGraph {
   Scene() {
     initializeStaticResources();
     root.registerAsRoot(this);
+    registerHeldRenderTargets(_historyTargets);
   }
 
   static Future<void>? _initializeStaticResources;
@@ -450,6 +452,34 @@ base class Scene implements SceneGraph {
   /// Handles the creation and management of render targets for this [Scene].
   final Surface surface = Surface();
 
+  late final _SceneHistoryTargets _historyTargets = _SceneHistoryTargets(this);
+
+  /// The device memory, in bytes, of the render targets this scene keeps
+  /// across frames, until [dispose]: [surface]'s view rings and attachment
+  /// pools ([Surface.heldBytes]) plus the cached static shadow tiles and the
+  /// history and capture targets of temporal anti-aliasing, global
+  /// illumination, auto exposure, screen-space indirect light, probe
+  /// captures, and planar reflections, each counted as [Surface.heldBytes]
+  /// counts a texture. The scene states each of those targets to the VM as
+  /// external memory as it allocates it, as [Surface] does, so a collection
+  /// follows the targets a dropped scene leaves; the memory report counts
+  /// them under `render targets`.
+  int get heldBytes => _heldHistoryTextures.fold(
+    surface.heldBytes,
+    (bytes, texture) => bytes + renderTargetBytes(texture),
+  );
+
+  Iterable<gpu.Texture> get _heldHistoryTextures => [
+    ...?_taaState?.heldTextures,
+    ..._irradianceField.heldTextures,
+    ...?_autoExposureState?.heldTextures,
+    ...?_directionalShadowCache?.heldTextures,
+    ?_ssgiHistoryColor,
+    ...?_probeCapturePool?.heldTextures,
+    for (final resources in _planarCaptureResources.values)
+      ...resources.heldTextures,
+  ];
+
   bool _disposed = false;
 
   /// Whether [dispose] has run.
@@ -503,6 +533,21 @@ base class Scene implements SceneGraph {
             const <ShadowCascadeCacheEntry>[])
       entry.tile,
   ];
+
+  /// The textures each history holder keeps across frames, by name.
+  @visibleForTesting
+  Map<String, List<gpu.Texture>> get debugHeldHistoryTextures => {
+    'taa': [...?_taaState?.heldTextures],
+    'irradiance': [..._irradianceField.heldTextures],
+    'autoExposure': [...?_autoExposureState?.heldTextures],
+    'shadowCache': [...?_directionalShadowCache?.heldTextures],
+    'ssgi': [?_ssgiHistoryColor],
+    'probe': [...?_probeCapturePool?.heldTextures],
+    'planar': [
+      for (final resources in _planarCaptureResources.values)
+        ...resources.heldTextures,
+    ],
+  };
 
   /// The history holders that keep textures across frames, by name.
   @visibleForTesting
@@ -3134,19 +3179,24 @@ class _PlanarCaptureResources {
   int _width = 0;
   int _height = 0;
 
+  Iterable<gpu.Texture> get heldTextures =>
+      [?_texture].followedBy(pool.heldTextures);
+
   // The group's capture target at the requested size, reallocated when the
   // size changes (the old texture is released to finalizers; any in-flight
   // frame object keeps it alive until sampled).
   gpu.Texture acquire(int width, int height) {
     var texture = _texture;
     if (texture == null || _width != width || _height != height) {
-      texture = gpu.gpuContext.createTexture(
-        gpu.StorageMode.devicePrivate,
-        width,
-        height,
-        format: gpu.PixelFormat.r16g16b16a16Float,
-        enableRenderTargetUsage: true,
-        enableShaderReadUsage: true,
+      texture = statedRenderTarget(
+        gpu.gpuContext.createTexture(
+          gpu.StorageMode.devicePrivate,
+          width,
+          height,
+          format: gpu.PixelFormat.r16g16b16a16Float,
+          enableRenderTargetUsage: true,
+          enableShaderReadUsage: true,
+        ),
       );
       _texture = texture;
       _width = width;
@@ -3155,4 +3205,13 @@ class _PlanarCaptureResources {
     }
     return texture;
   }
+}
+
+class _SceneHistoryTargets implements HeldRenderTargets {
+  _SceneHistoryTargets(this._scene);
+
+  final Scene _scene;
+
+  @override
+  Iterable<gpu.Texture> get heldRenderTargets => _scene._heldHistoryTextures;
 }

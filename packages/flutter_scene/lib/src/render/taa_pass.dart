@@ -65,34 +65,27 @@ class TaaHistoryState {
   gpu.Texture? get previousLinearDepth => _previousLinearDepth;
   bool get hasHistory => _hasHistory;
 
+  /// The history and previous-depth textures this state holds.
+  Iterable<gpu.Texture> get heldTextures =>
+      [_historyA, _historyB, _previousLinearDepth].nonNulls;
+
   void ensureSize(int width, int height) {
     if (_width == width && _height == height && _historyA != null) return;
     _width = width;
     _height = height;
-    _historyA = gpu.gpuContext.createTexture(
-      gpu.StorageMode.devicePrivate,
-      width,
-      height,
-      format: gpu.PixelFormat.r16g16b16a16Float,
-      enableRenderTargetUsage: true,
-      enableShaderReadUsage: true,
+    gpu.Texture create() => statedRenderTarget(
+      gpu.gpuContext.createTexture(
+        gpu.StorageMode.devicePrivate,
+        width,
+        height,
+        format: gpu.PixelFormat.r16g16b16a16Float,
+        enableRenderTargetUsage: true,
+        enableShaderReadUsage: true,
+      ),
     );
-    _historyB = gpu.gpuContext.createTexture(
-      gpu.StorageMode.devicePrivate,
-      width,
-      height,
-      format: gpu.PixelFormat.r16g16b16a16Float,
-      enableRenderTargetUsage: true,
-      enableShaderReadUsage: true,
-    );
-    _previousLinearDepth = gpu.gpuContext.createTexture(
-      gpu.StorageMode.devicePrivate,
-      width,
-      height,
-      format: gpu.PixelFormat.r16g16b16a16Float,
-      enableRenderTargetUsage: true,
-      enableShaderReadUsage: true,
-    );
+    _historyA = create();
+    _historyB = create();
+    _previousLinearDepth = create();
     _historyIsA = true;
     _hasHistory = false;
   }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_scene/src/external_bytes.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 
+import 'package:flutter_scene/src/render/held_render_targets.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
 
 /// Manages the swapchain color textures a [Scene] composites onto the
@@ -28,19 +29,14 @@ import 'package:flutter_scene/src/render/render_graph.dart';
 class Surface {
   /// Creates a surface that holds no render target until a view draws.
   Surface() {
-    _live.add(WeakReference(this));
-    if (_live.length >= _pruneAt) {
-      _live.removeWhere((surface) => surface.target == null);
-      _pruneAt = 2 * _live.length + 16;
-    }
+    registerHeldRenderTargets(_targets);
   }
+
+  late final _SurfaceTargets _targets = _SurfaceTargets(this);
 
   // TODO(bdero): There should be a method on the Flutter GPU context to pull
   //              this information.
   static const int _maxFramesInFlight = 2;
-
-  static final List<WeakReference<Surface>> _live = [];
-  static int _pruneAt = 16;
 
   final List<_ViewSurface> _views = [];
 
@@ -170,26 +166,11 @@ class _ViewSurface {
   }
 }
 
-/// The render targets every live [Surface] holds: the device-private
-/// textures with their bytes, and the count of the transient attachments,
-/// whose bytes the device decides.
-@internal
-({int bytes, int count, int transientCount}) renderTargetFootprint() {
-  var bytes = 0;
-  var count = 0;
-  var transientCount = 0;
-  Surface._live.removeWhere((surface) => surface.target == null);
-  for (final reference in Surface._live) {
-    final surface = reference.target;
-    if (surface == null) continue;
-    for (final texture in surface._heldTextures) {
-      if (texture.storageMode == gpu.StorageMode.deviceTransient) {
-        transientCount++;
-      } else {
-        count++;
-        bytes += renderTargetBytes(texture);
-      }
-    }
-  }
-  return (bytes: bytes, count: count, transientCount: transientCount);
+class _SurfaceTargets implements HeldRenderTargets {
+  _SurfaceTargets(this._surface);
+
+  final Surface _surface;
+
+  @override
+  Iterable<gpu.Texture> get heldRenderTargets => _surface._heldTextures;
 }
