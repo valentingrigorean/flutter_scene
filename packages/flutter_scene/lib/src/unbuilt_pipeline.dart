@@ -9,6 +9,11 @@ enum ScenePipelinePass {
   /// The depth prepass, which writes the opaque scene's linear depth (and
   /// normals) for the effects and materials that read it.
   depthPrepass,
+
+  /// The shadow pass, which records each shadow caster's depth into the
+  /// directional cascades and the shadow-casting spots of the view's shadow
+  /// atlas.
+  shadow,
 }
 
 /// A draw a render of a view would record with a render pipeline the process

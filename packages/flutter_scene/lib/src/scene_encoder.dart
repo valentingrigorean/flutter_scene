@@ -506,8 +506,8 @@ gpu.RenderPipeline _buildPipeline(
 int _scenePipelinesBuilt = 0;
 
 /// The number of render pipelines the scene's passes have built in this
-/// process: the color and depth prepass draws and the full-screen passes
-/// that share their pipeline cache. A render that leaves it unchanged built
+/// process: the color, depth prepass and shadow caster draws and the
+/// full-screen passes that share their pipeline cache. A render that leaves it unchanged built
 /// none of them, so a frame after `Scene.unbuiltPipelines` listed nothing
 /// keeps it.
 int get scenePipelinesBuilt => _scenePipelinesBuilt;

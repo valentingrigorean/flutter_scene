@@ -1,5 +1,7 @@
 import 'package:flutter_scene/src/geometry/geometry.dart'
     show Geometry, bindUnskinnedFrameInfo;
+import 'package:flutter_scene/src/geometry/vertex_layout.dart'
+    show VertexLayoutDescriptor;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart' show ShadowCasterFaces;
 import 'package:flutter_scene/src/material/material.dart' show MaskedDepthPass;
@@ -8,7 +10,8 @@ import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/render/render_scene.dart';
-import 'package:flutter_scene/src/scene_encoder.dart' show resolvePipeline;
+import 'package:flutter_scene/src/scene_encoder.dart'
+    show PipelineInputs, resolvePipelineFor;
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 
@@ -68,6 +71,63 @@ int shadowBatchEnd(
     cut++;
   }
   return cut;
+}
+
+/// Whether [item] draws in a shadow map: an accepted caster under [filter]
+/// and [casterChannelMask] whose material is opaque.
+///
+/// [ShadowEncoder.submit] records an item only when this holds and the item
+/// is inside the light's frustum.
+bool shadowCasterDraws(
+  RenderItem item,
+  ShadowCasterFilter filter,
+  int casterChannelMask,
+) =>
+    shadowCasterAccepted(item, filter, casterChannelMask) &&
+    item.material.isOpaque();
+
+/// The position-only vertex shader and layout [item] casts through, or null
+/// when it draws through its full vertex shader: an alpha-masked material
+/// needs the full-vertex varyings for its mask, and skinned geometry has no
+/// position-only path.
+({gpu.Shader shader, VertexLayoutDescriptor layout})? shadowCasterVertex(
+  RenderItem item,
+) => item.material.depthAlphaMasked ? null : item.geometry.depthOnlyVertex;
+
+/// The pipeline inputs of [item]'s draw in a shadow map, as [ShadowEncoder]
+/// resolves them.
+///
+/// The fragment shader is the depth-only shader, or for an alpha-masked
+/// material the masked variant, which the material may supply, so only its
+/// opaque texels cast. A `vertex { }` material displaces geometry in the
+/// color pass, so the caster runs the material's vertex variant (its
+/// position-only `depth` variant when the geometry has one), else the
+/// position-only path of [shadowCasterVertex], else the geometry's own shader.
+/// Without a position-only path the material's per-instance attributes widen
+/// the instance record as in the color pass.
+PipelineInputs shadowCasterPipelineInputs(RenderItem item) {
+  final material = item.material;
+  final geometry = item.geometry;
+  final masked = material.depthAlphaMasked;
+  final depthVertex = shadowCasterVertex(item);
+  return (
+    vertexShader:
+        material.vertexShaderForGeometry(
+          geometry,
+          depth: depthVertex != null,
+        ) ??
+        depthVertex?.shader ??
+        geometry.vertexShader,
+    fragmentShader: masked
+        ? material.maskedDepthFragmentShader(MaskedDepthPass.shadow) ??
+              ShadowEncoder._maskedDepthShader
+        : ShadowEncoder._depthShader,
+    vertexLayout:
+        depthVertex?.layout ??
+        geometry.instancedVertexLayoutFor(
+          depthVertex == null ? material.instanceAttributes : null,
+        ),
+  );
 }
 
 /// Records each opaque shadow caster's depth into a shadow-map render
@@ -156,8 +216,7 @@ class ShadowEncoder {
     // The flag and channel checks run first: the dynamic composite iterates
     // the whole item list (most of which is static), so the common case must
     // reject before any virtual call.
-    if (!shadowCasterAccepted(item, _filter, _casterChannelMask)) return;
-    if (!item.material.isOpaque()) return;
+    if (!shadowCasterDraws(item, _filter, _casterChannelMask)) return;
     if (!alreadyCulled && item.frustumCulled) {
       final bounds = item.cullBounds;
       if (bounds != null) {
@@ -220,10 +279,8 @@ class ShadowEncoder {
     // faces that are visible are the faces that cast; the caster-face mode's
     // second-depth trick has no meaning for cutout sheets.
     final masked = item.material.depthAlphaMasked;
-    final fragmentShader = masked
-        ? item.material.maskedDepthFragmentShader(MaskedDepthPass.shadow) ??
-              _maskedDepthShader
-        : _depthShader;
+    final inputs = shadowCasterPipelineInputs(item);
+    final fragmentShader = inputs.fragmentShader;
     final cullMode = masked
         ? item.material.renderCullMode
         : shadowCasterCullMode(item, _casterFaces);
@@ -231,31 +288,16 @@ class ShadowEncoder {
       _renderPass.setCullMode(cullMode);
       _currentCullMode = cullMode;
     }
-    // Unskinned casters draw depth through a position-only shader and layout;
-    // skinned geometry falls back to its full vertex shader and bind.
-    // A `vertex { }` material displaces geometry in the color pass, so run its
-    // vertex variant here too or the shadow detaches from the visible surface.
-    final depthVertex = masked ? null : geometry.depthOnlyVertex;
+    final depthVertex = shadowCasterVertex(item);
     final materialVertex = item.material.vertexShaderForGeometry(
       geometry,
       depth: depthVertex != null,
     );
-    final activeVertex =
-        materialVertex ?? depthVertex?.shader ?? geometry.vertexShader;
-    // A masked caster runs the material's color vertex variant, which declares
-    // its per-instance attribute inputs, so the instance record has to be as
-    // wide here as in the color pass.
-    final instanceSchema = depthVertex == null
-        ? item.material.instanceAttributes
-        : null;
-    final attributeFloats = instanceSchema?.floatCount ?? 0;
-    final pipeline = resolvePipeline(
-      activeVertex,
-      fragmentShader,
-      vertexLayout:
-          depthVertex?.layout ??
-          geometry.instancedVertexLayoutFor(instanceSchema),
-    );
+    final activeVertex = inputs.vertexShader;
+    final attributeFloats = depthVertex == null
+        ? item.material.instanceAttributes?.floatCount ?? 0
+        : 0;
+    final pipeline = resolvePipelineFor(inputs);
     if (!identical(_boundPipeline, pipeline)) {
       _renderPass.clearBindings();
       _renderPass.bindPipeline(pipeline);
