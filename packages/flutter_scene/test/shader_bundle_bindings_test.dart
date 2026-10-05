@@ -81,4 +81,36 @@ void main() {
       temp.deleteSync(recursive: true);
     }
   }, timeout: const Timeout(Duration(minutes: 5)));
+
+  test('a variant that predefines the base colour sample of the standard '
+      'shader compiles and binds the samplers its sample reads', () async {
+    final impellerc = await findImpellerC();
+    final temp = Directory.systemTemp.createTempSync('bundle_bindings');
+    try {
+      final variant = File.fromUri(temp.uri.resolve('variant.frag'))
+        ..writeAsStringSync('''
+uniform sampler2D variant_texture;
+
+#define FLUTTER_SCENE_BASE_COLOR_SAMPLE(uv) (texture(base_color_texture, uv) * texture(variant_texture, uv))
+#include <flutter_scene_standard.frag>
+''');
+      final reflection = await _reflect(
+        impellerc,
+        temp,
+        'variant',
+        variant.path,
+        'frag',
+      );
+      final bound = {
+        for (final sampler
+            in (reflection['sampled_images'] as List<Object?>? ?? const [])
+                .cast<Map<String, Object?>>())
+          if ((sampler['ext_res_0'] as num?)?.toInt() != _prunedResourceIndex)
+            sampler['name'],
+      };
+      expect(bound, containsAll(['base_color_texture', 'variant_texture']));
+    } finally {
+      temp.deleteSync(recursive: true);
+    }
+  });
 }
