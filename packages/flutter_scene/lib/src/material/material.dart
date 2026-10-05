@@ -831,6 +831,14 @@ abstract class Material {
   /// call [bindDepthAlphaMask]. The base material writes full geometry.
   bool get depthAlphaMasked => false;
 
+  /// Whether an opaque color draw of this material cuts itself out through
+  /// the coverage pre-draw, which writes depth and a stencil mark where the
+  /// mask keeps the surface before the color draw shades the marked pixels.
+  /// Defaults to [depthAlphaMasked]. A material whose color fragment drops
+  /// the part its mask cuts away returns false, so its color draws once while
+  /// the depth-writing passes stay masked.
+  bool get colorAlphaMasked => depthAlphaMasked;
+
   /// The material's own fragment for a depth-writing pass, or null to use
   /// the engine's. A cutout `.fmat` supplies one that runs its `Surface()` and
   /// drops what it leaves uncovered, so the depth prepass and shadow maps
@@ -853,7 +861,9 @@ abstract class Material {
   }) {}
 
   /// The masked depth fragment shader this material supplies for [pass], or
-  /// null to use the engine's. Asked only when [depthAlphaMasked] is true.
+  /// null to use the engine's. Asked for a depth-writing pass when
+  /// [depthAlphaMasked] is true, and for [MaskedDepthPass.coverage] when
+  /// [colorAlphaMasked] is true.
   ///
   /// A material whose color fragment computes its coverage differently from
   /// the engine's mask (an atlas region, a procedural cutout) returns a
@@ -868,7 +878,8 @@ abstract class Material {
   /// Binds the mask texture and MaskInfo parameters consumed by the masked
   /// depth fragment shaders; [shader] is the masked variant the pass drew
   /// with (the material's own from [maskedDepthFragmentShader], or the
-  /// engine's). Called only when [depthAlphaMasked] is true.
+  /// engine's). Called for a depth-writing pass when [depthAlphaMasked] is
+  /// true, and for the coverage pre-draw when [colorAlphaMasked] is true.
   void bindDepthAlphaMask(
     gpu.RenderPass pass,
     gpu.Shader shader,
