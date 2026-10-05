@@ -111,6 +111,12 @@ import 'render/dof_pass.dart';
 import 'material/shadow_catcher_material.dart';
 import 'render/shadow_catcher_bake_pass.dart';
 import 'render/shadow_cache.dart';
+import 'render/shadow_encoder.dart'
+    show
+        ShadowCasterFilter,
+        ShadowEncoder,
+        shadowCasterDraws,
+        shadowCasterPipelineInputs;
 import 'render/shadow_pass.dart';
 import 'render/shadow_receiver_culling.dart';
 import 'render/ssao_pass.dart';
@@ -2145,7 +2151,10 @@ base class Scene implements SceneGraph {
   /// Pass [size], the size of the region the views are shown in, so each
   /// camera projects and culls at its view's aspect and the frame encodes the
   /// draws that view encodes: without it the views divide a square region,
-  /// and the sides of a wider view are culled away unwarmed.
+  /// and the sides of a wider view are culled away unwarmed. A shadow caster
+  /// [unbuiltPipelines] lists that the frame's shadow pass leaves out, such as
+  /// one in a cascade whose stale cached tile refreshes in a later frame, is
+  /// drawn into a scratch target, so its shadow pipeline is built too.
   ///
   /// Set [includeOffscreen] to encode every render item once. This costs more
   /// during loading, but avoids later pipeline stalls as a moving camera first
@@ -2203,8 +2212,12 @@ base class Scene implements SceneGraph {
       }
     }
 
+    final querySize = size == null || size.isEmpty
+        ? const ui.Size(64, 64)
+        : size;
     if (sliceBudget == null) {
       encode();
+      _buildListedShadowCasters(views, querySize);
       return;
     }
     // Each slice is a whole offscreen frame; stop once one encodes every view
@@ -2216,9 +2229,61 @@ base class Scene implements SceneGraph {
       if (slice > 0) await awaitRasterThread();
       final paced = _pacedFrameCount;
       withPipelineBuildBudget(sliceBudget, encode);
-      if (_pacedFrameCount == paced && deferredPipelineBuilds == 0) return;
+      if (_pacedFrameCount == paced && deferredPipelineBuilds == 0) {
+        _buildListedShadowCasters(views, querySize);
+        return;
+      }
       await Future<void>.delayed(const Duration(milliseconds: 16));
     }
+  }
+
+  // Draws into a scratch target each caster the shadow query still lists
+  // after a warm-up frame, so its shadow pipeline is built: the frame's shadow
+  // pass leaves out a caster whose stale cached tile waits for a later frame,
+  // or one in the slack a cached tile may cover later. A shadow pipeline does
+  // not depend on the light's matrix or the target's size.
+  void _buildListedShadowCasters(List<RenderView> views, ui.Size size) {
+    final nodes = {
+      for (final draw in unbuiltPipelines(views, size: size))
+        if (draw.pass == ScenePipelinePass.shadow) draw.node,
+    };
+    if (nodes.isEmpty) return;
+    final target = gpu.RenderTarget.singleColor(
+      gpu.ColorAttachment(
+        texture: gpu.gpuContext.createTexture(
+          gpu.StorageMode.devicePrivate,
+          1,
+          1,
+          format: gpu.PixelFormat.r32Float,
+          enableShaderReadUsage: false,
+        ),
+      ),
+      depthStencilAttachment: gpu.DepthStencilAttachment(
+        texture: gpu.gpuContext.createTexture(
+          gpu.StorageMode.deviceTransient,
+          1,
+          1,
+          format: gpu.gpuContext.defaultDepthStencilFormat,
+          enableShaderReadUsage: false,
+        ),
+      ),
+    );
+    final commandBuffer = gpu.gpuContext.createCommandBuffer();
+    final encoder = ShadowEncoder(
+      commandBuffer.createRenderPass(target),
+      uniformTransients,
+      Matrix4.identity(),
+      views.first.camera.position,
+      ShadowCasterFaces.front,
+    );
+    for (final item in renderScene.items) {
+      if (nodes.contains(item.sourceNode) &&
+          !isPipelineBuilt(shadowCasterPipelineInputs(item))) {
+        encoder.submitCulled(item);
+      }
+    }
+    encoder.flush();
+    rendererSubmissions.submit(commandBuffer);
   }
 
   bool _warmUpIncludeOffscreen = false;
@@ -2237,10 +2302,17 @@ base class Scene implements SceneGraph {
   /// lighting (its shadow and radiance layout variants), the vertex layout,
   /// and the coverage pre-draw of an opaque draw that cuts itself out. The
   /// lighting is shadowed where the view renders a shadow atlas, and the
-  /// depth prepass counts where the view's effects run it. The shadow
-  /// casters, the screen-space and post-processing passes, a debug view's
-  /// fallback shader and the views that render into a [RenderTexture] are
-  /// not queried.
+  /// depth prepass counts where the view's effects run it.
+  ///
+  /// Where the view renders a shadow atlas, the shadow pass counts too: each
+  /// opaque caster the directional light's cascades, a shadow-casting spot's
+  /// cone or a shadow-casting point light's faces take, by the caster
+  /// channels, keyed as the shadow encoder keys it. Where the light caches
+  /// static shadows and a static caster casts, a cascade takes what the slack
+  /// of its cached tile can cover, so a caster near the edge of a cascade may
+  /// be listed although this frame's tile leaves it out. The screen-space and
+  /// post-processing passes, a debug view's fallback shader and the views
+  /// that render into a [RenderTexture] are not queried.
   ///
   /// It records and builds nothing. [warmUp] with the same [views] and
   /// [size] builds the pipelines of every draw it lists.
@@ -2334,15 +2406,105 @@ base class Scene implements SceneGraph {
           );
         }
       }, additionalPlanes: view.cullingPlanes);
+      if (passes.shadowed) {
+        _addUnbuiltShadowCasters(
+          draws,
+          view,
+          passes.cascades,
+          lightComponent,
+          spotShadowFrame,
+          pointShadowFrame,
+        );
+      }
     }
     return draws;
   }
 
+  // Lists for [unbuiltPipelines] each caster of [view]'s shadow pass whose
+  // shadow pipeline is unbuilt: an opaque caster inside a frustum the pass
+  // draws, under that frustum's caster channels. A cached tile drifts up to
+  // its slack from the ideal cascade and is fit with that slack, plus a
+  // margin for the fit tolerance and texel snapping of [DirectionalShadowCache].
+  void _addUnbuiltShadowCasters(
+    List<UnbuiltPipelineDraw> draws,
+    RenderView view,
+    List<ShadowCascade> cascades,
+    DirectionalLightComponent? lightComponent,
+    SpotShadowFrame? spotShadowFrame,
+    PointShadowFrame? pointShadowFrame,
+  ) {
+    final frusta = <({Frustum frustum, int channels})>[];
+    final light = lightComponent?.light;
+    if (light != null && cascades.isNotEmpty) {
+      final direction = lightComponent!.worldDirection.normalized();
+      const slack = (2 * DirectionalShadowCache.slackFactor - 1) * 1.01;
+      final cached = light.cacheStaticShadows && _refreshStaticShadowMetadata();
+      for (final cascade in cascades) {
+        final center = cascade.center;
+        final matrix = cached && center != null
+            ? light.cascadeLightSpaceMatrix(
+                direction,
+                center,
+                cascade.radius * slack,
+              )
+            : cascade.lightSpaceMatrix;
+        frusta.add((
+          frustum: Frustum.matrix(matrix),
+          channels: light.shadowCasterChannelMask,
+        ));
+      }
+    }
+    if (spotShadowFrame != null) {
+      for (var s = 0; s < spotShadowFrame.matrices.length; s++) {
+        frusta.add((
+          frustum: Frustum.matrix(spotShadowFrame.matrices[s]),
+          channels: spotShadowFrame.casterChannelMasks[s],
+        ));
+      }
+    }
+    if (pointShadowFrame != null) {
+      for (var s = 0; s < pointShadowFrame.casters.length; s++) {
+        for (var f = 0; f < kPointShadowFaces; f++) {
+          frusta.add((
+            frustum: Frustum.matrix(pointShadowFrame.faceMatrix(s, f)),
+            channels: pointShadowFrame.casterChannelMasks[s],
+          ));
+        }
+      }
+    }
+    final listed = <Node>{};
+    for (final entry in frusta) {
+      renderScene.cull(entry.frustum, (item) {
+        final node = item.sourceNode;
+        if (node is! Node || listed.contains(node)) return;
+        if (!shadowCasterDraws(item, ShadowCasterFilter.all, entry.channels)) {
+          return;
+        }
+        if (isPipelineBuilt(shadowCasterPipelineInputs(item))) return;
+        listed.add(node);
+        draws.add(
+          UnbuiltPipelineDraw(
+            node: node,
+            view: view,
+            pass: ScenePipelinePass.shadow,
+          ),
+        );
+      });
+    }
+  }
+
   // Which of the pipeline-selecting passes a screen view's render graph runs,
-  // as [_renderViewToTexture] decides them: whether its lit materials take
-  // their shadow variants ([shadowed] when a spot or point light casts), and
-  // whether it runs the depth prepass and writes normals there.
-  ({bool shadowed, bool depthPrepass, bool depthNormals}) _queryViewPasses(
+  // as [_renderViewToTexture] decides them: the directional cascades it
+  // renders, whether its lit materials take their shadow variants ([shadowed]
+  // when a spot or point light casts), and whether it runs the depth prepass
+  // and writes normals there.
+  ({
+    List<ShadowCascade> cascades,
+    bool shadowed,
+    bool depthPrepass,
+    bool depthNormals,
+  })
+  _queryViewPasses(
     RenderView view,
     Camera camera,
     ui.Size viewSize,
@@ -2361,12 +2523,18 @@ base class Scene implements SceneGraph {
         projection.far > projection.near;
     final light = lightComponent?.light;
     final lightDirection = lightComponent?.worldDirection;
-    final cascades = light != null && light.castsShadow && projectionValid;
+    final cascades = light != null && light.castsShadow && projectionValid
+        ? light.computeCascades(
+            camera,
+            viewSize.width / viewSize.height,
+            lightDirection,
+          )
+        : const <ShadowCascade>[];
     final customInputs = <RenderInput>{
       for (final pass in _renderPasses)
         if (pass.enabled) ...pass.inputs,
     };
-    if (godRays.enabled && projectionValid && cascades && !debugActive) {
+    if (godRays.enabled && cascades.isNotEmpty && !debugActive) {
       customInputs.addAll(_godRaysPass.inputs);
     }
     final bindSceneDepth = renderScene
@@ -2393,7 +2561,8 @@ base class Scene implements SceneGraph {
         light.contactShadows &&
         (lightDirection ?? light.direction).length2 > 0.0;
     return (
-      shadowed: shadowed || cascades,
+      cascades: cascades,
+      shadowed: shadowed || cascades.isNotEmpty,
       depthPrepass:
           projectionValid &&
           (bindSceneDepth ||
@@ -2406,6 +2575,47 @@ base class Scene implements SceneGraph {
               customDepth),
       depthNormals: ssr || customNormals || irradianceField,
     );
+  }
+
+  // Refreshes the fingerprint of the static shadow casters when the render
+  // scene changed since the last refresh, and returns whether any casts.
+  bool _refreshStaticShadowMetadata() {
+    final structureRevision = renderScene.structureRevision;
+    final staticShadowRevision = renderScene.staticShadowRevision;
+    final refreshStaticShadows =
+        _renderMetadataStructureRevision != structureRevision ||
+        _renderMetadataStaticShadowRevision != staticShadowRevision;
+    if (refreshStaticShadows) {
+      var staticShadowSignature = _cachedStaticShadowSignature;
+      var hasStaticShadowCasters = _cachedHasStaticShadowCasters;
+      staticShadowSignature = 0;
+      hasStaticShadowCasters = false;
+      for (final item in renderScene.items) {
+        if (item.shadowStatic && item.castsShadows && item.visible) {
+          hasStaticShadowCasters = true;
+          final t = item.worldTransform.storage;
+          staticShadowSignature =
+              0x3fffffff &
+              (staticShadowSignature * 31 +
+                  identityHashCode(item.geometry) +
+                  identityHashCode(item.instanceTransforms) +
+                  // Material identity matters to the depth pass (alpha-masked
+                  // casters render through the masked depth shader), so a
+                  // swapped material must invalidate cached static tiles.
+                  identityHashCode(item.material) +
+                  // A caster's channels decide which lights it casts into.
+                  item.lightChannelMask +
+                  t[12].hashCode * 3 +
+                  t[13].hashCode * 7 +
+                  t[14].hashCode * 13);
+        }
+      }
+      _cachedStaticShadowSignature = staticShadowSignature;
+      _cachedHasStaticShadowCasters = hasStaticShadowCasters;
+      _renderMetadataStaticShadowRevision = staticShadowRevision;
+      _renderMetadataStructureRevision = structureRevision;
+    }
+    return _cachedHasStaticShadowCasters;
   }
 
   List<SpotLightComponent> _visibleSpotLights() => [
@@ -3581,40 +3791,7 @@ base class Scene implements SceneGraph {
           );
 
     // The retained metadata below fingerprints static shadow casters.
-    final staticShadowRevision = renderScene.staticShadowRevision;
-    final refreshStaticShadows =
-        _renderMetadataStructureRevision != structureRevision ||
-        _renderMetadataStaticShadowRevision != staticShadowRevision;
-    if (refreshStaticShadows) {
-      var staticShadowSignature = _cachedStaticShadowSignature;
-      var hasStaticShadowCasters = _cachedHasStaticShadowCasters;
-      staticShadowSignature = 0;
-      hasStaticShadowCasters = false;
-      for (final item in renderScene.items) {
-        if (item.shadowStatic && item.castsShadows && item.visible) {
-          hasStaticShadowCasters = true;
-          final t = item.worldTransform.storage;
-          staticShadowSignature =
-              0x3fffffff &
-              (staticShadowSignature * 31 +
-                  identityHashCode(item.geometry) +
-                  identityHashCode(item.instanceTransforms) +
-                  // Material identity matters to the depth pass (alpha-masked
-                  // casters render through the masked depth shader), so a
-                  // swapped material must invalidate cached static tiles.
-                  identityHashCode(item.material) +
-                  // A caster's channels decide which lights it casts into.
-                  item.lightChannelMask +
-                  t[12].hashCode * 3 +
-                  t[13].hashCode * 7 +
-                  t[14].hashCode * 13);
-        }
-      }
-      _cachedStaticShadowSignature = staticShadowSignature;
-      _cachedHasStaticShadowCasters = hasStaticShadowCasters;
-      _renderMetadataStaticShadowRevision = staticShadowRevision;
-      _renderMetadataStructureRevision = structureRevision;
-    }
+    _refreshStaticShadowMetadata();
     final staticShadowSignature = _cachedStaticShadowSignature;
     final hasStaticShadowCasters = _cachedHasStaticShadowCasters;
     // A display-referred surface pays for an extra layer and forces the

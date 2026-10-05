@@ -6,7 +6,10 @@ import 'package:flutter_scene/src/geometry/vertex_layout.dart'
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart' show ShadowCasterFaces;
 import 'package:flutter_scene/src/render/draw_recorder.dart';
-import 'package:flutter_scene/src/material/material.dart' show MaskedDepthPass;
+import 'package:flutter_scene/src/material/material.dart'
+    show MaskedDepthPass, Material;
+import 'package:flutter_scene/src/material/instance_attributes.dart'
+    show InstanceAttributeSchema;
 import 'package:flutter_scene/src/render/instance_batching.dart';
 import 'package:flutter_scene/src/fmat/fmat_ast.dart' show DepthSurfaceKind;
 import 'package:flutter_scene/src/mesh_draw.dart';
@@ -16,7 +19,11 @@ import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/scene_encoder.dart'
-    show cachedRenderPipeline, drawOrRejectPipeline, tryResolvePipeline;
+    show
+        PipelineInputs,
+        cachedRenderPipeline,
+        drawOrRejectPipeline,
+        tryResolvePipeline;
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/material/vertex_attributes.dart';
@@ -77,6 +84,125 @@ int shadowBatchEnd(
     cut++;
   }
   return cut;
+}
+
+/// Whether [item] draws in a shadow map: an accepted caster under [filter]
+/// and [casterChannelMask] whose material is opaque and scene-referred (UI
+/// composited over the scene casts no shadow into it).
+///
+/// [ShadowEncoder.submit] records an item only when this holds and the item
+/// is inside the light's frustum.
+bool shadowCasterDraws(
+  RenderItem item,
+  ShadowCasterFilter filter,
+  int casterChannelMask,
+) =>
+    shadowCasterAccepted(item, filter, casterChannelMask) &&
+    item.material.isOpaque() &&
+    !item.material.displayReferred;
+
+/// How a shadow pass draws [geometry] with [material]: its shaders, its
+/// vertex layout, and the vertex inputs the draw binds.
+///
+/// An alpha-masked caster draws through the masked depth shader, which the
+/// material may supply, so only its opaque texels cast, and a cutout `.fmat`
+/// casts through its own depth fragment, cut by its surface alpha; an
+/// explicitly configured mask wins over that automatic variant. Either needs
+/// the full-vertex varyings, so it skips the position-only path. Unskinned
+/// casters otherwise draw depth through a position-only shader and layout;
+/// skinned geometry falls back to its full vertex shader. A `vertex { }`
+/// material displaces geometry in the color pass, so its vertex variant runs
+/// here too or the shadow detaches from the visible surface. A full-vertex
+/// caster runs the material's color vertex variant, which declares its
+/// per-instance attribute inputs and custom attributes, so the instance
+/// record is as wide as in the color pass.
+ShadowCasterDraw shadowCasterDraw(Geometry geometry, Material material) {
+  final surfaceShader = material.depthAlphaMasked
+      ? null
+      : material.depthSurfaceShader(DepthSurfaceKind.shadow);
+  final masked = surfaceShader != null || material.depthAlphaMasked;
+  final fragmentShader =
+      surfaceShader ??
+      (masked
+          ? material.maskedDepthFragmentShader(MaskedDepthPass.shadow) ??
+                ShadowEncoder._maskedDepthShader
+          : ShadowEncoder._depthShader);
+  final depthVertex = masked || material.needsFullVertexForDepth(geometry)
+      ? null
+      : geometry.depthOnlyVertex;
+  final materialVertex = material.vertexShaderForGeometry(
+    geometry,
+    depth: depthVertex != null,
+  );
+  final instanceSchema = depthVertex == null
+      ? material.instanceAttributes
+      : null;
+  final attributes = depthVertex == null
+      ? material.vertexAttributesFor(materialVertex)
+      : VertexAttributeSchema.none;
+  return ShadowCasterDraw._(
+    vertexShader:
+        materialVertex ?? depthVertex?.shader ?? geometry.vertexShader,
+    fragmentShader: fragmentShader,
+    vertexLayout:
+        depthVertex?.layout ??
+        geometry.instancedVertexLayoutFor(instanceSchema, attributes),
+    materialVertex: materialVertex,
+    positionOnly: depthVertex != null,
+    surfaceShader: surfaceShader,
+    masked: masked,
+    instanceSchema: instanceSchema,
+    attributes: attributes,
+  );
+}
+
+/// The pipeline inputs of [item]'s draw in a shadow map, as [ShadowEncoder]
+/// resolves them.
+PipelineInputs shadowCasterPipelineInputs(RenderItem item) =>
+    shadowCasterDraw(item.geometry, item.material).pipelineInputs;
+
+/// One shadow caster draw; see [shadowCasterDraw].
+final class ShadowCasterDraw {
+  ShadowCasterDraw._({
+    required this.vertexShader,
+    required this.fragmentShader,
+    required this.vertexLayout,
+    required this.materialVertex,
+    required this.positionOnly,
+    required this.surfaceShader,
+    required this.masked,
+    required this.instanceSchema,
+    required this.attributes,
+  });
+
+  final gpu.Shader vertexShader;
+  final gpu.Shader fragmentShader;
+  final VertexLayoutDescriptor? vertexLayout;
+
+  /// The material's vertex variant, when it supplies one.
+  final gpu.Shader? materialVertex;
+
+  /// Whether the draw runs the position-only vertex path.
+  final bool positionOnly;
+
+  /// The material's own cutout depth fragment, when it casts through one.
+  final gpu.Shader? surfaceShader;
+
+  /// Whether the fragment cuts the caster, by its surface alpha or by an
+  /// alpha mask.
+  final bool masked;
+
+  /// The per-instance attributes the full-vertex path reads.
+  final InstanceAttributeSchema? instanceSchema;
+
+  /// The custom vertex attributes the draw fetches.
+  final VertexAttributeSchema? attributes;
+
+  PipelineInputs get pipelineInputs => (
+    vertexShader: vertexShader,
+    fragmentShader: fragmentShader,
+    vertexLayout: vertexLayout,
+  );
 }
 
 /// Records each opaque shadow caster's depth into a shadow-map render
@@ -179,10 +305,7 @@ class ShadowEncoder {
     // The flag and channel checks run first: the dynamic composite iterates
     // the whole item list (most of which is static), so the common case must
     // reject before any virtual call.
-    if (!shadowCasterAccepted(item, _filter, _casterChannelMask)) return;
-    if (!item.material.isOpaque()) return;
-    // UI composited over the scene casts no shadow into it.
-    if (item.material.displayReferred) return;
+    if (!shadowCasterDraws(item, _filter, _casterChannelMask)) return;
     if (!alreadyCulled && item.frustumCulled) {
       final bounds = item.cullBounds;
       if (bounds != null) {
@@ -272,24 +395,13 @@ class ShadowEncoder {
     // geometry first.
     item.applyJointsTexture(geometry);
     item.applyMorphWeights(geometry);
-    // An alpha-masked caster draws through the masked depth shader (so only
-    // its opaque texels cast) and needs the full-vertex varyings, so it skips
-    // the position-only path. It also keeps the material's own culling, so the
-    // faces that are visible are the faces that cast; the caster-face mode's
-    // second-depth trick has no meaning for cutout sheets.
-    // A cutout `.fmat` casts through its own depth fragment, cut by its
-    // surface alpha; it culls like a masked caster.
-    // An explicitly configured mask wins over the automatic surface variant.
-    final surfaceShader = item.material.depthAlphaMasked
-        ? null
-        : item.material.depthSurfaceShader(DepthSurfaceKind.shadow);
-    final masked = surfaceShader != null || item.material.depthAlphaMasked;
-    final fragmentShader =
-        surfaceShader ??
-        (masked
-            ? item.material.maskedDepthFragmentShader(MaskedDepthPass.shadow) ??
-                  _maskedDepthShader
-            : _depthShader);
+    // An alpha-masked or cutout caster keeps the material's own culling, so
+    // the faces that are visible are the faces that cast; the caster-face
+    // mode's second-depth trick has no meaning for cutout sheets.
+    final draw = shadowCasterDraw(geometry, item.material);
+    final surfaceShader = draw.surfaceShader;
+    final masked = draw.masked;
+    final fragmentShader = draw.fragmentShader;
     // A double-sided caster records every face regardless of the light's
     // caster-face mode or the material's culling, which is what closes the
     // light leak through single-sided geometry. A double-sided material casts
@@ -303,38 +415,14 @@ class ShadowEncoder {
       _renderPass.setCullMode(cullMode);
       _currentCullMode = cullMode;
     }
-    // Unskinned casters draw depth through a position-only shader and layout;
-    // skinned geometry falls back to its full vertex shader and bind.
-    // A `vertex { }` material displaces geometry in the color pass, so run its
-    // vertex variant here too or the shadow detaches from the visible surface.
-    final depthVertex =
-        masked || item.material.needsFullVertexForDepth(geometry)
-        ? null
-        : geometry.depthOnlyVertex;
-    final materialVertex = item.material.vertexShaderForGeometry(
-      geometry,
-      depth: depthVertex != null,
-    );
-    final activeVertex =
-        materialVertex ?? depthVertex?.shader ?? geometry.vertexShader;
-    // A masked caster runs the material's color vertex variant, which declares
-    // its per-instance attribute inputs, so the instance record has to be as
-    // wide here as in the color pass.
-    final instanceSchema = depthVertex == null
-        ? item.material.instanceAttributes
-        : null;
-    final attributeFloats = instanceSchema?.floatCount ?? 0;
-    // The full-vertex path supplies the custom attributes its vertex shader
-    // reads; the position-only path fetches none.
-    final attributes = depthVertex == null
-        ? item.material.vertexAttributesFor(materialVertex)
-        : VertexAttributeSchema.none;
-    geometry.useVertexAttributes(attributes);
+    final positionOnly = draw.positionOnly;
+    final materialVertex = draw.materialVertex;
+    final activeVertex = draw.vertexShader;
+    final attributeFloats = draw.instanceSchema?.floatCount ?? 0;
+    geometry.useVertexAttributes(draw.attributes);
     // A caster whose pipeline cannot build skips its own draw rather than
     // throwing out of the whole shadow pass.
-    final vertexLayout =
-        depthVertex?.layout ??
-        geometry.instancedVertexLayoutFor(instanceSchema, attributes);
+    final vertexLayout = draw.vertexLayout;
     final pipeline =
         cachedRenderPipeline(activeVertex, fragmentShader, vertexLayout) ??
         _resolvePipeline(activeVertex, fragmentShader, vertexLayout, geometry);
@@ -364,7 +452,7 @@ class ShadowEncoder {
 
     _drawItem = item;
     _drawGeometry = geometry;
-    _drawDepthPath = depthVertex != null;
+    _drawDepthPath = positionOnly;
     _drawVertex = activeVertex;
     _drawMaterialVertex = materialVertex;
     _drawSurfaceShader = surfaceShader;
@@ -375,11 +463,11 @@ class ShadowEncoder {
     // vertex streams: slot 1 on the position-only path, slot
     // [vertexStreamCount] when the full stream set is bound (masked casters),
     // matching the prepass and color encoders.
-    final instanceSlot = depthVertex != null ? 1 : geometry.vertexStreamCount;
+    final instanceSlot = positionOnly ? 1 : geometry.vertexStreamCount;
 
     if (batches != null) {
       _bindDraw(_identityTransform);
-      final PackedInstances packed = depthVertex == null
+      final PackedInstances packed = !positionOnly
           ? packInstanceDataBatches(
               batches,
               attributeFloats: attributeFloats,
@@ -389,7 +477,7 @@ class ShadowEncoder {
               batches,
               scratch: transientInstancePackingScratch,
             );
-      _drawPacked(geometry, packed, depthVertex == null, instanceSlot);
+      _drawPacked(geometry, packed, !positionOnly, instanceSlot);
       return;
     }
 
@@ -420,7 +508,7 @@ class ShadowEncoder {
       _bindDraw(item.worldTransform);
       final packedWorldData = item.instanceWorldData;
       final packedWinding = item.instanceWorldWindingFlipped;
-      if (depthVertex == null &&
+      if (!positionOnly &&
           packedWorldData != null &&
           packedWinding != null &&
           item.instanceAttributeFloats == attributeFloats) {
@@ -453,7 +541,7 @@ class ShadowEncoder {
               indices: visible,
               attributeFloats: item.instanceAttributeFloats,
             );
-      final PackedInstances packed = depthVertex == null
+      final PackedInstances packed = !positionOnly
           ? (cached == null
                 ? packInstanceData(
                     item.worldTransform,
@@ -484,7 +572,7 @@ class ShadowEncoder {
                     cached,
                     scratch: transientInstancePackingScratch,
                   ));
-      _drawPacked(geometry, packed, depthVertex == null, instanceSlot);
+      _drawPacked(geometry, packed, !positionOnly, instanceSlot);
       transientInstancePackingScratch.releaseSingleBatch();
       return;
     }
@@ -495,7 +583,7 @@ class ShadowEncoder {
     // stream slot.
     if (geometry.instancedVertexLayout != null &&
         geometry.bindsModelTransformInstance) {
-      if (depthVertex == null) {
+      if (!positionOnly) {
         bindSingleInstanceData(
           _renderPass,
           item.worldTransform,
