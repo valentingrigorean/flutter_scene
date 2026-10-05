@@ -1,9 +1,13 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter_scene/scene.dart';
 // ignore: implementation_imports
 import 'package:flutter_scene/src/render/custom_render_pass.dart'
     show packPostShadowInfo;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
+
+import 'support/gpu_available.dart';
 
 class _NoopPass extends CustomRenderPass {
   @override
@@ -28,7 +32,45 @@ class _DepthPass extends CustomRenderPass {
   void execute(RenderPassContext context) {}
 }
 
+class _ViewCameraPass extends CustomRenderPass {
+  final List<Camera> cameras = [];
+  @override
+  String get name => 'view camera';
+  @override
+  RenderStage get stage => RenderStage.afterScene;
+  @override
+  void execute(RenderPassContext context) => cameras.add(context.viewCamera);
+}
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('a pass reads the camera of each view it runs for', () async {
+    if (!gpuAvailable()) return;
+    await Scene.initializeStaticResources();
+    final pass = _ViewCameraPass();
+    final scene = Scene()
+      ..add(
+        Node(
+          mesh: Mesh(CuboidGeometry(Vector3.all(1)), PhysicallyBasedMaterial()),
+        ),
+      )
+      ..addRenderPass(pass);
+    final far = PerspectiveCamera(position: Vector3(0, 2, 5));
+    final near = PerspectiveCamera(position: Vector3(0, 2, 5), fovNear: 0.5);
+    final recorder = ui.PictureRecorder();
+    scene.renderViews(
+      [RenderView(camera: far), RenderView(camera: near, order: 1)],
+      ui.Canvas(recorder),
+      region: const ui.Rect.fromLTWH(0, 0, 64, 64),
+      pixelRatio: 1.0,
+    );
+    recorder.endRecording().dispose();
+    expect(pass.cameras, hasLength(2));
+    expect(pass.cameras.first, same(far));
+    expect(pass.cameras.last, same(near));
+  });
+
   test(
     'CustomRenderPass.inputs defaults to empty; declared inputs surface',
     () {

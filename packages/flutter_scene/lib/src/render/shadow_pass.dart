@@ -25,6 +25,12 @@ const String kShadowMapBlackboardKey = 'directional_shadow_map';
 /// Blackboard key for the frame's [SpotShadowInfo], set when spots cast.
 const String kSpotShadowInfoBlackboardKey = 'spot_shadow_info';
 
+/// Blackboard key under which [ShadowPass] publishes the static shadow tile
+/// of the cascade it names, in each frame that re-renders that tile, so a
+/// render graph capture lists every tile refresh.
+String staticShadowTileBlackboardKey(int cascade) =>
+    'static_shadow_tile_$cascade';
+
 /// Where the frame's spot shadows live in the shared shadow atlas (the
 /// texture under [kShadowMapBlackboardKey]): one square tile per casting spot,
 /// after the directional cascades, holding window-space depth in red.
@@ -452,6 +458,10 @@ class ShadowPass extends RenderGraphPass {
       // A sliced warm-up skipped some of its casters, so render it again on
       // the next frame rather than reuse it.
       if (deferredPipelineBuilds > deferred) entry.hasContent = false;
+      context.blackboard.set(
+        staticShadowTileBlackboardKey(refresh.cascadeIndex),
+        entry.tile,
+      );
     }
   }
 
