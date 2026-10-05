@@ -715,11 +715,11 @@ PipelineInputs coveragePipelineInputs(Geometry geometry, Material material) {
 
 final gpu.Shader _coverageShader = baseShaderLibrary['CoverageFragment']!;
 
-/// The coverage pre-draw's fragment for [material]: an alpha-masked
-/// material's own (see [Material.maskedDepthFragmentShader]), or the
-/// engine's.
+/// The coverage pre-draw's fragment for [material]: the own fragment of a
+/// material that cuts its color out (see [Material.colorAlphaMasked] and
+/// [Material.maskedDepthFragmentShader]), or the engine's.
 gpu.Shader coverageShaderFor(Material material) =>
-    (material.depthAlphaMasked
+    (material.colorAlphaMasked
         ? material.maskedDepthFragmentShader(MaskedDepthPass.coverage)
         : null) ??
     _coverageShader;
@@ -729,7 +729,7 @@ gpu.Shader coverageShaderFor(Material material) =>
 bool drawsCoverage(Material material, double fade) =>
     material.isOpaque() &&
     !material.displayReferred &&
-    (material.depthAlphaMasked || (fade != 1.0 && material.lodCrossFades));
+    (material.colorAlphaMasked || (fade != 1.0 && material.lodCrossFades));
 
 /// Whether the process holds the color-pass pipelines of every geometry and
 /// material [item] can draw with under [lighting]: its own, or each level of
@@ -1103,7 +1103,7 @@ base class SceneEncoder {
   // Whether an opaque draw of [material] at cross-fade coverage [fade] cuts
   // itself out, and so takes the coverage pre-draw.
   static bool _cutsOut(Material material, double fade) =>
-      material.depthAlphaMasked || (fade != 1.0 && material.lodCrossFades);
+      material.colorAlphaMasked || (fade != 1.0 && material.lodCrossFades);
 
   // MaskInfo for a cross-fade without an alpha mask: a cutoff no alpha falls
   // below, over the white placeholder.
@@ -1693,7 +1693,7 @@ base class SceneEncoder {
       _transientsBuffer,
       material.clipVolume,
     );
-    if (material.depthAlphaMasked) {
+    if (material.colorAlphaMasked) {
       material.bindDepthAlphaMask(_renderPass, shader, _transientsBuffer);
       return;
     }

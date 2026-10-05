@@ -7,6 +7,8 @@ import 'dart:io';
 import 'package:flutter_scene/scene.dart';
 // ignore: implementation_imports
 import 'package:flutter_scene/src/fmat/fmat.dart';
+// ignore: implementation_imports
+import 'package:flutter_scene/src/scene_encoder.dart' show drawsCoverage;
 import 'package:flutter_test/flutter_test.dart';
 
 // The source with `//` comments removed, so prose mentioning discard does not
@@ -61,4 +63,24 @@ void main() {
     material.alphaMode = AlphaMode.mask;
     expect(material.depthAlphaMasked, isTrue);
   });
+
+  test('a material that masks its depth passes but cuts its own color out '
+      'draws its color without the coverage pre-draw', () {
+    final masked = PhysicallyBasedMaterial()..alphaMode = AlphaMode.mask;
+    expect(masked.colorAlphaMasked, isTrue);
+    expect(drawsCoverage(masked, 1.0), isTrue);
+    final cutting = _ColorCuttingMaterial();
+    expect(cutting.depthAlphaMasked, isTrue);
+    expect(cutting.colorAlphaMasked, isFalse);
+    expect(drawsCoverage(cutting, 1.0), isFalse);
+    expect(drawsCoverage(cutting, 0.5), isTrue);
+  });
+}
+
+class _ColorCuttingMaterial extends UnlitMaterial {
+  @override
+  bool get depthAlphaMasked => true;
+
+  @override
+  bool get colorAlphaMasked => false;
 }
