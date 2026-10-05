@@ -12,6 +12,9 @@
 
 // Distance fog (the FogInfo block + ApplyFog), applied to the final lit color.
 #include <fog.glsl>
+// The material's clip volume (the ClipInfo block + ApplyClipVolume), tested
+// before the surface is lit.
+#include <clip_volume.glsl>
 #include <octahedral.glsl>
 // The baked lightmap. Included only where it is used, so a plain lit entry
 // compiles to exactly the same code it did before the slot existed.
@@ -385,6 +388,7 @@ highp vec3 EvaluateAnalyticLight(MaterialInputs material, vec3 light_vector,
 // the material contract; a material's Surface() function fills `material` and
 // main() calls this.
 highp vec4 EvaluateLighting(MaterialInputs material) {
+  ApplyClipVolume();
   vec3 albedo = material.base_color.rgb;
   float alpha = material.base_color.a;
   vec3 normal = material.normal;

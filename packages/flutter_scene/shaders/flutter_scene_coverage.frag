@@ -14,6 +14,8 @@
 #include <material_inputs.glsl>
 #include <depth_mask.glsl>
 #include <lod_fade.glsl>
+// The material's clip volume, so a clipped fragment marks no coverage.
+#include <clip_volume.glsl>
 
 uniform CoverageInfo {
   // Level-of-detail cross-fade coverage (see lod_fade.glsl).
@@ -23,6 +25,7 @@ coverage_info;
 
 void main() {
   ApplyLodFade(coverage_info.fade);
+  ApplyClipVolume();
   ApplyDepthAlphaMask();
   frag_color = vec4(0.0);
 }

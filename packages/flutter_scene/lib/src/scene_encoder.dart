@@ -1545,6 +1545,12 @@ base class SceneEncoder {
       shader.getUniformSlot('CoverageInfo'),
       _transientsBuffer.emplace(_coverageInfoBytes),
     );
+    EngineLightingUniforms.bindClipVolume(
+      _renderPass,
+      shader,
+      _transientsBuffer,
+      material.clipVolume,
+    );
     if (material.depthAlphaMasked) {
       material.bindDepthAlphaMask(_renderPass, shader, _transientsBuffer);
       return;

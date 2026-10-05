@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:flutter_scene/src/fog.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart';
+import 'package:flutter_scene/src/material/clip_volume.dart';
 import 'package:flutter_scene/src/material/environment.dart';
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/material/physically_based_material.dart'
@@ -418,6 +419,36 @@ class EngineLightingUniforms {
       transientsBuffer.emplace(ByteData.sublistView(buffer)),
     );
   }
+
+  /// Binds the `ClipInfo` block (see `shaders/clip_volume.glsl`) on [shader]:
+  /// the planes of [volume], or a zero block that keeps every fragment when it
+  /// is null. The shaders that declare `FogInfo` declare `ClipInfo` too, so
+  /// every caller of [bindFog] calls this with the material's
+  /// [Material.clipVolume], and so does the coverage pre-draw. A shader that
+  /// declares no `ClipInfo` binds nothing.
+  static void bindClipVolume(
+    gpu.RenderPass pass,
+    gpu.Shader shader,
+    TransientWriter transientsBuffer,
+    ClipVolume? volume,
+  ) {
+    final slot = shader.getUniformSlot('ClipInfo');
+    if (slot.sizeInBytes == null) return;
+    pass.bindUniform(
+      slot,
+      volume == null
+          ? _noClipVolume
+          : transientsBuffer.emplace(volume.uniformBytes),
+    );
+  }
+
+  // The zero ClipInfo block, device-resident so an unclipped draw binds no
+  // per-frame buffer.
+  static final gpu.BufferView _noClipVolume = () {
+    const length = ClipVolume.maxPlanes * 16;
+    final buffer = gpu.gpuContext.createDeviceBufferWithCopy(ByteData(length));
+    return gpu.BufferView(buffer, offsetInBytes: 0, lengthInBytes: length);
+  }();
 
   // Tiny constant uniform blocks (std140, 16 bytes) telling the two 2D
   // radiance layouts apart in the shader (RadianceLayoutInfo in texture.glsl);

@@ -11,6 +11,7 @@ import 'package:flutter_scene/src/fmat/fmat_ast.dart' show DepthSurfaceKind;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/geometry/geometry.dart';
 import 'package:flutter_scene/src/light.dart';
+import 'package:flutter_scene/src/material/clip_volume.dart';
 import 'package:flutter_scene/src/material/dfg_lut.dart';
 import 'package:flutter_scene/src/material/dfg_lut_data.dart';
 
@@ -314,6 +315,14 @@ abstract class Material {
   /// [depthLayer], which holds at every distance. Billboards, sprites, line
   /// segments, and splats ignore this; they honor [depthLayer].
   double depthBias = 0.0;
+
+  /// The region of world space whose fragments this material discards, or
+  /// null to draw every fragment. Read when the material is bound, so a
+  /// subclass may override it with a getter that answers per draw. The
+  /// built-in lit and unlit materials, every physical variant and lit `.fmat`
+  /// materials honor it in their color pass and the main pass's coverage
+  /// pre-draw.
+  ClipVolume? clipVolume;
 
   /// Which surface wins where this material's geometry and another's lie in
   /// the same plane. A surface with a higher layer draws over coplanar

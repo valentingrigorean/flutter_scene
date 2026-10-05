@@ -34,6 +34,9 @@ texture_transform;
 // reads (v_position, v_viewvector).
 #include <fog.glsl>
 
+// The material's clip volume (the ClipInfo block + ApplyClipVolume).
+#include <clip_volume.glsl>
+
 vec3 SRGBToLinear(vec3 color) {
   return mix(color / 12.92,
              pow((color + 0.055) / 1.055, vec3(2.4)),
@@ -41,6 +44,7 @@ vec3 SRGBToLinear(vec3 color) {
 }
 
 void main() {
+  ApplyClipVolume();
   vec4 vertex_color = mix(vec4(1), v_color, frag_info.vertex_color_weight);
   highp vec2 uv = MaterialTextureUv(texture_transform.uv_transform,
                               texture_transform.uv_rotation);

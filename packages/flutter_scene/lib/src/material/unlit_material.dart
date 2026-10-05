@@ -146,5 +146,11 @@ class UnlitMaterial extends Material {
       transientsBuffer,
       lighting,
     );
+    EngineLightingUniforms.bindClipVolume(
+      pass,
+      fragmentShader,
+      transientsBuffer,
+      clipVolume,
+    );
   }
 }

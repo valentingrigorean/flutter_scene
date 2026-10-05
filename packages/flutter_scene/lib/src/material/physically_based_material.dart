@@ -1580,6 +1580,7 @@ class PhysicallyBasedMaterial extends Material {
         ..modelScaleX = modelScaleX
         ..modelScaleY = modelScaleY
         ..modelScaleZ = modelScaleZ
+        ..clipVolume = clipVolume
         ..environment = environment;
       prepared.bind(pass, transientsBuffer, lighting);
       return;
@@ -1760,6 +1761,12 @@ class PhysicallyBasedMaterial extends Material {
       shader,
       transientsBuffer,
       lighting,
+    );
+    EngineLightingUniforms.bindClipVolume(
+      pass,
+      shader,
+      transientsBuffer,
+      clipVolume,
     );
   }
 

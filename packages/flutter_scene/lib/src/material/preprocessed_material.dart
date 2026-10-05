@@ -523,6 +523,12 @@ class PreprocessedMaterial extends Material implements HotReloadableFmat {
           transientsBuffer,
           lighting,
         );
+        EngineLightingUniforms.bindClipVolume(
+          pass,
+          shader,
+          transientsBuffer,
+          clipVolume,
+        );
       }
     }
     // Every shading model's Surface() and debug hook may read
