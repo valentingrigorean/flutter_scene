@@ -838,9 +838,7 @@ base class Scene implements SceneGraph {
     }
     _planarCaptureResources.clear();
     debugLastPlanarCapturePasses = const [];
-    final pending = _pendingGraphCapture;
-    _pendingGraphCapture = null;
-    pending?.completer.completeError(
+    _supersedeGraphCaptures(
       StateError('The scene was disposed before a frame was captured'),
     );
   }
@@ -1716,10 +1714,10 @@ base class Scene implements SceneGraph {
   /// graph executes; the caller must ensure a frame renders (schedule one).
   ///
   /// Requires [debugAllowRenderGraphCapture]. A second call before the
-  /// pending one resolves replaces it, and a capture no frame fulfills
-  /// within [timeout] (the view hidden, zero-sized, or the scene not ready)
-  /// fails instead of hanging its caller; either way the first future
-  /// completes with an error.
+  /// pending one resolves replaces it, as does a [captureFrameRenderGraphs]
+  /// call, and a capture no frame fulfills within [timeout] (the view
+  /// hidden, zero-sized, or the scene not ready) fails instead of hanging its
+  /// caller; either way the first future completes with an error.
   /// {@category Rendering}
   Future<RenderGraphCaptureResult> captureRenderGraph({
     int viewIndex = 0,
@@ -1727,19 +1725,10 @@ base class Scene implements SceneGraph {
     Duration timeout = const Duration(seconds: 5),
   }) {
     _checkNotDisposed('captureRenderGraph');
-    if (!debugAllowRenderGraphCapture) {
-      throw StateError(
-        'Render graph capture is disabled; set '
-        'Scene.debugAllowRenderGraphCapture first.',
-      );
-    }
-    final pending = _pendingGraphCapture;
-    if (pending != null) {
-      _pendingGraphCapture = null;
-      pending.completer.completeError(
-        StateError('Superseded by a newer render graph capture'),
-      );
-    }
+    _checkGraphCaptureAllowed();
+    _supersedeGraphCaptures(
+      StateError('Superseded by a newer render graph capture'),
+    );
     final completer = Completer<RenderGraphCaptureResult>();
     final armed = (
       viewIndex: viewIndex,
@@ -1758,6 +1747,67 @@ base class Scene implements SceneGraph {
       );
     });
     return completer.future;
+  }
+
+  ({
+    RenderGraphCaptureRequest request,
+    Completer<List<RenderGraphCaptureResult>> completer,
+  })?
+  _pendingFrameGraphCapture;
+
+  /// Captures every view the next [renderViews] call renders, one result
+  /// each: the texture views first in their render order, then the screen
+  /// views in composite order. A view the frame skips (a texture view not
+  /// due, a screen view with an empty area) has no result.
+  ///
+  /// Requires [debugAllowRenderGraphCapture]. A second call before the
+  /// pending one resolves replaces it, as does a [captureRenderGraph] call,
+  /// and a capture no frame fulfills within [timeout] fails; either way the
+  /// first future completes with an error.
+  /// {@category Rendering}
+  Future<List<RenderGraphCaptureResult>> captureFrameRenderGraphs({
+    RenderGraphCaptureRequest request = const RenderGraphCaptureRequest(),
+    Duration timeout = const Duration(seconds: 5),
+  }) {
+    _checkNotDisposed('captureFrameRenderGraphs');
+    _checkGraphCaptureAllowed();
+    _supersedeGraphCaptures(
+      StateError('Superseded by a newer render graph capture'),
+    );
+    final completer = Completer<List<RenderGraphCaptureResult>>();
+    final armed = (request: request, completer: completer);
+    _pendingFrameGraphCapture = armed;
+    Timer(timeout, () {
+      if (completer.isCompleted) return;
+      if (identical(_pendingFrameGraphCapture, armed)) {
+        _pendingFrameGraphCapture = null;
+      }
+      completer.completeError(
+        StateError(
+          'Render graph capture timed out; no frame finished rendering '
+          '(is the viewport visible and the scene ready?)',
+        ),
+      );
+    });
+    return completer.future;
+  }
+
+  void _checkGraphCaptureAllowed() {
+    if (!debugAllowRenderGraphCapture) {
+      throw StateError(
+        'Render graph capture is disabled; set '
+        'Scene.debugAllowRenderGraphCapture first.',
+      );
+    }
+  }
+
+  void _supersedeGraphCaptures(StateError error) {
+    final pending = _pendingGraphCapture;
+    _pendingGraphCapture = null;
+    pending?.completer.completeError(error);
+    final frame = _pendingFrameGraphCapture;
+    _pendingFrameGraphCapture = null;
+    frame?.completer.completeError(error);
   }
 
   Iterable<CustomRenderPass> _passesAt(RenderStage stage) =>
@@ -2508,10 +2558,18 @@ base class Scene implements SceneGraph {
     // A frame whose screen views will re-present their previous images skips
     // the texture views too. Rendering them anyway keeps the GPU a frame
     // behind, so the screen views would pace indefinitely.
+    // A frame capture takes every view this frame renders, so it is taken
+    // after a held frame has returned and keeps the frame from pacing.
+    final frameCapture = _pendingFrameGraphCapture;
+    _pendingFrameGraphCapture = null;
+    final frameCaptures = frameCapture == null
+        ? null
+        : <RenderGraphCaptureResult>[];
     final pacingFrame =
         maxGpuFramesInFlight > 0 &&
         _hasPresentedFrame &&
         _pendingGraphCapture == null &&
+        frameCapture == null &&
         views.any((view) => view.target == null) &&
         rendererSubmissions.framesInFlight >= maxGpuFramesInFlight;
     // A paced frame renders nothing, so the adaptive controller measures the
@@ -2664,6 +2722,9 @@ base class Scene implements SceneGraph {
         continue;
       }
       final deferred = deferredPipelineBuilds;
+      final capturer = frameCapture == null
+          ? null
+          : RenderGraphCapturer(request: frameCapture.request);
       _renderViewToTexture(
         view: view,
         outputColor: target.acquireNextTexture(),
@@ -2675,10 +2736,16 @@ base class Scene implements SceneGraph {
         punctualLighting: punctualLighting,
         spotShadowFrame: spotShadowFrame,
         pointShadowFrame: pointShadowFrame,
+        capturer: capturer,
         captureLinearColor: target.linearColor,
         capturePlanarReflections:
             !target.linearColor && identical(view, planarCaptureView),
       );
+      if (capturer != null) {
+        frameCaptures!.add(
+          capturer.finish(pixelWidth: target.width, pixelHeight: target.height),
+        );
+      }
       // A sliced warm-up skipped draws still waiting on pipelines, so keep
       // the last image and render this target again next frame.
       if (deferredPipelineBuilds > deferred) {
@@ -2715,6 +2782,8 @@ base class Scene implements SceneGraph {
         punctualLighting: punctualLighting,
         spotShadowFrame: spotShadowFrame,
         pointShadowFrame: pointShadowFrame,
+        frameCaptures: frameCaptures,
+        frameCaptureRequest: frameCapture?.request,
         capturePlanarReflections: identical(view, planarCaptureView),
         viewportSize: _warmUpSize == null
             ? null
@@ -2730,6 +2799,7 @@ base class Scene implements SceneGraph {
     // A frame has now been submitted; the next one runs on a warm context (see
     // the rebuild near the environment resolution above).
     _hasPresentedFrame = true;
+    if (frameCapture != null) frameCapture.completer.complete(frameCaptures);
 
     assert(() {
       _reportBlankFrame(ordered, regionEmpty: false, noViews: false);
@@ -3045,6 +3115,8 @@ base class Scene implements SceneGraph {
     required PunctualLighting punctualLighting,
     required SpotShadowFrame? spotShadowFrame,
     required PointShadowFrame? pointShadowFrame,
+    List<RenderGraphCaptureResult>? frameCaptures,
+    RenderGraphCaptureRequest? frameCaptureRequest,
     bool capturePlanarReflections = false,
     // The logical size the camera projects and culls at, when it differs
     // from [drawArea]: a warm-up frame renders small and culls as its view.
@@ -3069,7 +3141,8 @@ base class Scene implements SceneGraph {
 
     final pendingCapture = _pendingGraphCapture;
     final captureThisView =
-        pendingCapture != null && pendingCapture.viewIndex == viewIndex;
+        frameCaptureRequest != null ||
+        (pendingCapture != null && pendingCapture.viewIndex == viewIndex);
 
     // Pace the GPU: with enough frames still running, present the previous
     // image rather than queue work the calling thread would block on. A
@@ -3090,11 +3163,14 @@ base class Scene implements SceneGraph {
       return;
     }
 
-    // Consume a pending render-graph capture aimed at this screen view.
+    // Consume a pending render-graph capture aimed at this screen view, or
+    // capture it for the frame's capture of every view.
     RenderGraphCapturer? capturer;
-    if (captureThisView) {
+    if (frameCaptureRequest != null) {
+      capturer = RenderGraphCapturer(request: frameCaptureRequest);
+    } else if (captureThisView) {
       _pendingGraphCapture = null;
-      capturer = RenderGraphCapturer(request: pendingCapture.request);
+      capturer = RenderGraphCapturer(request: pendingCapture!.request);
     }
     final gpu.Texture swapchainColor = surface.getNextSwapchainColorTexture(
       pixelSize,
@@ -3117,12 +3193,15 @@ base class Scene implements SceneGraph {
       capturePlanarReflections: capturePlanarReflections,
     );
     if (capturer != null) {
-      pendingCapture!.completer.complete(
-        capturer.finish(
-          pixelWidth: pixelSize.width.toInt(),
-          pixelHeight: pixelSize.height.toInt(),
-        ),
+      final captured = capturer.finish(
+        pixelWidth: pixelSize.width.toInt(),
+        pixelHeight: pixelSize.height.toInt(),
       );
+      if (frameCaptures != null) {
+        frameCaptures.add(captured);
+      } else {
+        pendingCapture!.completer.complete(captured);
+      }
     }
 
     final image = swapchainColor.asImage();
