@@ -1626,10 +1626,35 @@ base class Node implements SceneGraph {
       break;
     }
 
+    if (_effectiveVisible) _animationPlayer?.update(deltaSeconds);
+    _refreshOwnRenderItems(uploadSkin: true);
+    for (var i = 0; i < children.length; i++) {
+      final child = children[i];
+      child.scenePrePass(deltaSeconds, _effectiveVisible);
+      if (i < children.length && identical(children[i], child)) continue;
+      _prePassChildrenFrom(i, child, deltaSeconds);
+      break;
+    }
+  }
+
+  /// Refreshes the [RenderItem]s of this node's subtree from its current
+  /// state as [scenePrePass] does, without ticking components or animation
+  /// players, so a query between frames culls the items the next frame
+  /// draws. A skinned mesh keeps the joints its last frame uploaded, so the
+  /// skin's joints ring advances once per frame.
+  @internal
+  void internalRefreshRenderItems([bool ancestorsVisible = true]) {
+    _effectiveVisible = ancestorsVisible && visible;
+    _refreshOwnRenderItems(uploadSkin: false);
+    for (final child in children) {
+      child.internalRefreshRenderItems(_effectiveVisible);
+    }
+  }
+
+  void _refreshOwnRenderItems({required bool uploadSkin}) {
     if (_effectiveVisible) {
-      _animationPlayer?.update(deltaSeconds);
       for (final meshComponent in _meshComponents) {
-        meshComponent.refreshRenderItems();
+        meshComponent.refreshRenderItems(uploadSkin: uploadSkin);
       }
       for (final instancedMeshComponent in _instancedMeshComponents) {
         instancedMeshComponent.refreshRenderItem();
@@ -1642,13 +1667,6 @@ base class Node implements SceneGraph {
       for (final instancedMeshComponent in _instancedMeshComponents) {
         instancedMeshComponent.hideRenderItem();
       }
-    }
-    for (var i = 0; i < children.length; i++) {
-      final child = children[i];
-      child.scenePrePass(deltaSeconds, _effectiveVisible);
-      if (i < children.length && identical(children[i], child)) continue;
-      _prePassChildrenFrom(i, child, deltaSeconds);
-      break;
     }
   }
 

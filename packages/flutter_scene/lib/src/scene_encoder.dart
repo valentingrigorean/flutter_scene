@@ -613,6 +613,7 @@ gpu.RenderPipeline resolvePipeline(
   if (cached != null) return cached;
   final key = (vertexShader, fragmentShader, layoutId);
   activeRenderCounters.pipelineBuilds++;
+  _scenePipelinesBuilt++;
   final stopwatch = kDebugMode || profileRendering
       ? (Stopwatch()..start())
       : null;
@@ -641,6 +642,184 @@ gpu.RenderPipeline resolvePipeline(
   (_pipelineIndex[vertexShader] ??= HashMap.identity())[fragmentShader] ??= {};
   _pipelineIndex[vertexShader]![fragmentShader]![layoutId] = pipeline;
   return _pipelineCache[key] = pipeline;
+}
+
+int _scenePipelinesBuilt = 0;
+
+/// The number of render pipelines the scene's passes have built in this
+/// process: the color, coverage and depth prepass draws and the passes that
+/// share their pipeline cache. A render that leaves it unchanged built none
+/// of them, so a frame after `Scene.unbuiltPipelines` listed nothing keeps
+/// it.
+int get scenePipelinesBuilt => _scenePipelinesBuilt;
+
+/// What keys a render pipeline: the vertex shader, the fragment shader, and
+/// the vertex layout a draw binds.
+typedef PipelineInputs = ({
+  gpu.Shader vertexShader,
+  gpu.Shader fragmentShader,
+  VertexLayoutDescriptor? vertexLayout,
+});
+
+/// Whether the process holds the render pipeline for [inputs], so a draw that
+/// binds it builds none.
+bool isPipelineBuilt(PipelineInputs inputs) =>
+    _cachedPipeline(
+      inputs.vertexShader,
+      inputs.fragmentShader,
+      vertexLayoutId(inputs.vertexLayout),
+    ) !=
+    null;
+
+/// The pipeline inputs of a color-pass draw of [geometry] with [material]
+/// under [lighting], as [SceneEncoder] resolves them outside a debug view.
+///
+/// A material with a `vertex { }` block supplies its own vertex shader for
+/// the geometry's mesh type, otherwise the geometry's standard one runs. The
+/// fragment shader is the material's variant for the lighting (its shadow and
+/// radiance layout twins). A material declaring `instance_attributes` widens
+/// the instance-rate slot, and its custom vertex `attributes` pick the
+/// geometry streams, so the layout depends on the material as well as the
+/// geometry.
+PipelineInputs colorPipelineInputs(
+  Geometry geometry,
+  Material material,
+  Lighting lighting,
+) {
+  final materialVertex = material.vertexShaderForGeometry(geometry);
+  return (
+    vertexShader: materialVertex ?? geometry.vertexShader,
+    fragmentShader: material.fragmentShaderForLighting(lighting),
+    vertexLayout: geometry.instancedVertexLayoutFor(
+      material.instanceAttributes,
+      material.vertexAttributesFor(materialVertex),
+    ),
+  );
+}
+
+/// The pipeline inputs of the coverage pre-draw of an opaque draw of
+/// [geometry] with [material] that cuts itself out (see
+/// [drawsCoverage]): the color draw's vertex stage with the coverage
+/// fragment.
+PipelineInputs coveragePipelineInputs(Geometry geometry, Material material) {
+  final materialVertex = material.vertexShaderForGeometry(geometry);
+  return (
+    vertexShader: materialVertex ?? geometry.vertexShader,
+    fragmentShader: coverageShaderFor(material),
+    vertexLayout: geometry.instancedVertexLayoutFor(
+      material.instanceAttributes,
+      material.vertexAttributesFor(materialVertex),
+    ),
+  );
+}
+
+final gpu.Shader _coverageShader = baseShaderLibrary['CoverageFragment']!;
+
+/// The coverage pre-draw's fragment for [material]: an alpha-masked
+/// material's own (see [Material.maskedDepthFragmentShader]), or the
+/// engine's.
+gpu.Shader coverageShaderFor(Material material) =>
+    (material.depthAlphaMasked
+        ? material.maskedDepthFragmentShader(MaskedDepthPass.coverage)
+        : null) ??
+    _coverageShader;
+
+/// Whether a color-pass draw of [material] at cross-fade coverage [fade]
+/// takes the coverage pre-draw: an opaque draw that cuts itself out.
+bool drawsCoverage(Material material, double fade) =>
+    material.isOpaque() &&
+    !material.displayReferred &&
+    (material.depthAlphaMasked || (fade != 1.0 && material.lodCrossFades));
+
+/// Whether the process holds the color-pass pipelines of every geometry and
+/// material [item] can draw with under [lighting]: its own, or each level of
+/// its level of detail, with their coverage pre-draws at any cross-fade. A
+/// view then records no unbuilt color draw of [item], whatever its culling
+/// selects.
+bool colorPipelinesBuilt(RenderItem item, Lighting lighting) {
+  bool built(Geometry geometry, Material material, {required bool fades}) =>
+      isPipelineBuilt(colorPipelineInputs(geometry, material, lighting)) &&
+      (!drawsCoverage(material, fades ? 0.5 : 1.0) ||
+          isPipelineBuilt(coveragePipelineInputs(geometry, material)));
+  final lod = item.lod;
+  if (lod == null) return built(item.geometry, item.material, fades: false);
+  for (final level in lod.levels) {
+    if (!built(level.geometry, level.material, fades: true)) return false;
+  }
+  return true;
+}
+
+/// Calls [draw] with each geometry and material the color pass records for
+/// [item] in a view culled by [frustum], and the cross-fade coverage of
+/// each: nothing when the item draws no color, its layers miss [layerMask],
+/// or none of its instances is inside the frustum and [cullingPlanes]; each
+/// selected level of a level-of-detail item, by its projected size under
+/// [lodProjection] from [cameraPosition] (the highest level without one);
+/// else the item's own geometry and material.
+///
+/// It selects as [SceneEncoder.submit] does, for `Scene.unbuiltPipelines`.
+void selectColorDraws(
+  RenderItem item, {
+  required Frustum frustum,
+  required int layerMask,
+  required List<Plane> cullingPlanes,
+  required Vector3 cameraPosition,
+  required ProjectionParams? lodProjection,
+  required void Function(Geometry geometry, Material material, double fade)
+  draw,
+}) {
+  if (!item.drawsColor) return;
+  if ((item.layers & layerMask) == 0) return;
+  if (!item.cullVisibleInstances(frustum, cullingPlanes)) return;
+  final lod = item.lod;
+  if (lod == null) {
+    draw(item.geometry, item.material, 1.0);
+    return;
+  }
+  for (final selection in resolveLodLevels(
+    lod,
+    item.worldBounds,
+    lodProjection,
+    cameraPosition,
+  )) {
+    final level = lod.levels[selection.level];
+    draw(level.geometry, level.material, selection.fade);
+  }
+}
+
+/// The level(s) of detail to draw for [lod] from an item's [worldBounds],
+/// each with a fade coverage; empty to cull. Falls back to the highest detail
+/// when no screen-size metric is available (no bounds, or no [projection]
+/// because it is degenerate).
+List<({int level, double fade})> resolveLodLevels(
+  LodSelection lod,
+  Aabb3? worldBounds,
+  ProjectionParams? projection,
+  Vector3 cameraPosition,
+) {
+  if (worldBounds == null || projection == null) {
+    return const [(level: 0, fade: 1.0)];
+  }
+  // The circumscribed sphere of the world AABB (conservative, so detail is
+  // kept slightly longer than a tight sphere would).
+  final radius = worldBounds.max.distanceTo(worldBounds.min) * 0.5;
+  final size = projection.orthographic
+      ? lodScreenSizeOrthographic(radius: radius, halfHeight: projection.scaleY)
+      : lodScreenSize(
+          center: worldBounds.center,
+          radius: radius,
+          cameraPosition: cameraPosition,
+          fovRadiansY: 2.0 * math.atan(projection.scaleY),
+        );
+  return lod.resolve(size);
+}
+
+/// The projection a view's level-of-detail metric reads, or null for a
+/// degenerate one, which draws every level-of-detail node at its highest
+/// detail.
+ProjectionParams? lodProjectionOf(Camera camera, ui.Size dimensions) {
+  final projection = ProjectionParams.of(camera.projection, dimensions);
+  return projection.scaleY > 0.0 ? projection : null;
 }
 
 /// [resolvePipeline], or null when a sliced warm-up has spent its build
@@ -882,8 +1061,7 @@ base class SceneEncoder {
     frustum = cullingFrustumOf(_camera, _dimensions);
     // A degenerate projection has no screen-size metric, so LOD nodes draw
     // their highest-detail level.
-    final projection = ProjectionParams.of(_camera.projection, _dimensions);
-    _lodProjection = projection.scaleY > 0.0 ? projection : null;
+    _lodProjection = lodProjectionOf(_camera, _dimensions);
 
     // Begin the opaque phase.
     _renderPass.setDepthWriteEnable(true);
@@ -922,18 +1100,6 @@ base class SceneEncoder {
   bool _debugViewBoundFallback = false;
   static final gpu.Shader _debugFallbackShader =
       baseShaderLibrary['DebugSurfaceFragment']!;
-  static final gpu.Shader _coverageShader =
-      baseShaderLibrary['CoverageFragment']!;
-
-  // The coverage pre-draw's fragment for [material]: an alpha-masked
-  // material's own (see [Material.maskedDepthFragmentShader]), or the
-  // engine's.
-  static gpu.Shader _coverageShaderFor(Material material) =>
-      (material.depthAlphaMasked
-          ? material.maskedDepthFragmentShader(MaskedDepthPass.coverage)
-          : null) ??
-      _coverageShader;
-
   // Whether an opaque draw of [material] at cross-fade coverage [fade] cuts
   // itself out, and so takes the coverage pre-draw.
   static bool _cutsOut(Material material, double fade) =>
@@ -1140,7 +1306,7 @@ base class SceneEncoder {
       if (!fallback && _cutsOut(material, fade)) {
         coveragePipeline = tryResolvePipeline(
           materialVertex ?? geometry.vertexShader,
-          _coverageShaderFor(material),
+          coverageShaderFor(material),
           vertexLayout: geometry.instancedVertexLayoutFor(
             material.instanceAttributes,
             material.vertexAttributesFor(materialVertex),
@@ -1335,34 +1501,10 @@ base class SceneEncoder {
     );
   }
 
-  // The level(s) of detail to draw for [lod] from the item's [worldBounds],
-  // each with a fade coverage; empty to cull. Falls back to the highest detail
-  // when no screen-size metric is available (no bounds, or a degenerate
-  // projection).
   List<({int level, double fade})> _resolveLod(
     LodSelection lod,
     Aabb3? worldBounds,
-  ) {
-    final projection = _lodProjection;
-    if (worldBounds == null || projection == null) {
-      return const [(level: 0, fade: 1.0)];
-    }
-    // The circumscribed sphere of the world AABB (conservative, so detail is
-    // kept slightly longer than a tight sphere would).
-    final radius = worldBounds.max.distanceTo(worldBounds.min) * 0.5;
-    final size = projection.orthographic
-        ? lodScreenSizeOrthographic(
-            radius: radius,
-            halfHeight: projection.scaleY,
-          )
-        : lodScreenSize(
-            center: worldBounds.center,
-            radius: radius,
-            cameraPosition: _cameraPosition,
-            fovRadiansY: 2.0 * math.atan(projection.scaleY),
-          );
-    return lod.resolve(size);
-  }
+  ) => resolveLodLevels(lod, worldBounds, _lodProjection, _cameraPosition);
 
   double _depthOf(RenderItem item, [Geometry? geometry]) {
     return sceneSortDepth(
@@ -1539,7 +1681,7 @@ base class SceneEncoder {
   // Binds the coverage pre-draw's fragment inputs: the cross-fade [fade] and
   // the material's alpha mask, or a mask that keeps everything.
   void _bindCoverage(Material material, double fade) {
-    final shader = _coverageShaderFor(material);
+    final shader = coverageShaderFor(material);
     _coverageInfoScratch[0] = fade;
     _renderPass.bindUniform(
       shader.getUniformSlot('CoverageInfo'),
@@ -1686,7 +1828,7 @@ base class SceneEncoder {
         material: material,
         vertexShader: materialVertex ?? geometry.vertexShader,
         fragmentShader: _coveragePass
-            ? _coverageShaderFor(material)
+            ? coverageShaderFor(material)
             : material.fragmentShaderForLighting(_lighting),
         pipeline: pipeline,
         batchedItems: batchedItems,

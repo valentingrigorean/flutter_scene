@@ -544,7 +544,7 @@ abstract class Material {
   /// from here, like [usesRadianceCubeVariant].
   @internal
   bool usesNoShadowVariant(Lighting lighting) =>
-      lighting.shadowMap == null &&
+      !lighting.shadowed &&
       (usesRadianceCubeVariant(lighting)
               ? noShadowRadianceCubeFragmentShader
               : noShadowFragmentShader) !=

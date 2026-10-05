@@ -41,6 +41,7 @@ import 'components/point_light_component.dart';
 import 'components/reflection_probe_component.dart';
 import 'components/spot_light_component.dart';
 import 'fog.dart';
+import 'geometry/geometry.dart' show Geometry;
 import 'god_rays.dart';
 import 'light.dart';
 import 'material/environment.dart';
@@ -82,8 +83,15 @@ import 'render/render_stats.dart';
 import 'scene_encoder.dart'
     show
         beginDrawFailureFrame,
+        colorPipelineInputs,
+        colorPipelinesBuilt,
+        coveragePipelineInputs,
         deferredPipelineBuilds,
+        drawsCoverage,
+        isPipelineBuilt,
+        lodProjectionOf,
         pipelineCacheSize,
+        selectColorDraws,
         withPipelineBuildBudget;
 import 'render/render_scene.dart';
 import 'render/planar_reflection.dart';
@@ -110,6 +118,7 @@ import 'render/resolve_pass.dart';
 import 'render_texture.dart';
 import 'render_view.dart';
 import 'screen_distortion.dart';
+import 'unbuilt_pipeline.dart';
 import 'shaders.dart';
 import 'sky_environment.dart';
 import 'skybox.dart';
@@ -2083,6 +2092,11 @@ base class Scene implements SceneGraph {
   /// backend that compiles asynchronously it kicks compilation off without
   /// blocking on completion.
   ///
+  /// Pass [size], the size of the region the views are shown in, so each
+  /// camera projects and culls at its view's aspect and the frame encodes the
+  /// draws that view encodes: without it the views divide a square region,
+  /// and the sides of a wider view are culled away unwarmed.
+  ///
   /// Set [includeOffscreen] to encode every render item once. This costs more
   /// during loading, but avoids later pipeline stalls as a moving camera first
   /// reaches parts of a large scene.
@@ -2099,6 +2113,7 @@ base class Scene implements SceneGraph {
     List<RenderView> views, {
     bool includeOffscreen = false,
     Duration? sliceBudget,
+    ui.Size? size,
   }) async {
     _checkNotDisposed('warmUp');
     await initializeStaticResources();
@@ -2124,6 +2139,7 @@ base class Scene implements SceneGraph {
       final recorder = ui.PictureRecorder();
       final canvas = ui.Canvas(recorder);
       _warmUpIncludeOffscreen = includeOffscreen;
+      _warmUpSize = size == null || size.isEmpty ? null : size;
       try {
         renderViews(
           views,
@@ -2132,6 +2148,7 @@ base class Scene implements SceneGraph {
         );
       } finally {
         _warmUpIncludeOffscreen = false;
+        _warmUpSize = null;
         recorder.endRecording().dispose();
       }
     }
@@ -2155,6 +2172,201 @@ base class Scene implements SceneGraph {
   }
 
   bool _warmUpIncludeOffscreen = false;
+  ui.Size? _warmUpSize;
+
+  /// The draws a render of [views] in a region of [size] would record with a
+  /// render pipeline the process has not built, so the frame that draws them
+  /// builds those pipelines first.
+  ///
+  /// It refreshes the render items from the scene graph without ticking
+  /// components or animations, culls each screen view as its color pass and
+  /// depth prepass do (layer masks, culling planes, instance culling and
+  /// levels of detail against the view's frustum at its aspect within
+  /// [size]), and resolves each draw's pipelines as the encoders do: the
+  /// vertex shader for the geometry, the fragment shader for the frame's
+  /// lighting (its shadow and radiance layout variants), the vertex layout,
+  /// and the coverage pre-draw of an opaque draw that cuts itself out. The
+  /// lighting is shadowed where the view renders a shadow atlas, and the
+  /// depth prepass counts where the view's effects run it. The shadow
+  /// casters, the screen-space and post-processing passes, a debug view's
+  /// fallback shader and the views that render into a [RenderTexture] are
+  /// not queried.
+  ///
+  /// It records and builds nothing. [warmUp] with the same [views] and
+  /// [size] builds the pipelines of every draw it lists.
+  List<UnbuiltPipelineDraw> unbuiltPipelines(
+    List<RenderView> views, {
+    required ui.Size size,
+  }) {
+    _checkNotDisposed('unbuiltPipelines');
+    if (!_readyToRender || views.isEmpty || size.isEmpty) return const [];
+    root.internalRefreshRenderItems();
+    renderScene.rebuildIfDirty();
+    final lightComponent = renderScene.primaryDirectionalLight;
+    final spotShadowFrame = collectSpotShadows(_visibleSpotLights());
+    final pointShadowFrame = collectPointShadows(_visiblePointLights());
+    final environmentMap = environment ?? Material.getDefaultEnvironmentMap();
+    final draws = <UnbuiltPipelineDraw>[];
+    for (final view in views) {
+      if (view.target != null) continue;
+      final viewSize = _viewDrawArea(ui.Offset.zero & size, view.viewport).size;
+      if (viewSize.isEmpty) continue;
+      final camera = ViewportBoundCamera(view.camera, viewSize);
+      final frustum = cullingFrustumOf(camera, viewSize);
+      final passes = _queryViewPasses(
+        view,
+        camera,
+        viewSize,
+        frustum,
+        lightComponent,
+        shadowed: spotShadowFrame != null || pointShadowFrame != null,
+      );
+      final lighting = Lighting.internalPipelineQuery(
+        environmentMap: environmentMap,
+        shadowed: passes.shadowed,
+      );
+      final cameraPosition = camera.position;
+      final lodProjection = lodProjectionOf(camera, viewSize);
+      var colorUnbuilt = false;
+      void color(Geometry geometry, Material material, double fade) {
+        colorUnbuilt =
+            colorUnbuilt ||
+            !isPipelineBuilt(
+              colorPipelineInputs(geometry, material, lighting),
+            ) ||
+            (drawsCoverage(material, fade) &&
+                !isPipelineBuilt(coveragePipelineInputs(geometry, material)));
+      }
+
+      renderScene.cull(frustum, (item) {
+        final node = item.sourceNode;
+        if (node is! Node) return;
+        colorUnbuilt = false;
+        if (!colorPipelinesBuilt(item, lighting)) {
+          selectColorDraws(
+            item,
+            frustum: frustum,
+            layerMask: view.layerMask,
+            cullingPlanes: view.cullingPlanes,
+            cameraPosition: cameraPosition,
+            lodProjection: lodProjection,
+            draw: color,
+          );
+        }
+        if (colorUnbuilt) {
+          draws.add(
+            UnbuiltPipelineDraw(
+              node: node,
+              view: view,
+              pass: ScenePipelinePass.color,
+            ),
+          );
+        }
+        if (passes.depthPrepass &&
+            !isPipelineBuilt(
+              depthPrepassPipelineInputs(
+                item,
+                writeNormals: passes.depthNormals,
+              ),
+            ) &&
+            depthPrepassAccepts(
+              item,
+              frustum: frustum,
+              layerMask: view.layerMask,
+              cullingPlanes: view.cullingPlanes,
+            )) {
+          draws.add(
+            UnbuiltPipelineDraw(
+              node: node,
+              view: view,
+              pass: ScenePipelinePass.depthPrepass,
+            ),
+          );
+        }
+      }, additionalPlanes: view.cullingPlanes);
+    }
+    return draws;
+  }
+
+  // Which of the pipeline-selecting passes a screen view's render graph runs,
+  // as [_renderViewToTexture] decides them: whether its lit materials take
+  // their shadow variants ([shadowed] when a spot or point light casts), and
+  // whether it runs the depth prepass and writes normals there.
+  ({bool shadowed, bool depthPrepass, bool depthNormals}) _queryViewPasses(
+    RenderView view,
+    Camera camera,
+    ui.Size viewSize,
+    Frustum frustum,
+    DirectionalLightComponent? lightComponent, {
+    required bool shadowed,
+  }) {
+    final debugActive = _debugViewFrame(viewSize) != null;
+    final effectiveAa = _resolveAntiAliasingMode(
+      view.antiAliasingMode ?? _antiAliasingMode,
+    );
+    final projection = ProjectionParams.of(camera.projection, viewSize);
+    final projectionValid =
+        projection.scaleX > 0.0 &&
+        projection.scaleY > 0.0 &&
+        projection.far > projection.near;
+    final light = lightComponent?.light;
+    final lightDirection = lightComponent?.worldDirection;
+    final cascades = light != null && light.castsShadow && projectionValid;
+    final customInputs = <RenderInput>{
+      for (final pass in _renderPasses)
+        if (pass.enabled) ...pass.inputs,
+    };
+    if (godRays.enabled && projectionValid && cascades && !debugActive) {
+      customInputs.addAll(_godRaysPass.inputs);
+    }
+    final bindSceneDepth = renderScene
+        .collectMaterialInputs(
+          frustum,
+          layerMask: view.layerMask,
+          additionalPlanes: view.cullingPlanes,
+        )
+        .contains(RenderInput.depth);
+    final ssr =
+        !debugActive && projectionValid && screenSpaceReflections.enabled;
+    final customNormals = customInputs.contains(RenderInput.normals);
+    final customDepth =
+        customNormals ||
+        customInputs.contains(RenderInput.depth) ||
+        bindSceneDepth ||
+        (depthOfField.enabled && !debugActive);
+    final irradianceField = projectionValid && globalIllumination.enabled;
+    final taa =
+        effectiveAa == AntiAliasingMode.taa && projectionValid && !debugActive;
+    final contactShadows =
+        !ambientOcclusionCarriesIndirectLight(ambientOcclusion) &&
+        light != null &&
+        light.contactShadows &&
+        (lightDirection ?? light.direction).length2 > 0.0;
+    return (
+      shadowed: shadowed || cascades,
+      depthPrepass:
+          projectionValid &&
+          (bindSceneDepth ||
+              customNormals ||
+              ssr ||
+              irradianceField ||
+              taa ||
+              ambientOcclusion.enabled ||
+              contactShadows ||
+              customDepth),
+      depthNormals: ssr || customNormals || irradianceField,
+    );
+  }
+
+  List<SpotLightComponent> _visibleSpotLights() => [
+    for (final light in renderScene.spotLights)
+      if (light.node.internalEffectiveVisible) light,
+  ];
+
+  List<PointLightComponent> _visiblePointLights() => [
+    for (final light in renderScene.pointLights)
+      if (light.node.internalEffectiveVisible) light,
+  ];
 
   /// Renders a list of [views] of this scene onto [canvas].
   ///
@@ -2315,14 +2527,8 @@ base class Scene implements SceneGraph {
       for (final light in renderScene.directionalLights)
         if (light.node.internalEffectiveVisible) light,
     ];
-    final visiblePoints = [
-      for (final light in renderScene.pointLights)
-        if (light.node.internalEffectiveVisible) light,
-    ];
-    final visibleSpots = [
-      for (final light in renderScene.spotLights)
-        if (light.node.internalEffectiveVisible) light,
-    ];
+    final visiblePoints = _visiblePointLights();
+    final visibleSpots = _visibleSpotLights();
     final visibleAreas = [
       for (final light in renderScene.rectAreaLights)
         if (light.node.internalEffectiveVisible) light,
@@ -2510,6 +2716,9 @@ base class Scene implements SceneGraph {
         spotShadowFrame: spotShadowFrame,
         pointShadowFrame: pointShadowFrame,
         capturePlanarReflections: identical(view, planarCaptureView),
+        viewportSize: _warmUpSize == null
+            ? null
+            : _viewDrawArea(ui.Offset.zero & _warmUpSize!, view.viewport).size,
       );
     }
 
@@ -2837,6 +3046,9 @@ base class Scene implements SceneGraph {
     required SpotShadowFrame? spotShadowFrame,
     required PointShadowFrame? pointShadowFrame,
     bool capturePlanarReflections = false,
+    // The logical size the camera projects and culls at, when it differs
+    // from [drawArea]: a warm-up frame renders small and culls as its view.
+    ui.Size? viewportSize,
   }) {
     // Allocate the offscreen render target at physical-pixel resolution so
     // the rasterized 3D content matches Flutter's framebuffer density.
@@ -2892,7 +3104,7 @@ base class Scene implements SceneGraph {
       view: view,
       outputColor: swapchainColor,
       pixelSize: pixelSize,
-      viewportSize: drawArea.size,
+      viewportSize: viewportSize ?? drawArea.size,
       pool: surface.transientTexturePool(viewIndex),
       environmentMap: environmentMap,
       transientsBuffer: transientsBuffer,

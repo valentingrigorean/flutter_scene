@@ -158,8 +158,12 @@ class MeshComponent extends Component {
   /// Refreshes this component's render items from the owning node's
   /// current world transform, skin, and cull state. Called once per frame
   /// by the scene pre-pass while the node is visible.
+  ///
+  /// Without [uploadSkin] a skinned node keeps the joints texture its items
+  /// hold, so a refresh between frames does not advance the skin's joints
+  /// ring.
   @internal
-  void refreshRenderItems() {
+  void refreshRenderItems({bool uploadSkin = true}) {
     if (_renderItems.isEmpty) return;
     // The debug view override is a plain per-frame copy; it never touches the
     // shadow or bounds state below, and the walk is skipped while no node
@@ -211,8 +215,9 @@ class MeshComponent extends Component {
     // skinned geometry (clones) each draw with their own skeleton; the
     // render passes apply it to the geometry per draw.
     final skin = node.skin;
-    final jointsTexture = skin?.getJointsTexture();
-    final jointsTextureWidth = skin?.getTextureWidth() ?? 0;
+    final uploadedSkin = uploadSkin ? skin : null;
+    final jointsTexture = uploadedSkin?.getJointsTexture();
+    final jointsTextureWidth = uploadedSkin?.getTextureWidth() ?? 0;
 
     final renderScene = node.internalRenderScene;
     final frustumCulled = node.frustumCulled;
@@ -251,7 +256,8 @@ class MeshComponent extends Component {
       item.sortDepthBias = sortDepthBias;
       item.lightChannelMask = lightChannelMask;
       final isMoving =
-          transformChanged || (skin != null && jointsTexture != null);
+          transformChanged ||
+          (skin != null && (jointsTexture != null || !uploadSkin));
       item.isMoving = isMoving;
       if (transformChanged) {
         item.previousWorldTransform.setFrom(item.worldTransform);
@@ -263,8 +269,8 @@ class MeshComponent extends Component {
       item.primitiveCastsShadow = primitive.castsShadow;
       item.shadowCasterFaces = shadowCasterFaces;
       item.highlightColor = highlightColor;
-      if (skin != null) {
-        item.previousJointsTexture = skin.getPreviousJointsTexture();
+      if (uploadedSkin != null) {
+        item.previousJointsTexture = uploadedSkin.getPreviousJointsTexture();
         item.jointsTexture = jointsTexture;
         item.jointsTextureWidth = jointsTextureWidth;
       }

@@ -253,7 +253,7 @@ class PreprocessedMaterial extends Material implements HotReloadableFmat {
 
   @override
   gpu.Shader fragmentShaderForLighting(Lighting lighting) {
-    final shadow = lighting.shadowMap != null;
+    final shadow = lighting.shadowed;
     // The layout variant wins over the shadow one: a shadow variant in the
     // wrong layout would be handed a texture its sampler cannot read, while
     // dropping the shadow variant only loses the shadow term.

@@ -386,8 +386,10 @@ export 'src/scene_encoder.dart'
     show
         SceneTranslucentDraw,
         maxSceneColorCaptureBatches,
+        scenePipelinesBuilt,
         sceneSortDepth,
         sceneTranslucentDraws;
+export 'src/unbuilt_pipeline.dart' show ScenePipelinePass, UnbuiltPipelineDraw;
 export 'src/widget_texture.dart'
     show WidgetTexture, WidgetTextureController, WidgetUpdatePolicy;
 export 'src/shaders.dart' show baseShaderLibrary, loadBaseShaderLibrary;
