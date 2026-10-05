@@ -312,7 +312,12 @@ export 'src/resource_group.dart' show ResourceGroup;
 export 'src/scene_pointer.dart' show ScenePointer;
 export 'src/scene.dart' show AntiAliasingMode, Scene, SceneGraph;
 export 'src/scene_encoder.dart'
-    show SceneTranslucentDraw, sceneSortDepth, sceneTranslucentDraws;
+    show
+        SceneTranslucentDraw,
+        scenePipelinesBuilt,
+        sceneSortDepth,
+        sceneTranslucentDraws;
+export 'src/unbuilt_pipeline.dart' show ScenePipelinePass, UnbuiltPipelineDraw;
 export 'src/widget_texture.dart'
     show WidgetTexture, WidgetTextureController, WidgetUpdatePolicy;
 export 'src/shaders.dart' show baseShaderLibrary, loadBaseShaderLibrary;

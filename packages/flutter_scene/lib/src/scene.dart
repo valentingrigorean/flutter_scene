@@ -22,7 +22,9 @@ import 'components/directional_light_component.dart';
 import 'components/irradiance_volume_component.dart';
 import 'components/planar_reflector_component.dart';
 import 'components/reflection_probe_component.dart';
+import 'components/spot_light_component.dart';
 import 'fog.dart';
+import 'geometry/geometry.dart' show Geometry;
 import 'god_rays.dart';
 import 'light.dart';
 import 'material/environment.dart';
@@ -73,6 +75,13 @@ import 'render/ssao_pass.dart';
 import 'render/resolve_pass.dart';
 import 'render_texture.dart';
 import 'render_view.dart';
+import 'scene_encoder.dart'
+    show
+        colorPipelineInputs,
+        colorPipelinesBuilt,
+        isPipelineBuilt,
+        selectColorDraws;
+import 'unbuilt_pipeline.dart';
 import 'shaders.dart';
 import 'sky_environment.dart';
 import 'skybox.dart';
@@ -1556,6 +1565,11 @@ base class Scene implements SceneGraph {
   /// backend that compiles asynchronously it kicks compilation off without
   /// blocking on completion.
   ///
+  /// Pass [size], the size of the region the views are shown in, so each
+  /// camera projects and culls at its view's aspect and the frame encodes the
+  /// draws that view encodes: without it the views divide a square region,
+  /// and the sides of a wider view are culled away unwarmed.
+  ///
   /// Set [includeOffscreen] to encode every render item once. This costs more
   /// during loading, but avoids later pipeline stalls as a moving camera first
   /// reaches parts of a large scene.
@@ -1563,6 +1577,7 @@ base class Scene implements SceneGraph {
   Future<void> warmUp(
     List<RenderView> views, {
     bool includeOffscreen = false,
+    ui.Size? size,
   }) async {
     _checkNotDisposed('warmUp');
     await initializeStaticResources();
@@ -1580,15 +1595,129 @@ base class Scene implements SceneGraph {
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(recorder);
     _warmUpIncludeOffscreen = includeOffscreen;
+    _warmUpSize = size == null || size.isEmpty ? null : size;
     try {
       renderViews(views, canvas, region: const ui.Rect.fromLTWH(0, 0, 64, 64));
     } finally {
       _warmUpIncludeOffscreen = false;
+      _warmUpSize = null;
       recorder.endRecording().dispose();
     }
   }
 
   bool _warmUpIncludeOffscreen = false;
+  ui.Size? _warmUpSize;
+
+  /// The draws a render of [views] in a region of [size] would record with a
+  /// render pipeline the process has not built, so the frame that draws them
+  /// links those pipelines first.
+  ///
+  /// It refreshes the render items from the scene graph without ticking
+  /// components or animations, culls each screen view as its color pass and
+  /// depth prepass do (layer masks, culling planes, instance culling and
+  /// levels of detail against the view's frustum at its aspect within
+  /// [size]), and resolves each draw's pipeline as the encoders do: the
+  /// vertex shader for the geometry, the fragment shader for the frame's
+  /// lighting (its shadow and radiance layout variants), and the vertex
+  /// layout. The lighting is shadowed where the view renders a shadow atlas,
+  /// and the depth prepass counts where the view's effects run it. The shadow
+  /// casters, the screen-space and post-processing passes and the views that
+  /// render into a [RenderTexture] are not queried.
+  ///
+  /// It records and builds nothing. [warmUp] with the same [views] and
+  /// [size] builds the pipelines of every draw it lists.
+  List<UnbuiltPipelineDraw> unbuiltPipelines(
+    List<RenderView> views, {
+    required ui.Size size,
+  }) {
+    _checkNotDisposed('unbuiltPipelines');
+    if (!_readyToRender || views.isEmpty || size.isEmpty) return const [];
+    root.internalRefreshRenderItems();
+    renderScene.rebuildIfDirty();
+    final lightComponent = renderScene.primaryDirectionalLight;
+    final spotShadowFrame = collectSpotShadows(_visibleSpotLights());
+    final environmentMap = environment ?? Material.getDefaultEnvironmentMap();
+    final draws = <UnbuiltPipelineDraw>[];
+    for (final view in views) {
+      if (view.target != null) continue;
+      final viewSize = _viewDrawArea(ui.Offset.zero & size, view.viewport).size;
+      if (viewSize.isEmpty) continue;
+      final camera = view.camera;
+      final effects = _viewEffects(
+        view,
+        viewSize,
+        lightComponent,
+        spotShadowFrame,
+      );
+      final lighting = Lighting.internalPipelineQuery(
+        environmentMap: environmentMap,
+        shadowed: effects.shadowed,
+      );
+      final prepass = effects.runsDepthPrepass;
+      final depthNormals = effects.depthPrepassWritesNormals;
+      final frustum = Frustum.matrix(camera.getViewTransform(viewSize));
+      final lodFovRadiansY = camera is PerspectiveCamera
+          ? camera.fovRadiansY
+          : null;
+      var colorUnbuilt = false;
+      void color(RenderItem item, Geometry geometry, Material material, _) {
+        colorUnbuilt =
+            colorUnbuilt ||
+            !isPipelineBuilt(colorPipelineInputs(geometry, material, lighting));
+      }
+
+      renderScene.cull(frustum, (item) {
+        final node = item.sourceNode;
+        if (node is! Node) return;
+        colorUnbuilt = false;
+        if (!colorPipelinesBuilt(item, lighting)) {
+          selectColorDraws(
+            item,
+            frustum: frustum,
+            layerMask: view.layerMask,
+            cullingPlanes: view.cullingPlanes,
+            cullInstances: true,
+            cameraPosition: camera.position,
+            lodFovRadiansY: lodFovRadiansY,
+            draw: color,
+          );
+        }
+        if (colorUnbuilt) {
+          draws.add(
+            UnbuiltPipelineDraw(
+              node: node,
+              view: view,
+              pass: ScenePipelinePass.color,
+            ),
+          );
+        }
+        if (prepass &&
+            !isPipelineBuilt(
+              depthPrepassPipelineInputs(item, writeNormals: depthNormals),
+            ) &&
+            depthPrepassAccepts(
+              item,
+              frustum: frustum,
+              layerMask: view.layerMask,
+              cullingPlanes: view.cullingPlanes,
+            )) {
+          draws.add(
+            UnbuiltPipelineDraw(
+              node: node,
+              view: view,
+              pass: ScenePipelinePass.depthPrepass,
+            ),
+          );
+        }
+      }, additionalPlanes: view.cullingPlanes);
+    }
+    return draws;
+  }
+
+  List<SpotLightComponent> _visibleSpotLights() => [
+    for (final light in renderScene.spotLights)
+      if (light.node.internalEffectiveVisible) light,
+  ];
 
   /// Renders a list of [views] of this scene onto [canvas].
   ///
@@ -1724,10 +1853,7 @@ base class Scene implements SceneGraph {
       for (final light in renderScene.pointLights)
         if (light.node.internalEffectiveVisible) light,
     ];
-    final visibleSpots = [
-      for (final light in renderScene.spotLights)
-        if (light.node.internalEffectiveVisible) light,
-    ];
+    final visibleSpots = _visibleSpotLights();
     final visibleAreas = [
       for (final light in renderScene.rectAreaLights)
         if (light.node.internalEffectiveVisible) light,
@@ -1849,6 +1975,9 @@ base class Scene implements SceneGraph {
         punctualLighting: punctualLighting,
         spotShadowFrame: spotShadowFrame,
         capturePlanarReflections: identical(view, planarCaptureView),
+        viewSize: _warmUpSize == null
+            ? null
+            : _viewDrawArea(ui.Offset.zero & _warmUpSize!, view.viewport).size,
       );
     }
 
@@ -2050,6 +2179,7 @@ base class Scene implements SceneGraph {
     required PunctualLighting punctualLighting,
     required SpotShadowFrame? spotShadowFrame,
     bool capturePlanarReflections = false,
+    ui.Size? viewSize,
   }) {
     // Allocate the offscreen render target at physical-pixel resolution so
     // the rasterized 3D content matches Flutter's framebuffer density.
@@ -2091,6 +2221,7 @@ base class Scene implements SceneGraph {
       spotShadowFrame: spotShadowFrame,
       capturer: capturer,
       capturePlanarReflections: capturePlanarReflections,
+      viewSize: viewSize,
     );
     if (capturer != null) {
       pendingCapture!.completer.complete(
@@ -2108,67 +2239,38 @@ base class Scene implements SceneGraph {
     canvas.drawImageRect(image, srcRect, drawArea, paint);
   }
 
-  // Builds and submits one view's render graph into [outputColor] (a
-  // swapchain texture for screen views, or a [RenderTexture] ring slot).
-  // [pool] supplies the view's transient attachments; each view (and each
-  // render texture) has its own so simultaneous renders never share one.
-  void _renderViewToTexture({
-    required RenderView view,
-    required gpu.Texture outputColor,
-    required ui.Size pixelSize,
-    required TransientTexturePool pool,
-    required EnvironmentMap environmentMap,
-    required TransientWriter transientsBuffer,
-    required DirectionalLightComponent? lightComponent,
-    required PunctualLighting punctualLighting,
-    required SpotShadowFrame? spotShadowFrame,
-    RenderGraphCapturer? capturer,
-    // A linear-HDR capture (environment probes): the graph stops after the
-    // scene pass and blits the lit scene color into [outputColor], with no
-    // reflections, indirect-light history, post-processing, anti-aliasing,
-    // or display-referred chain.
+  // The effects a view's render graph runs that decide which passes it adds
+  // and which pipeline variants they bind. [_renderViewToTexture] builds its
+  // graph from them and [unbuiltPipelines] queries by them, so a query names
+  // the passes the render runs. [viewSize] is the size the camera projects
+  // and culls at.
+  _ViewEffects _viewEffects(
+    RenderView view,
+    ui.Size viewSize,
+    DirectionalLightComponent? lightComponent,
+    SpotShadowFrame? spotShadowFrame, {
     bool captureLinearColor = false,
-    // Whether this view renders the frame's planar reflection captures (the
-    // primary view only; captures follow its camera and other views reuse
-    // its result). Never set for a linear-color capture.
-    bool capturePlanarReflections = false,
   }) {
-    // A capture frame observes the pool from graph construction on, so
-    // display-chain and custom-pass destinations acquired before execute are
-    // attributed and identified by their descriptor debug names.
-    if (capturer != null) {
-      pool = ObservedTexturePool(pool, capturer);
-    }
     final camera = view.camera;
-    final effectiveAa = captureLinearColor
+    final antiAliasing = captureLinearColor
         ? AntiAliasingMode.none
         : _resolveAntiAliasingMode(view.antiAliasingMode ?? _antiAliasingMode);
-    final enableMsaa = effectiveAa == AntiAliasingMode.msaa;
-    final enableFxaa = effectiveAa == AntiAliasingMode.fxaa;
-    final enableSmaa =
-        effectiveAa == AntiAliasingMode.smaa && SmaaPass.isInitialized;
-
     final light = lightComponent?.light;
     final lightDirection = lightComponent?.worldDirection;
+    final perspective = camera.projection is PerspectiveProjection;
     // Cascaded shadows fit the camera frustum, so they require a
     // perspective projection; other projections render without shadows.
-    final cascades =
-        light != null &&
-            light.castsShadow &&
-            camera.projection is PerspectiveProjection
+    final cascades = light != null && light.castsShadow && perspective
         ? light.computeCascades(
             camera,
-            pixelSize.width / pixelSize.height,
+            viewSize.width / viewSize.height,
             lightDirection,
           )
         : const <ShadowCascade>[];
 
     // God rays march the cascaded shadow map against the camera depth, so they
     // need both and a shadow-casting directional light.
-    final wantGodRays =
-        godRays.enabled &&
-        camera.projection is PerspectiveProjection &&
-        cascades.isNotEmpty;
+    final godRays = this.godRays.enabled && perspective && cascades.isNotEmpty;
 
     // The geometry buffers the enabled custom passes (and god rays) request, so
     // the engine produces depth/normals even without AO/SSR and publishes the
@@ -2177,7 +2279,7 @@ base class Scene implements SceneGraph {
     for (final pass in _renderPasses) {
       if (pass.enabled) customInputs.addAll(pass.inputs);
     }
-    if (wantGodRays) customInputs.addAll(_godRaysPass.inputs);
+    if (godRays) customInputs.addAll(_godRaysPass.inputs);
 
     // Most scenes request no material scene inputs. Cache that whole-scene
     // answer across movement, then cull per view only when at least one
@@ -2197,11 +2299,130 @@ base class Scene implements SceneGraph {
     final materialInputs = wholeSceneMaterialInputs.isEmpty
         ? wholeSceneMaterialInputs
         : renderScene.collectMaterialInputs(
-            camera.getFrustum(pixelSize),
+            camera.getFrustum(viewSize),
             layerMask: view.layerMask,
             additionalPlanes: view.cullingPlanes,
             includeOffscreen: _warmUpIncludeOffscreen,
           );
+    final bindSceneDepth = materialInputs.contains(RenderInput.depth);
+    if (bindSceneDepth) customInputs.add(RenderInput.depth);
+    // Depth of field reconstructs blur from camera depth.
+    if (depthOfField.enabled) customInputs.add(RenderInput.depth);
+
+    final taa =
+        antiAliasing == AntiAliasingMode.taa &&
+        perspective &&
+        !captureLinearColor;
+    // Reflections run after the scene is drawn (they sample the lit color),
+    // so capture whether they apply here and add the pass below.
+    final ssr =
+        !captureLinearColor && perspective && screenSpaceReflections.enabled;
+    // A custom pass may request depth/normals; normals imply depth.
+    final customNormals = customInputs.contains(RenderInput.normals);
+    final customDepth =
+        customNormals || customInputs.contains(RenderInput.depth);
+    // Flutter GPU does not expose whether a stored depth/stencil attachment is
+    // shader-readable, so its readability cannot be assumed.
+    // TODO(flutter-gpu): Reuse stored depth once that capability is exposed.
+    final indirectLight =
+        !captureLinearColor &&
+        ambientOcclusionCarriesIndirectLight(ambientOcclusion);
+    // The irradiance field scatters from the depth prepass' normals and from
+    // the previous frame's lit color, so it forces both on.
+    final irradianceField =
+        !captureLinearColor && perspective && globalIllumination.enabled;
+    // The occlusion texture's channels carry radiance while indirect light
+    // is on, so the contact-shadow term has nowhere to ride.
+    // TODO(sampler-budget): lift this exclusivity with a dedicated sampler
+    // once flutter/flutter#189332 raises the practical fragment budget.
+    final contactShadows =
+        !indirectLight &&
+        light != null &&
+        light.contactShadows &&
+        (lightDirection ?? light.direction).length2 > 0.0;
+    return _ViewEffects(
+      antiAliasing: antiAliasing,
+      cascades: cascades,
+      shadowed: cascades.isNotEmpty || spotShadowFrame != null,
+      godRays: godRays,
+      customInputs: customInputs,
+      captureOpaqueColor:
+          materialInputs.contains(RenderInput.opaqueSceneColor) ||
+          materialInputs.contains(RenderInput.filteredSceneColor),
+      bindSceneDepth: bindSceneDepth,
+      taa: taa,
+      ssr: ssr,
+      customNormals: customNormals,
+      indirectLight: indirectLight,
+      irradianceField: irradianceField,
+      contactShadows: contactShadows,
+      depthPrepass:
+          bindSceneDepth ||
+          customNormals ||
+          ssr ||
+          irradianceField ||
+          taa ||
+          ambientOcclusion.enabled ||
+          contactShadows ||
+          customDepth,
+      perspective: perspective,
+    );
+  }
+
+  // Builds and submits one view's render graph into [outputColor] (a
+  // swapchain texture for screen views, or a [RenderTexture] ring slot).
+  // [pool] supplies the view's transient attachments; each view (and each
+  // render texture) has its own so simultaneous renders never share one.
+  void _renderViewToTexture({
+    required RenderView view,
+    required gpu.Texture outputColor,
+    required ui.Size pixelSize,
+    required TransientTexturePool pool,
+    required EnvironmentMap environmentMap,
+    required TransientWriter transientsBuffer,
+    required DirectionalLightComponent? lightComponent,
+    required PunctualLighting punctualLighting,
+    required SpotShadowFrame? spotShadowFrame,
+    RenderGraphCapturer? capturer,
+    // The size the camera projects and culls at, when it differs from
+    // [pixelSize]: a warm-up frame renders small and culls as its view.
+    ui.Size? viewSize,
+    // A linear-HDR capture (environment probes): the graph stops after the
+    // scene pass and blits the lit scene color into [outputColor], with no
+    // reflections, indirect-light history, post-processing, anti-aliasing,
+    // or display-referred chain.
+    bool captureLinearColor = false,
+    // Whether this view renders the frame's planar reflection captures (the
+    // primary view only; captures follow its camera and other views reuse
+    // its result). Never set for a linear-color capture.
+    bool capturePlanarReflections = false,
+  }) {
+    // A capture frame observes the pool from graph construction on, so
+    // display-chain and custom-pass destinations acquired before execute are
+    // attributed and identified by their descriptor debug names.
+    if (capturer != null) {
+      pool = ObservedTexturePool(pool, capturer);
+    }
+    final camera = view.camera;
+    final effects = _viewEffects(
+      view,
+      viewSize ?? pixelSize,
+      lightComponent,
+      spotShadowFrame,
+      captureLinearColor: captureLinearColor,
+    );
+    final effectiveAa = effects.antiAliasing;
+    final enableMsaa = effectiveAa == AntiAliasingMode.msaa;
+    final enableFxaa = effectiveAa == AntiAliasingMode.fxaa;
+    final enableSmaa =
+        effectiveAa == AntiAliasingMode.smaa && SmaaPass.isInitialized;
+
+    final light = lightComponent?.light;
+    final lightDirection = lightComponent?.worldDirection;
+    final cascades = effects.cascades;
+    final wantGodRays = effects.godRays;
+    final customInputs = effects.customInputs;
+    final structureRevision = renderScene.structureRevision;
 
     // The retained metadata below fingerprints static shadow casters.
     final staticShadowRevision = renderScene.staticShadowRevision;
@@ -2240,13 +2461,8 @@ base class Scene implements SceneGraph {
     }
     final staticShadowSignature = _cachedStaticShadowSignature;
     final hasStaticShadowCasters = _cachedHasStaticShadowCasters;
-    final captureOpaqueColor =
-        materialInputs.contains(RenderInput.opaqueSceneColor) ||
-        materialInputs.contains(RenderInput.filteredSceneColor);
-    final bindSceneDepth = materialInputs.contains(RenderInput.depth);
-    if (bindSceneDepth) customInputs.add(RenderInput.depth);
-    // Depth of field reconstructs blur from camera depth.
-    if (depthOfField.enabled) customInputs.add(RenderInput.depth);
+    final captureOpaqueColor = effects.captureOpaqueColor;
+    final bindSceneDepth = effects.bindSceneDepth;
 
     // When any visible caster is static, route the cascades through the
     // shadow cache: static casters render into persistent tiles only when
@@ -2358,10 +2574,7 @@ base class Scene implements SceneGraph {
         ? perspective
         : null;
 
-    final enableTaa =
-        effectiveAa == AntiAliasingMode.taa &&
-        perspectiveCamera != null &&
-        !captureLinearColor;
+    final enableTaa = effects.taa && perspectiveCamera != null;
 
     Vector2 currentJitterNdc = Vector2.zero();
     Vector2 currentJitterUv = Vector2.zero();
@@ -2391,50 +2604,26 @@ base class Scene implements SceneGraph {
     }
 
     final currentJitteredViewProjection = enableTaa
-        ? camera.getViewTransform(pixelSize, jitter: currentJitterNdc)
+        ? camera.getViewTransform(
+            viewSize ?? pixelSize,
+            jitter: currentJitterNdc,
+          )
         : null;
+    // A warm-up frame renders a small target but projects and culls as the
+    // view it warms up, so it binds the pipelines of the draws that view
+    // encodes.
+    final viewTransform =
+        currentJitteredViewProjection ??
+        (viewSize == null ? null : camera.getViewTransform(viewSize));
 
-    // Reflections run after the scene is drawn (they sample the lit color),
-    // so capture whether they apply here and add the pass below.
-    final wantSsr =
-        !captureLinearColor &&
-        perspectiveCamera != null &&
-        screenSpaceReflections.enabled;
-    // A custom pass may request depth/normals; normals imply depth.
-    final wantCustomNormals = customInputs.contains(RenderInput.normals);
-    final wantCustomDepth =
-        wantCustomNormals || customInputs.contains(RenderInput.depth);
-    // Flutter GPU does not expose whether a stored depth/stencil attachment is
-    // shader-readable, so its readability cannot be assumed.
-    // TODO(flutter-gpu): Reuse stored depth once that capability is exposed.
-    final wantIndirectLight =
-        !captureLinearColor &&
-        ambientOcclusionCarriesIndirectLight(ambientOcclusion);
-    // The irradiance field scatters from the depth prepass' normals and from
-    // the previous frame's lit color, so it forces both on.
+    final wantSsr = effects.ssr && perspectiveCamera != null;
+    final wantCustomNormals = effects.customNormals;
+    final wantIndirectLight = effects.indirectLight;
     final wantIrradianceField =
-        !captureLinearColor &&
-        perspectiveCamera != null &&
-        globalIllumination.enabled;
+        effects.irradianceField && perspectiveCamera != null;
     final wantSceneColorHistory = wantIndirectLight || wantIrradianceField;
-    // The occlusion texture's channels carry radiance while indirect light
-    // is on, so the contact-shadow term has nowhere to ride.
-    // TODO(sampler-budget): lift this exclusivity with a dedicated sampler
-    // once flutter/flutter#189332 raises the practical fragment budget.
-    final wantContactShadows =
-        !wantIndirectLight &&
-        light != null &&
-        light.contactShadows &&
-        (lightDirection ?? light.direction).length2 > 0.0;
-    final wantDepthPrepass =
-        bindSceneDepth ||
-        wantCustomNormals ||
-        wantSsr ||
-        wantIrradianceField ||
-        enableTaa ||
-        ambientOcclusion.enabled ||
-        wantContactShadows ||
-        wantCustomDepth;
+    final wantContactShadows = effects.contactShadows && light != null;
+    final wantDepthPrepass = effects.depthPrepass;
     IrradianceFieldBinding? irradianceBinding;
     if (perspectiveCamera != null) {
       // The occlusion chain also carries the sun contact-shadow term, so it
@@ -2473,7 +2662,7 @@ base class Scene implements SceneGraph {
             cameraForward: cameraForward,
             farDepth: perspectiveCamera.far,
             layerMask: view.layerMask,
-            writeNormals: wantSsr || wantCustomNormals || wantIrradianceField,
+            writeNormals: effects.depthPrepassWritesNormals,
             // Depth of field patches translucent surfaces into the linear
             // depth later; the patch depth-tests against this attachment.
             // Storing it (a non-transient attachment plus store bandwidth)
@@ -2484,7 +2673,7 @@ base class Scene implements SceneGraph {
             cameraRight: cameraRight,
             cameraUp: cameraUp,
             cullingPlanes: view.cullingPlanes,
-            cameraTransform: currentJitteredViewProjection,
+            cameraTransform: viewTransform,
           ),
         );
       }
@@ -2622,7 +2811,7 @@ base class Scene implements SceneGraph {
         time: DateTime.now().millisecondsSinceEpoch.remainder(100000) / 1000.0,
         cullingPlanes: view.cullingPlanes,
         includeOffscreen: _warmUpIncludeOffscreen,
-        cameraTransform: currentJitteredViewProjection,
+        cameraTransform: viewTransform,
       ),
     );
     if (wantSceneColorHistory) {
@@ -3234,4 +3423,48 @@ class _SceneHistoryTargets implements HeldRenderTargets {
 
   @override
   Iterable<gpu.Texture> get heldRenderTargets => _scene._heldHistoryTextures;
+}
+
+// The effects one view's render graph runs; see [Scene._viewEffects].
+final class _ViewEffects {
+  const _ViewEffects({
+    required this.antiAliasing,
+    required this.cascades,
+    required this.shadowed,
+    required this.godRays,
+    required this.customInputs,
+    required this.captureOpaqueColor,
+    required this.bindSceneDepth,
+    required this.taa,
+    required this.ssr,
+    required this.customNormals,
+    required this.indirectLight,
+    required this.irradianceField,
+    required this.contactShadows,
+    required this.depthPrepass,
+    required this.perspective,
+  });
+
+  final AntiAliasingMode antiAliasing;
+  final List<ShadowCascade> cascades;
+  // Whether the shadow pass renders an atlas the scene pass samples.
+  final bool shadowed;
+  final bool godRays;
+  final Set<RenderInput> customInputs;
+  final bool captureOpaqueColor;
+  final bool bindSceneDepth;
+  final bool taa;
+  final bool ssr;
+  final bool customNormals;
+  final bool indirectLight;
+  final bool irradianceField;
+  final bool contactShadows;
+  // Whether a pass asks for the depth prepass, which runs only for a
+  // perspective camera.
+  final bool depthPrepass;
+  final bool perspective;
+
+  bool get runsDepthPrepass => depthPrepass && perspective;
+
+  bool get depthPrepassWritesNormals => ssr || customNormals || irradianceField;
 }

@@ -1510,10 +1510,32 @@ base class Node implements SceneGraph {
     // Components tick whenever the node is mounted, independent of visibility.
     _visitMutable(_components, (component) => component.tick(deltaSeconds));
 
+    if (_effectiveVisible) _animationPlayer?.update(deltaSeconds);
+    _refreshOwnRenderItems(uploadSkin: true);
+    _visitMutable(
+      children,
+      (child) => child.scenePrePass(deltaSeconds, _effectiveVisible),
+    );
+  }
+
+  /// Refreshes the [RenderItem]s of this node's subtree from its current
+  /// state as [scenePrePass] does, without ticking components or animation
+  /// players, so a query between frames culls the items the next frame
+  /// draws. A skinned mesh keeps the joints its last frame uploaded, so the
+  /// skin's joints ring advances once per frame.
+  @internal
+  void internalRefreshRenderItems([bool ancestorsVisible = true]) {
+    _effectiveVisible = ancestorsVisible && visible;
+    _refreshOwnRenderItems(uploadSkin: false);
+    for (final child in children) {
+      child.internalRefreshRenderItems(_effectiveVisible);
+    }
+  }
+
+  void _refreshOwnRenderItems({required bool uploadSkin}) {
     if (_effectiveVisible) {
-      _animationPlayer?.update(deltaSeconds);
       for (final meshComponent in _meshComponents) {
-        meshComponent.refreshRenderItems();
+        meshComponent.refreshRenderItems(uploadSkin: uploadSkin);
       }
       for (final instancedMeshComponent in _instancedMeshComponents) {
         instancedMeshComponent.refreshRenderItem();
@@ -1527,10 +1549,6 @@ base class Node implements SceneGraph {
         instancedMeshComponent.hideRenderItem();
       }
     }
-    _visitMutable(
-      children,
-      (child) => child.scenePrePass(deltaSeconds, _effectiveVisible),
-    );
   }
 
   /// Walks this node's subtree once per physics substep and dispatches

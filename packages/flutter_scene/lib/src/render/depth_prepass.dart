@@ -9,12 +9,15 @@ import 'package:vector_math/vector_math.dart';
 import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart'
     show Geometry, bindUnskinnedFrameInfo;
+import 'package:flutter_scene/src/geometry/vertex_layout.dart'
+    show VertexLayoutDescriptor;
 import 'package:flutter_scene/src/material/material.dart'
     show MaskedDepthPass, Material;
 import 'package:flutter_scene/src/render/render_graph.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
-import 'package:flutter_scene/src/scene_encoder.dart' show resolvePipeline;
+import 'package:flutter_scene/src/scene_encoder.dart'
+    show PipelineInputs, resolvePipelineFor;
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/instance_batching.dart';
@@ -290,6 +293,92 @@ class TranslucentDepthPatchPass extends RenderGraphPass {
   }
 }
 
+/// Whether the depth prepass records [item] in a view culled by [frustum]:
+/// visible, on a layer of [layerMask], in the pass's set (the prepass
+/// participants, or with [translucentPatch] the translucent depth writers),
+/// and with an instance inside the frustum and [cullingPlanes].
+bool depthPrepassAccepts(
+  RenderItem item, {
+  required Frustum frustum,
+  required int layerMask,
+  required List<Plane> cullingPlanes,
+  bool translucentPatch = false,
+}) {
+  if (!item.visible) return false;
+  if ((item.layers & layerMask) == 0) return false;
+  if (translucentPatch
+      ? (item.material.isOpaque() || !item.material.translucentDepthWrite)
+      : !item.material.depthPrepassParticipates) {
+    return false;
+  }
+  return item.cullVisibleInstances(frustum, cullingPlanes);
+}
+
+/// The position-only vertex path the depth prepass draws [item] through, or
+/// null when it runs the full vertex shader: always for skinned geometry,
+/// which has no such variant, and for an alpha-masked material, which samples
+/// its mask through the full-vertex varyings. The normal-writing path
+/// ([writeNormals]) always runs the full vertex shader, since the
+/// position-only path carries no normal.
+({gpu.Shader shader, VertexLayoutDescriptor layout})? depthPrepassVertex(
+  RenderItem item, {
+  required bool writeNormals,
+}) => (writeNormals || item.material.depthAlphaMasked)
+    ? null
+    : item.geometry.depthOnlyVertex;
+
+/// The pipeline inputs of the depth prepass draw of [item].
+///
+/// The fragment shader is the linear-depth shader ([writeNormals] adds the
+/// view-space normal), or the masked variant, which the material may supply,
+/// for an alpha-masked material so only its opaque texels write depth. A
+/// `vertex { }` material displaces geometry in the color pass, so the
+/// prepass prefers the material's vertex variant (its position-only `depth`
+/// variant when the geometry has one, else the mesh-type variant) or its
+/// depth mismatches; else the position-only path of [depthPrepassVertex],
+/// else the geometry's own shader. Without a position-only path the pass runs
+/// the material's color vertex variant, which declares its per-instance
+/// attribute inputs, so the instance record is as wide as in the color pass.
+PipelineInputs depthPrepassPipelineInputs(
+  RenderItem item, {
+  required bool writeNormals,
+}) {
+  final material = item.material;
+  final geometry = item.geometry;
+  final masked = material.depthAlphaMasked;
+  final depthVertex = depthPrepassVertex(item, writeNormals: writeNormals);
+  return (
+    vertexShader:
+        material.vertexShaderForGeometry(
+          geometry,
+          depth: depthVertex != null,
+        ) ??
+        depthVertex?.shader ??
+        geometry.vertexShader,
+    fragmentShader: !masked
+        ? (writeNormals ? _depthNormalShader : _depthShader)
+        : material.maskedDepthFragmentShader(
+                writeNormals
+                    ? MaskedDepthPass.linearDepthNormal
+                    : MaskedDepthPass.linearDepth,
+              ) ??
+              (writeNormals ? _maskedDepthNormalShader : _maskedDepthShader),
+    vertexLayout:
+        depthVertex?.layout ??
+        geometry.instancedVertexLayoutFor(
+          depthVertex == null ? material.instanceAttributes : null,
+        ),
+  );
+}
+
+final gpu.Shader _depthShader = baseShaderLibrary['LinearDepthFragment']!;
+final gpu.Shader _depthNormalShader =
+    baseShaderLibrary['LinearDepthNormalFragment']!;
+final gpu.Shader _maskedDepthShader =
+    baseShaderLibrary['LinearDepthMaskedFragment']!;
+final gpu.Shader _maskedDepthNormalShader =
+    baseShaderLibrary['LinearDepthNormalMaskedFragment']!;
+
 /// Records each opaque object's planar view-space depth into the prepass
 /// render pass, from the camera's point of view.
 ///
@@ -356,15 +445,6 @@ class _DepthPrepassEncoder {
   final bool _translucentPatch;
   late final Float32List _depthInfo;
 
-  static final gpu.Shader _depthShader =
-      baseShaderLibrary['LinearDepthFragment']!;
-  static final gpu.Shader _depthNormalShader =
-      baseShaderLibrary['LinearDepthNormalFragment']!;
-  static final gpu.Shader _maskedDepthShader =
-      baseShaderLibrary['LinearDepthMaskedFragment']!;
-  static final gpu.Shader _maskedDepthNormalShader =
-      baseShaderLibrary['LinearDepthNormalMaskedFragment']!;
-
   // The roughness map is a tiled material texture; sample it with repeat.
   static final gpu.SamplerOptions _roughnessSampler = gpu.SamplerOptions(
     minFilter: gpu.MinMagFilter.linear,
@@ -372,18 +452,6 @@ class _DepthPrepassEncoder {
     widthAddressMode: gpu.SamplerAddressMode.repeat,
     heightAddressMode: gpu.SamplerAddressMode.repeat,
   );
-
-  // The fragment shader for this pass; alpha-masked materials draw through
-  // the masked variant so only their opaque texels write depth.
-  gpu.Shader _fragmentShaderFor(Material material, bool masked) {
-    if (!masked) return _writeNormals ? _depthNormalShader : _depthShader;
-    return material.maskedDepthFragmentShader(
-          _writeNormals
-              ? MaskedDepthPass.linearDepthNormal
-              : MaskedDepthPass.linearDepth,
-        ) ??
-        (_writeNormals ? _maskedDepthNormalShader : _maskedDepthShader);
-  }
 
   String get _infoBlockName => _writeNormals ? 'DepthNormalInfo' : 'DepthInfo';
 
@@ -401,14 +469,15 @@ class _DepthPrepassEncoder {
   /// normally, which is the opaque scene plus opt-ins like the shadow
   /// catcher; translucent depth-writing items in the patch mode).
   void submit(RenderItem item) {
-    if (!item.visible) return;
-    if ((item.layers & _layerMask) == 0) return;
-    if (_translucentPatch
-        ? (item.material.isOpaque() || !item.material.translucentDepthWrite)
-        : !item.material.depthPrepassParticipates) {
+    if (!depthPrepassAccepts(
+      item,
+      frustum: frustum,
+      layerMask: _layerMask,
+      cullingPlanes: _cullingPlanes,
+      translucentPatch: _translucentPatch,
+    )) {
       return;
     }
-    if (!item.cullVisibleInstances(frustum, _cullingPlanes)) return;
     _records.add(item);
   }
 
@@ -454,45 +523,22 @@ class _DepthPrepassEncoder {
     // skeleton to the (possibly shared) geometry first.
     item.applyJointsTexture(geometry);
     item.applyMorphWeights(geometry);
-    // An alpha-masked material samples its mask through the full-vertex
-    // varyings, so it skips the position-only path too.
     final masked = item.material.depthAlphaMasked;
-    final fragmentShader = _fragmentShaderFor(item.material, masked);
-    // Unskinned geometry draws depth through a position-only shader and layout
-    // (fetching only position); skinned geometry has no such variant, so it
-    // falls back to its full vertex shader and bind. The normal-writing path
-    // always uses the full vertex shader, since the position-only path
-    // carries no normal.
-    final depthVertex = (_writeNormals || masked)
-        ? null
-        : geometry.depthOnlyVertex;
-    // A `vertex { }` material displaces geometry in the color pass, so the
-    // prepass must apply the same displacement or its depth mismatches. Prefer
-    // the material's vertex variant for this pass (its position-only `depth`
-    // variant when the geometry has one, else the mesh-type variant), binding
-    // its FrameInfo and MaterialParams against it below. This pass binds the
-    // real camera transform and position, so a camera-relative displacement is
-    // correct here.
+    final depthVertex = depthPrepassVertex(item, writeNormals: _writeNormals);
+    final inputs = depthPrepassPipelineInputs(
+      item,
+      writeNormals: _writeNormals,
+    );
+    final fragmentShader = inputs.fragmentShader;
+    final activeVertex = inputs.vertexShader;
     final materialVertex = item.material.vertexShaderForGeometry(
       geometry,
       depth: depthVertex != null,
     );
-    final activeVertex =
-        materialVertex ?? depthVertex?.shader ?? geometry.vertexShader;
-    // Without a position-only path this pass runs the material's color vertex
-    // variant, which declares its per-instance attribute inputs, so the
-    // instance record has to be as wide here as in the color pass.
-    final instanceSchema = depthVertex == null
-        ? item.material.instanceAttributes
-        : null;
-    final attributeFloats = instanceSchema?.floatCount ?? 0;
-    final pipeline = resolvePipeline(
-      activeVertex,
-      fragmentShader,
-      vertexLayout:
-          depthVertex?.layout ??
-          geometry.instancedVertexLayoutFor(instanceSchema),
-    );
+    final attributeFloats = depthVertex == null
+        ? item.material.instanceAttributes?.floatCount ?? 0
+        : 0;
+    final pipeline = resolvePipelineFor(inputs);
     if (!identical(_boundPipeline, pipeline)) {
       _renderPass.clearBindings();
       _renderPass.bindPipeline(pipeline);

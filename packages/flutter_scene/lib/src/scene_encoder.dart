@@ -483,11 +483,163 @@ gpu.RenderPipeline resolvePipeline(
   VertexLayoutDescriptor? vertexLayout,
 }) {
   final key = (vertexShader, fragmentShader, vertexLayoutId(vertexLayout));
-  return _pipelineCache[key] ??= gpu.gpuContext.createRenderPipeline(
+  return _pipelineCache[key] ??= _buildPipeline(
+    vertexShader,
+    fragmentShader,
+    vertexLayout,
+  );
+}
+
+gpu.RenderPipeline _buildPipeline(
+  gpu.Shader vertexShader,
+  gpu.Shader fragmentShader,
+  VertexLayoutDescriptor? vertexLayout,
+) {
+  _scenePipelinesBuilt++;
+  return gpu.gpuContext.createRenderPipeline(
     vertexShader,
     fragmentShader,
     vertexLayout: vertexLayout?.toGpuLayout(),
   );
+}
+
+int _scenePipelinesBuilt = 0;
+
+/// The number of render pipelines the scene's passes have built in this
+/// process: the color and depth prepass draws and the full-screen passes
+/// that share their pipeline cache. A render that leaves it unchanged built
+/// none of them, so a frame after `Scene.unbuiltPipelines` listed nothing
+/// keeps it.
+int get scenePipelinesBuilt => _scenePipelinesBuilt;
+
+/// What keys a render pipeline: the vertex shader, the fragment shader, and
+/// the vertex layout a draw binds.
+typedef PipelineInputs = ({
+  gpu.Shader vertexShader,
+  gpu.Shader fragmentShader,
+  VertexLayoutDescriptor? vertexLayout,
+});
+
+/// The pipeline inputs of a color-pass draw of [geometry] with [material]
+/// under [lighting], as [SceneEncoder] resolves them.
+///
+/// A material with a `vertex { }` block supplies its own vertex shader for
+/// the geometry's mesh type, otherwise the geometry's standard one runs. The
+/// fragment shader is the material's variant for the lighting (its shadow and
+/// radiance layout twins). A material declaring `instance_attributes` widens
+/// the instance-rate slot, so the layout depends on the material as well as
+/// the geometry.
+PipelineInputs colorPipelineInputs(
+  Geometry geometry,
+  Material material,
+  Lighting lighting,
+) => (
+  vertexShader:
+      material.vertexShaderForGeometry(geometry) ?? geometry.vertexShader,
+  fragmentShader: material.fragmentShaderForLighting(lighting),
+  vertexLayout: geometry.instancedVertexLayoutFor(material.instanceAttributes),
+);
+
+/// Returns the cached render pipeline for [inputs], building it on first use.
+gpu.RenderPipeline resolvePipelineFor(PipelineInputs inputs) => resolvePipeline(
+  inputs.vertexShader,
+  inputs.fragmentShader,
+  vertexLayout: inputs.vertexLayout,
+);
+
+/// Whether the process holds the render pipeline for [inputs], so a draw that
+/// binds it builds none.
+bool isPipelineBuilt(PipelineInputs inputs) => _pipelineCache.containsKey((
+  inputs.vertexShader,
+  inputs.fragmentShader,
+  vertexLayoutId(inputs.vertexLayout),
+));
+
+/// Whether the process holds the color-pass pipeline of every geometry and
+/// material [item] can draw with under [lighting]: its own, or each level of
+/// its level of detail. A view then records no unbuilt draw of [item],
+/// whatever its culling selects.
+bool colorPipelinesBuilt(RenderItem item, Lighting lighting) {
+  final lod = item.lod;
+  if (lod == null) {
+    return isPipelineBuilt(
+      colorPipelineInputs(item.geometry, item.material, lighting),
+    );
+  }
+  for (final level in lod.levels) {
+    if (!isPipelineBuilt(
+      colorPipelineInputs(level.geometry, level.material, lighting),
+    )) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// Calls [draw] with each geometry and material the color pass records for
+/// [item], and the cross-fade coverage of each, in a view culled by
+/// [frustum]: nothing when the item is hidden, its layers miss [layerMask], or
+/// (with [cullInstances]) none of its instances is inside the frustum and
+/// [cullingPlanes]; each selected level of a level-of-detail item, by its
+/// projected size from [cameraPosition] at [lodFovRadiansY] (the highest
+/// level without a perspective field of view); else the item's own geometry
+/// and material.
+///
+/// [SceneEncoder.submit] selects its draws here, and so does
+/// `Scene.unbuiltPipelines`.
+void selectColorDraws(
+  RenderItem item, {
+  required Frustum frustum,
+  required int layerMask,
+  required List<Plane> cullingPlanes,
+  required bool cullInstances,
+  required Vector3 cameraPosition,
+  required double? lodFovRadiansY,
+  required void Function(
+    RenderItem item,
+    Geometry geometry,
+    Material material,
+    double fade,
+  )
+  draw,
+}) {
+  if (!item.visible || !item.primitiveVisible) return;
+  if ((item.layers & layerMask) == 0) return;
+  if (cullInstances) {
+    if (!item.cullVisibleInstances(frustum, cullingPlanes)) return;
+  } else {
+    item.visibleInstanceIndices = null;
+  }
+
+  // The render scene already rejected this item through its BVH. Reuse its
+  // retained world bounds for the LOD metric instead of transforming again.
+  final lod = item.lod;
+  if (lod == null) {
+    draw(item, item.geometry, item.material, 1.0);
+    return;
+  }
+  // Queue the level(s) of detail to draw (or cull). A cross-fading node
+  // returns its two adjacent levels with complementary dither coverage.
+  final worldBounds = item.worldBounds;
+  final List<({int level, double fade})> selections;
+  if (worldBounds == null || lodFovRadiansY == null) {
+    selections = const [(level: 0, fade: 1.0)];
+  } else {
+    // The circumscribed sphere of the world AABB (conservative, so detail is
+    // kept slightly longer than a tight sphere would).
+    selections = lod.resolve(
+      lodScreenSize(
+        center: worldBounds.center,
+        radius: worldBounds.max.distanceTo(worldBounds.min) * 0.5,
+        cameraPosition: cameraPosition,
+        fovRadiansY: lodFovRadiansY,
+      ),
+    );
+  }
+  for (final selection in selections) {
+    final level = lod.levels[selection.level];
+    draw(item, level.geometry, level.material, selection.fade);
+  }
 }
 
 /// Drops cached pipelines that use any of [shaders] (as vertex or fragment) so
@@ -613,31 +765,18 @@ base class SceneEncoder {
   /// Both opaque and translucent draws are deferred; [flush] sorts and
   /// emits them. A translucent instanced item is queued as one draw per
   /// instance so each can be depth-sorted independently.
-  void submit(RenderItem item) {
-    if (!item.visible || !item.primitiveVisible) return;
-    if ((item.layers & _layerMask) == 0) return;
-    if (_cullInstances) {
-      if (!item.cullVisibleInstances(frustum, _cullingPlanes)) return;
-    } else {
-      item.visibleInstanceIndices = null;
-    }
+  void submit(RenderItem item) => selectColorDraws(
+    item,
+    frustum: frustum,
+    layerMask: _layerMask,
+    cullingPlanes: _cullingPlanes,
+    cullInstances: _cullInstances,
+    cameraPosition: _camera.position,
+    lodFovRadiansY: _lodFovRadiansY,
+    draw: _recordDraw,
+  );
 
-    // The render scene already rejected this item through its BVH. Reuse its
-    // retained world bounds for the LOD metric instead of transforming again.
-    final lod = item.lod;
-    final worldBounds = item.worldBounds;
-
-    // Queue the level(s) of detail to draw (or cull). A cross-fading node
-    // returns its two adjacent levels with complementary dither coverage.
-    if (lod != null) {
-      for (final selection in _resolveLod(lod, worldBounds)) {
-        final level = lod.levels[selection.level];
-        _record(item, level.geometry, level.material, selection.fade);
-      }
-      return;
-    }
-    _record(item, item.geometry, item.material, 1.0);
-  }
+  late final _recordDraw = _record;
 
   // Queues a single draw for [item] using the already-LOD-resolved [geometry]
   // and [material] at cross-fade coverage [fade].
@@ -647,16 +786,8 @@ base class SceneEncoder {
     Material material,
     double fade,
   ) {
-    // A material with a `vertex { }` block supplies its own vertex shader for
-    // this geometry's mesh type; otherwise the engine's standard one is used.
-    final pipeline = resolvePipeline(
-      material.vertexShaderForGeometry(geometry) ?? geometry.vertexShader,
-      material.fragmentShaderForLighting(_lighting),
-      // A material declaring `instance_attributes` widens the instance-rate
-      // slot, so the pipeline depends on the material as well as the geometry.
-      vertexLayout: geometry.instancedVertexLayoutFor(
-        material.instanceAttributes,
-      ),
+    final pipeline = resolvePipelineFor(
+      colorPipelineInputs(geometry, material, _lighting),
     );
 
     if (material.isOpaque()) {
@@ -801,30 +932,6 @@ base class SceneEncoder {
       jointsTexture,
       jointsTextureWidth,
     );
-  }
-
-  // The level(s) of detail to draw for [lod] from the item's [worldBounds],
-  // each with a fade coverage; empty to cull. Falls back to the highest detail
-  // when no screen-size metric is available (no bounds, or a non-perspective
-  // camera).
-  List<({int level, double fade})> _resolveLod(
-    LodSelection lod,
-    Aabb3? worldBounds,
-  ) {
-    final fovRadiansY = _lodFovRadiansY;
-    if (worldBounds == null || fovRadiansY == null) {
-      return const [(level: 0, fade: 1.0)];
-    }
-    // The circumscribed sphere of the world AABB (conservative, so detail is
-    // kept slightly longer than a tight sphere would).
-    final radius = worldBounds.max.distanceTo(worldBounds.min) * 0.5;
-    final size = lodScreenSize(
-      center: worldBounds.center,
-      radius: radius,
-      cameraPosition: _camera.position,
-      fovRadiansY: fovRadiansY,
-    );
-    return lod.resolve(size);
   }
 
   double _depthOf(RenderItem item, [Geometry? geometry]) {

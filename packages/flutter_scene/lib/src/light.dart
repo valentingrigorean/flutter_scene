@@ -857,6 +857,17 @@ class Lighting {
     this.planarReflectionsSuppressed = false,
   }) : environmentTransform = environmentTransform ?? Matrix3.identity();
 
+  /// The lighting a pipeline query resolves the fragment shaders of a frame
+  /// under: [environmentMap], shadowed where the frame renders a shadow atlas
+  /// ([shadowed]) though it holds no texture.
+  @internal
+  factory Lighting.internalPipelineQuery({
+    required EnvironmentMap environmentMap,
+    required bool shadowed,
+  }) => Lighting(environmentMap: environmentMap).._queryShadowed = shadowed;
+
+  bool _queryShadowed = false;
+
   /// The image-based-lighting environment in effect for this draw.
   final EnvironmentMap environmentMap;
 
@@ -936,6 +947,12 @@ class Lighting {
   /// cascade tiles as a horizontal strip) for [directionalLight], or
   /// null when shadows are off for this frame. Sampled with [cascades].
   final gpu.Texture? shadowMap;
+
+  /// Whether the frame draws with a shadow atlas, which selects the lit
+  /// materials' shadow variants. It is [shadowMap] being set, except in the
+  /// lighting a pipeline query builds before the frame, which holds no
+  /// texture.
+  bool get shadowed => shadowMap != null || _queryShadowed;
 
   /// The shadow cascades matching [shadowMap], near-to-far, or empty
   /// when there is no shadow map this frame.
