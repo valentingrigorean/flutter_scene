@@ -181,9 +181,17 @@ abstract class Material {
   /// memoized.
   ///
   /// Used as the [Scene]-wide default when no environment is configured.
+  /// [Scene.initializeStaticResources] builds it while the engine loads, so
+  /// [EnvironmentMap.radianceCubeSize] and [EnvironmentMap.useMipRadianceLayout]
+  /// apply to it only when set before that load.
   static EnvironmentMap getDefaultEnvironmentMap() {
     return _defaultEnvironmentMap ??= EnvironmentMap.studio();
   }
+
+  /// The default environment when it has been built, else null.
+  @visibleForTesting
+  static EnvironmentMap? get debugDefaultEnvironmentMap =>
+      _defaultEnvironmentMap;
 
   /// Builds the BRDF lookup texture and loads the physical shader variants.
   ///

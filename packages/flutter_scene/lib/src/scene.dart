@@ -1,9 +1,10 @@
-import 'dart:async' show Completer, Timer;
+import 'dart:async' show Completer, Timer, Zone;
 import 'dart:developer';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart' show Priority, SchedulerBinding;
 import 'package:flutter/services.dart' show AssetBundle;
 import 'package:flutter_scene/src/hot_reload/hot_reload_coordinator.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
@@ -384,6 +385,9 @@ base class Scene implements SceneGraph {
   /// that are used to display models in this [Scene].
   ///
   /// This method ensures all necessary resources are loaded and ready to be used in the rendering pipeline.
+  /// It also builds the default studio environment
+  /// ([Material.getDefaultEnvironmentMap]) in a task between frames, so the
+  /// first frame does not pay for it.
   /// If the initialization fails, the resources are reset, and the scene
   /// will not be marked as ready to render.
   ///
@@ -401,6 +405,7 @@ base class Scene implements SceneGraph {
             // Needs the shader library, so it runs after the load and before
             // rendering unblocks (environment radiance builds consult it).
             .then((_) => probePlatformMipSampling())
+            .then((_) => _buildDefaultEnvironmentBetweenFrames())
             .then((_) {
               _readyToRender = true;
             })
@@ -416,6 +421,21 @@ base class Scene implements SceneGraph {
               _initializeStaticResources = null;
             });
     return _initializeStaticResources!;
+  }
+
+  static Future<void> _buildDefaultEnvironmentBetweenFrames() {
+    final built = Completer<void>();
+    Zone.root.run(
+      () => SchedulerBinding.instance.scheduleTask(() {
+        try {
+          Material.getDefaultEnvironmentMap();
+          built.complete();
+        } catch (error, stackTrace) {
+          built.completeError(error, stackTrace);
+        }
+      }, Priority.animation),
+    );
+    return built.future;
   }
 
   /// The root [Node] of the scene graph.
