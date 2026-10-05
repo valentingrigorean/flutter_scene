@@ -1100,10 +1100,6 @@ base class SceneEncoder {
   bool _debugViewBoundFallback = false;
   static final gpu.Shader _debugFallbackShader =
       baseShaderLibrary['DebugSurfaceFragment']!;
-  // Whether an opaque draw of [material] at cross-fade coverage [fade] cuts
-  // itself out, and so takes the coverage pre-draw.
-  static bool _cutsOut(Material material, double fade) =>
-      material.colorAlphaMasked || (fade != 1.0 && material.lodCrossFades);
 
   // MaskInfo for a cross-fade without an alpha mask: a cutoff no alpha falls
   // below, over the white placeholder.
@@ -1303,7 +1299,7 @@ base class SceneEncoder {
 
     if (material.isOpaque()) {
       gpu.RenderPipeline? coveragePipeline;
-      if (!fallback && _cutsOut(material, fade)) {
+      if (!fallback && drawsCoverage(material, fade)) {
         coveragePipeline = tryResolvePipeline(
           materialVertex ?? geometry.vertexShader,
           coverageShaderFor(material),
