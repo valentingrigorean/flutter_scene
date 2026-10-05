@@ -1,5 +1,6 @@
 // Covers Scene.captureFrameRenderGraphs: one capture for each view a frame
-// renders, texture views first, and its exclusion with captureRenderGraph.
+// renders, texture views first, and its exclusion with captureRenderGraph;
+// and the static shadow tiles a captured frame re-renders.
 // GPU-gated; rendering a frame needs a device.
 
 import 'dart:ui' as ui;
@@ -95,6 +96,40 @@ void main() {
       expect(view.passes.map((pass) => pass.name), contains('ShadowPass'));
     }
   });
+
+  test(
+    'a capture lists each static shadow tile its frame re-renders',
+    () async {
+      await Scene.initializeStaticResources();
+      final scene = _shadowedScene();
+      addTearDown(scene.dispose);
+      final views = [
+        RenderView(camera: PerspectiveCamera(position: Vector3(0, 4, 6))),
+      ];
+      Future<List<String>> refreshedTiles() async {
+        final capture = scene.captureRenderGraph(
+          request: const RenderGraphCaptureRequest(captureImages: false),
+        );
+        _renderViews(scene, views);
+        return [
+          for (final resource in (await capture).resources)
+            if (resource.key.startsWith('static_shadow_tile_')) resource.key,
+        ];
+      }
+
+      final first = await refreshedTiles();
+      final cascades = scene.debugStaticShadowTiles.length;
+      expect(cascades, greaterThan(0));
+      expect(first, [
+        for (var cascade = 0; cascade < cascades; cascade++)
+          'static_shadow_tile_$cascade',
+      ]);
+      expect(await refreshedTiles(), isEmpty);
+
+      scene.directionalLight!.invalidateStaticShadows();
+      expect(await refreshedTiles(), first);
+    },
+  );
 
   test('a frame capture and a view capture supersede each other', () async {
     await Scene.initializeStaticResources();
