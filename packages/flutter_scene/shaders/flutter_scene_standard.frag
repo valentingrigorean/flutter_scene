@@ -35,6 +35,14 @@ uniform TextureTransforms {
 }
 texture_transforms;
 
+// The base colour sample, in sRGB, at a base colour UV. A variant that reads
+// its base colour some other way (an atlas region, a second texture) defines
+// this before including the shader; the define may read base_color_texture,
+// v_color and any sampler the variant declares.
+#ifndef FLUTTER_SCENE_BASE_COLOR_SAMPLE
+#define FLUTTER_SCENE_BASE_COLOR_SAMPLE(uv) texture(base_color_texture, uv)
+#endif
+
 // Fills the surface description for the standard glTF metallic-roughness
 // material from the FragInfo parameters and the material textures. The shared
 // lighting framework (material_lighting.glsl) consumes it.
@@ -51,7 +59,7 @@ void Surface(inout MaterialInputs material) {
             texture_transforms.base_color_transform,
             texture_transforms.base_color_rotation)
       : GetUV0();
-  vec4 base_color_srgb = texture(base_color_texture, base_color_uv);
+  vec4 base_color_srgb = FLUTTER_SCENE_BASE_COLOR_SAMPLE(base_color_uv);
   vec3 albedo = SRGBToLinear(base_color_srgb.rgb) * vertex_color.rgb *
                 frag_info.color.rgb;
   float alpha = base_color_srgb.a * vertex_color.a * frag_info.color.a;
