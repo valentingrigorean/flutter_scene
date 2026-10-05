@@ -22,6 +22,8 @@ import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/scene_encoder.dart' show resolvePipeline;
 import 'package:flutter_scene/src/render/uniform_slots.dart';
+import 'package:flutter_scene/src/render/viewport_camera.dart';
+import 'package:flutter_scene/src/render_view.dart' show RenderView;
 
 /// Packs the `PostShadowInfo` std140 block a depth-aware custom pass reads
 /// (exposed as [RenderPassContext.shadowInfo]) from the frame's [cascades],
@@ -190,8 +192,17 @@ class RenderPassContext {
   /// The stage this pass was registered for.
   final RenderStage stage;
 
-  /// The camera the current view is rendered with.
+  /// The camera the current view is rendered with, bound to the view's
+  /// viewport and depth raster, so its projection matches the frame's passes.
+  /// Use [viewCamera] to tell the views of a frame apart.
   final Camera camera;
+
+  /// The camera of the [RenderView] being rendered, the object the app gave
+  /// it, so a pass compares it with `identical` to know which view runs.
+  Camera get viewCamera => switch (camera) {
+    ViewportBoundCamera(:final inner) => inner,
+    final camera => camera,
+  };
 
   /// The render-target size in physical pixels.
   final ui.Size dimensions;
