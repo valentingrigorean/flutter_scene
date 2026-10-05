@@ -9,6 +9,7 @@ import 'package:vector_math/vector_math.dart' show Matrix4;
 import 'package:flutter_scene/src/geometry/geometry.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart';
+import 'package:flutter_scene/src/material/clip_volume.dart';
 import 'package:flutter_scene/src/material/dfg_lut.dart';
 
 import 'package:flutter_scene/src/material/environment.dart';
@@ -234,6 +235,13 @@ abstract class Material {
   // TODO(depth-bias-distance): add a distance or slope-scaled mode for decals
   // that must remain separated across a large depth range.
   double depthBias = 0.0;
+
+  /// The region of world space whose fragments this material discards, or
+  /// null to draw every fragment. Read when the material is bound, so a
+  /// subclass may override it with a getter that answers per draw. The
+  /// built-in lit and unlit materials, every physical variant and lit `.fmat`
+  /// materials honor it in their color pass.
+  ClipVolume? clipVolume;
 
   /// Per-draw level-of-detail cross-fade coverage, set by the encoder right
   /// before [bind] and written into the material's `FragInfo.fade`. 1 draws

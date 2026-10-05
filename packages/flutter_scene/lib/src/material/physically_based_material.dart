@@ -1539,6 +1539,7 @@ class PhysicallyBasedMaterial extends Material {
         ..modelScaleX = modelScaleX
         ..modelScaleY = modelScaleY
         ..modelScaleZ = modelScaleZ
+        ..clipVolume = clipVolume
         ..environment = environment;
       prepared.bind(pass, transientsBuffer, lighting);
       return;
@@ -1714,6 +1715,12 @@ class PhysicallyBasedMaterial extends Material {
       );
     }
     EngineLightingUniforms.bindFog(pass, shader, transientsBuffer, lighting);
+    EngineLightingUniforms.bindClipVolume(
+      pass,
+      shader,
+      transientsBuffer,
+      clipVolume,
+    );
   }
 
   static final Float32List _fragInfoScratch = Float32List(

@@ -96,6 +96,7 @@ export 'src/material/equirect_image.dart'
 export 'src/material/exr_decoder.dart' show ExrFormatException, decodeOpenExr;
 export 'src/material/hdr_decoder.dart'
     show DecodedHdr, HdrFormatException, decodeRadianceHdr;
+export 'src/material/clip_volume.dart' show ClipVolume;
 export 'src/material/material.dart' show MaskedDepthPass, Material;
 export 'src/material/material_parameters.dart' show MaterialParameters;
 export 'src/material/physically_based_material.dart'
