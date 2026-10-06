@@ -464,7 +464,8 @@ List<SceneTranslucentDraw> sceneTranslucentDraws(
           if (!primitive.visible ||
               material.drawsNothing ||
               material.displayReferred ||
-              material.isOpaque()) {
+              material.isOpaque() ||
+              material.blendsInOpaquePass) {
             continue;
           }
           final bounds = primitive.geometry.localBounds;
@@ -486,7 +487,8 @@ List<SceneTranslucentDraw> sceneTranslucentDraws(
         if (instanced.instanceCount == 0 ||
             material.drawsNothing ||
             material.displayReferred ||
-            material.isOpaque()) {
+            material.isOpaque() ||
+            material.blendsInOpaquePass) {
           continue;
         }
         final bounds = instanced.aggregateBounds;
@@ -1128,6 +1130,17 @@ base class SceneEncoder {
   );
   static final gpu.StencilConfig _noStencil = gpu.StencilConfig();
 
+  // The translucent blend: premultiplied source-over.
+  static final gpu.ColorBlendEquation _premultipliedOver =
+      gpu.ColorBlendEquation(
+        colorBlendOperation: gpu.BlendOperation.add,
+        sourceColorBlendFactor: gpu.BlendFactor.one,
+        destinationColorBlendFactor: gpu.BlendFactor.oneMinusSourceAlpha,
+        alphaBlendOperation: gpu.BlendOperation.add,
+        sourceAlphaBlendFactor: gpu.BlendFactor.one,
+        destinationAlphaBlendFactor: gpu.BlendFactor.oneMinusSourceAlpha,
+      );
+
   // Whether the opaque flush is encoding a run's coverage pre-draw.
   bool _coveragePass = false;
   final List<Plane> _cullingPlanes;
@@ -1296,7 +1309,7 @@ base class SceneEncoder {
       return;
     }
 
-    if (material.isOpaque()) {
+    if (material.isOpaque() || material.blendsInOpaquePass) {
       gpu.RenderPipeline? coveragePipeline;
       if (!fallback && drawsCoverage(material, fade)) {
         coveragePipeline = tryResolvePipeline(
@@ -2303,6 +2316,13 @@ base class SceneEncoder {
         _renderPass.setStencilConfig(_noStencil);
         _renderPass.setDepthCompareOperation(_raster.nearerOrEqual);
         _renderPass.setDepthWriteEnable(true);
+      } else if (record.material.blendsInOpaquePass) {
+        _renderPass.setDepthWriteEnable(false);
+        _renderPass.setColorBlendEnable(true);
+        _renderPass.setColorBlendEquation(_premultipliedOver);
+        _encodeOpaqueRun(index, end, record.pipeline, record.fade, batchBreak);
+        _renderPass.setColorBlendEnable(false);
+        _renderPass.setDepthWriteEnable(true);
       } else {
         _encodeOpaqueRun(index, end, record.pipeline, 1.0, batchBreak);
       }
@@ -2661,16 +2681,7 @@ base class SceneEncoder {
     final encodeWatch = profileRendering ? (Stopwatch()..start()) : null;
     _renderPass.setDepthWriteEnable(false);
     _renderPass.setColorBlendEnable(true);
-    _renderPass.setColorBlendEquation(
-      gpu.ColorBlendEquation(
-        colorBlendOperation: gpu.BlendOperation.add,
-        sourceColorBlendFactor: gpu.BlendFactor.one,
-        destinationColorBlendFactor: gpu.BlendFactor.oneMinusSourceAlpha,
-        alphaBlendOperation: gpu.BlendOperation.add,
-        sourceAlphaBlendFactor: gpu.BlendFactor.one,
-        destinationAlphaBlendFactor: gpu.BlendFactor.oneMinusSourceAlpha,
-      ),
-    );
+    _renderPass.setColorBlendEquation(_premultipliedOver);
 
     while (_translucentCursor < end) {
       final record = _translucentRecords[_translucentCursor++];
@@ -2795,16 +2806,7 @@ base class SceneEncoder {
 
     _renderPass.setDepthWriteEnable(false);
     _renderPass.setColorBlendEnable(true);
-    _renderPass.setColorBlendEquation(
-      gpu.ColorBlendEquation(
-        colorBlendOperation: gpu.BlendOperation.add,
-        sourceColorBlendFactor: gpu.BlendFactor.one,
-        destinationColorBlendFactor: gpu.BlendFactor.oneMinusSourceAlpha,
-        alphaBlendOperation: gpu.BlendOperation.add,
-        sourceAlphaBlendFactor: gpu.BlendFactor.one,
-        destinationAlphaBlendFactor: gpu.BlendFactor.oneMinusSourceAlpha,
-      ),
-    );
+    _renderPass.setColorBlendEquation(_premultipliedOver);
 
     for (final record in _displayReferredRecords) {
       _renderPass.setDepthCompareOperation(
