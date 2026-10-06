@@ -2765,9 +2765,19 @@ base class Scene implements SceneGraph {
       return;
     }
 
-    // A frame whose screen views will re-present their previous images skips
-    // the texture views too. Rendering them anyway keeps the GPU a frame
-    // behind, so the screen views would pace indefinitely.
+    // Composite lower-order screen views first.
+    final screenViews = [
+      for (final view in views)
+        if (view.target == null) view,
+    ];
+    final ordered = screenViews.length == 1
+        ? screenViews
+        : (screenViews..sort((a, b) => a.order.compareTo(b.order)));
+
+    // A frame whose screen views will all re-present their previous images
+    // skips the texture views too. Rendering them anyway keeps the GPU a frame
+    // behind, so the screen views would pace indefinitely. A screen view with
+    // no previous image of its size renders, and so do the texture views.
     // A frame capture takes every view this frame renders, so it is taken
     // after a held frame has returned and keeps the frame from pacing.
     final frameCapture = _pendingFrameGraphCapture;
@@ -2777,11 +2787,10 @@ base class Scene implements SceneGraph {
         : <RenderGraphCaptureResult>[];
     final pacingFrame =
         maxGpuFramesInFlight > 0 &&
-        _hasPresentedFrame &&
         _pendingGraphCapture == null &&
         frameCapture == null &&
-        views.any((view) => view.target == null) &&
-        rendererSubmissions.framesInFlight >= maxGpuFramesInFlight;
+        rendererSubmissions.framesInFlight >= maxGpuFramesInFlight &&
+        _everyScreenViewPresentsPrevious(ordered, drawArea, dpr);
     // A paced frame renders nothing, so the adaptive controller measures the
     // period between rendered frames rather than the vsync it ticks at.
     if (!pacingFrame) _tickAdaptiveQuality();
@@ -2964,15 +2973,6 @@ base class Scene implements SceneGraph {
       }
       target.markUpdated(now);
     }
-
-    // Composite lower-order screen views first.
-    final screenViews = [
-      for (final view in views)
-        if (view.target == null) view,
-    ];
-    final ordered = screenViews.length == 1
-        ? screenViews
-        : (screenViews..sort((a, b) => a.order.compareTo(b.order)));
 
     for (var i = 0; i < ordered.length; i++) {
       final view = ordered[i];
@@ -3313,6 +3313,47 @@ base class Scene implements SceneGraph {
     }
   }
 
+  // The physical pixel size a screen view drawn into [drawArea] renders at.
+  ui.Size _screenViewPixelSize(RenderView view, ui.Rect drawArea, double dpr) {
+    final scale =
+        dpr * (view.renderScale ?? _renderScale) * adaptiveRenderScale;
+    return ui.Size(
+      (drawArea.width * scale).ceilToDouble(),
+      (drawArea.height * scale).ceilToDouble(),
+    );
+  }
+
+  // The screen view's previous image when it has [pixelSize], which a paced
+  // frame re-presents in place of a new one.
+  gpu.Texture? _previousImageOfSize(int viewIndex, ui.Size pixelSize) {
+    final previous = surface.lastSwapchainColorTexture(viewIndex);
+    if (previous == null ||
+        previous.width != pixelSize.width.toInt() ||
+        previous.height != pixelSize.height.toInt()) {
+      return null;
+    }
+    return previous;
+  }
+
+  // Whether every screen view of [ordered] that draws holds a previous image
+  // of the size it renders at, and at least one draws.
+  bool _everyScreenViewPresentsPrevious(
+    List<RenderView> ordered,
+    ui.Rect drawArea,
+    double dpr,
+  ) {
+    var drawing = 0;
+    for (var i = 0; i < ordered.length; i++) {
+      final viewArea = _viewDrawArea(drawArea, ordered[i].viewport);
+      if (viewArea.isEmpty) continue;
+      final pixelSize = _screenViewPixelSize(ordered[i], viewArea, dpr);
+      if (pixelSize.width < 1 || pixelSize.height < 1) continue;
+      if (_previousImageOfSize(i, pixelSize) == null) return false;
+      drawing++;
+    }
+    return drawing > 0;
+  }
+
   void _renderViewToCanvas({
     required RenderView view,
     required ui.Canvas canvas,
@@ -3339,12 +3380,7 @@ base class Scene implements SceneGraph {
     // high-DPI devices). See: https://github.com/bdero/flutter_scene/issues/60
     // The render scale multiplies on top, trading resolution for fragment
     // work (or supersampling above 1.0).
-    final scale =
-        dpr * (view.renderScale ?? _renderScale) * adaptiveRenderScale;
-    final pixelSize = ui.Size(
-      (drawArea.width * scale).ceilToDouble(),
-      (drawArea.height * scale).ceilToDouble(),
-    );
+    final pixelSize = _screenViewPixelSize(view, drawArea, dpr);
     if (pixelSize.width < 1 || pixelSize.height < 1) {
       return;
     }
@@ -3357,12 +3393,10 @@ base class Scene implements SceneGraph {
     // Pace the GPU: with enough frames still running, present the previous
     // image rather than queue work the calling thread would block on. A
     // pending capture must observe a rendered frame, so it is never paced.
-    final previous = surface.lastSwapchainColorTexture(viewIndex);
+    final previous = _previousImageOfSize(viewIndex, pixelSize);
     if (!captureThisView &&
         maxGpuFramesInFlight > 0 &&
         previous != null &&
-        previous.width == pixelSize.width.toInt() &&
-        previous.height == pixelSize.height.toInt() &&
         rendererSubmissions.framesInFlight >= maxGpuFramesInFlight) {
       _pacedFrameCount++;
       _holdPace();
