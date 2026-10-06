@@ -267,9 +267,13 @@ class RenderPassContext {
   gpu.Texture? get sceneDepthLinear =>
       _context.blackboard.get<gpu.Texture>(kLinearDepthBlackboardKey);
 
-  /// The shared shadow atlas (a horizontal strip of tiles, window-space depth
-  /// in the red channel): the directional cascades first, then one tile per
-  /// casting spot (see [spotShadows]). Non-null when the pass declared
+  /// The shared shadow atlas (a horizontal strip of tiles of window-space
+  /// depth, in a layout of the engine include `shadow_depth.glsl`): the
+  /// directional cascades first, then one tile per casting spot (see
+  /// [spotShadows]). Decode a texel with its `ShadowDepthOf`, which reads
+  /// either layout. Its format is `r32Float`, or `r16g16b16a16Float` in the
+  /// half float layout ([shadowMapIsSplit]) where the device renders no
+  /// 32-bit float color target. Non-null when the pass declared
   /// [RenderInput.shadowMap] and a light cast this frame. Pair with
   /// [shadowInfo] for the cascades.
   gpu.Texture? get shadowMap =>

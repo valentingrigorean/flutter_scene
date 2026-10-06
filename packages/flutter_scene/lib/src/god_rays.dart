@@ -64,6 +64,15 @@ class GodRaysPass extends CustomRenderPass {
   gpu.Shader get _shader =>
       _shaderCache ??= baseShaderLibrary['GodRaysFragment']!;
 
+  // The shadow map is read texel by texel, as every shadow reader does: a
+  // 32-bit float target filters only where the device offers it.
+  static final gpu.SamplerOptions _shadowSampler = gpu.SamplerOptions(
+    minFilter: gpu.MinMagFilter.nearest,
+    magFilter: gpu.MinMagFilter.nearest,
+    widthAddressMode: gpu.SamplerAddressMode.clampToEdge,
+    heightAddressMode: gpu.SamplerAddressMode.clampToEdge,
+  );
+
   @override
   String get name => 'god_rays';
 
@@ -88,6 +97,7 @@ class GodRaysPass extends CustomRenderPass {
     context.applyShader(
       _shader,
       textures: {'input_depth': depth, 'input_shadow': shadowMap},
+      samplers: {'input_shadow': _shadowSampler},
       uniforms: {
         'PostCameraInfo': context.cameraInfo,
         'PostShadowInfo': shadowInfo,

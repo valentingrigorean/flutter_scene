@@ -12,7 +12,7 @@
 
 uniform sampler2D input_color;
 uniform sampler2D input_depth;
-uniform sampler2D input_shadow;
+uniform highp sampler2D input_shadow;
 
 // resolution: (w, h, 1/w, 1/h). frame: (time, -, -, -). Bound by applyShader.
 uniform PostFrameInfo {
@@ -63,6 +63,7 @@ const float kShadowBias = 0.0015;
 
 #include <view_projection.glsl>
 #include <linear_depth.glsl>
+#include <shadow_depth.glsl>
 
 // Reconstructs the view-space position at [uv] from the linear depth (the eye
 // at the origin looking down +forward; see PostCameraInfo).
@@ -86,7 +87,7 @@ vec3 ViewPositionAt(vec2 uv) {
       vec2 atlas_uv = vec2((float(IDX) + tile_uv.x) / float(COUNT),        \
                            tile_uv.y);                                     \
       atlas_uv.y = 1.0 - atlas_uv.y; /* atlas stored top-down */           \
-      float caster = texture(input_shadow, atlas_uv).r;                    \
+      highp float caster = ShadowDepthOf(texture(input_shadow, atlas_uv)); \
       RESULT = (proj.z - kShadowBias) <= caster ? 1.0 : 0.0;               \
       return RESULT;                                                       \
     }                                                                      \

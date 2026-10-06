@@ -97,7 +97,8 @@ double _halfFloatUlp(double value) {
 /// only `EXT_color_buffer_half_float`, so a device can draw the scene and not
 /// its depth. Flutter GPU reports every uncompressed format as supported, so
 /// the probe measures the read itself: where it does not hold, the depth
-/// prepass takes the half float layout, which renders wherever the scene does.
+/// prepass and the shadow maps take their half float layouts, which render
+/// wherever the scene does.
 ///
 /// Runs during `Scene.initializeStaticResources` on Android, the platform
 /// whose OpenGL ES backend can lack the extension. Metal and Vulkan render a
@@ -120,7 +121,8 @@ Future<void> probeFloat32ColorTargets() async {
   if (platformRendersFloat32ColorTargets == false) {
     debugPrint(
       'flutter_scene: this device renders no 32-bit float color target, so '
-      'the linear depth target takes the half float layout.',
+      'the linear depth target and the shadow maps take the half float '
+      'layout.',
     );
   }
 }
