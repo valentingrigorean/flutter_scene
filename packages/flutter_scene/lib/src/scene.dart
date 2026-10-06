@@ -716,7 +716,8 @@ base class Scene implements SceneGraph {
 
   /// Notifies when the scene wants painting again outside any repaint the
   /// app drives: a screen view held its previous image because the GPU was
-  /// [maxGpuFramesInFlight] frames behind, and that work has now finished.
+  /// [maxGpuFramesInFlight] frames behind or a material waited on the
+  /// physical shaders, and that work or load has now finished.
   /// [SceneView] listens. A custom painter that repaints only on demand
   /// should pass this as its `repaint`, or the held frame never shows.
   /// {@category Rendering}
