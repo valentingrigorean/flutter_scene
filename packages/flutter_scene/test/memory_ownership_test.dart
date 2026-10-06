@@ -193,12 +193,13 @@ void main() {
   });
 
   group('held render targets', () {
-    testWidgets('a rendered scene holds the bytes of every view ring and '
-        'pool texture at the size and sample count it drew, and states each '
-        'device-private texture to the VM', (tester) async {
+    testWidgets('a scene that encodes every frame holds the bytes of every '
+        'view ring and pool texture at the size and sample count it drew, and '
+        'states each device-private texture to the VM', (tester) async {
       await tester.runAsync(Scene.initializeStaticResources);
       final scene = Scene()
         ..antiAliasingMode = AntiAliasingMode.msaa
+        ..maxGpuFramesInFlight = 0
         ..add(_cube());
       const region = ui.Rect.fromLTWH(0, 0, 64, 32);
       _render(scene, _twoViews(), region);
@@ -244,11 +245,13 @@ void main() {
     }, skip: gpuSkip != false);
 
     for (final platform in [TargetPlatform.windows, TargetPlatform.linux]) {
-      testWidgets('on ${platform.name} a transient attachment counts 0 held '
-          'and states its full bytes to the VM', (tester) async {
+      testWidgets('on ${platform.name} a transient attachment of a scene that '
+          'encodes every frame counts 0 held and states its full bytes to the '
+          'VM', (tester) async {
         await tester.runAsync(Scene.initializeStaticResources);
         final scene = Scene()
           ..antiAliasingMode = AntiAliasingMode.msaa
+          ..maxGpuFramesInFlight = 0
           ..add(_cube());
         const region = ui.Rect.fromLTWH(0, 0, 64, 32);
         debugDefaultTargetPlatformOverride = platform;
