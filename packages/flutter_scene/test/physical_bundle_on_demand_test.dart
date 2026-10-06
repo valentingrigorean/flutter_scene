@@ -5,6 +5,9 @@
 library;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
+// ignore: implementation_imports
+import 'package:flutter_scene/src/generated_assets/generated_asset_lookup.dart';
 // ignore: implementation_imports
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 // ignore: implementation_imports
@@ -40,7 +43,18 @@ void main() {
   late List<FlutterErrorDetails> reported;
   late FlutterExceptionHandler? previousOnError;
 
+  // Serves no assets, so every load fails as in an app built without the
+  // generated bundle, whichever backend the run has.
+  void serveAssets(Future<ByteData?>? Function(ByteData?)? handler) {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMessageHandler('flutter/assets', handler);
+    rootBundle.clear();
+    // ignore: invalid_use_of_internal_member
+    clearGeneratedAssetIndexCache();
+  }
+
   setUp(() {
+    serveAssets((_) async => null);
     resetPhysicalMaterialResourcesForTesting();
     reported = [];
     previousOnError = FlutterError.onError;
@@ -50,6 +64,7 @@ void main() {
   tearDown(() {
     FlutterError.onError = previousOnError;
     resetPhysicalMaterialResourcesForTesting();
+    serveAssets(null);
   });
 
   test('a plain material does not ask for the bundle', () {
@@ -68,7 +83,6 @@ void main() {
     expect(material.awaitsDeferredResources, isTrue);
     expect(physicalMaterialResourcesLoad, isNotNull);
 
-    // The test bundle has no generated assets, so the load fails.
     await physicalMaterialResourcesLoad;
     expect(physicalMaterialResourcesPending, isFalse);
     expect(physicalMaterialResourcesReady, isFalse);
