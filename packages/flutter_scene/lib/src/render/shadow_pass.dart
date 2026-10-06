@@ -11,6 +11,7 @@ import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/shadow_cache.dart';
 import 'package:flutter_scene/src/render/shadow_encoder.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
+import 'package:flutter_scene/src/render/linear_depth_probe.dart';
 import 'package:flutter_scene/src/render/spot_shadow.dart';
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/scene_encoder.dart'
@@ -18,9 +19,39 @@ import 'package:flutter_scene/src/scene_encoder.dart'
 import 'package:flutter_scene/src/render/uniform_slots.dart';
 
 /// Render-graph blackboard key under which [ShadowPass] publishes the shadow
-/// map atlas (a depth-in-`.r` fp32 texture). The downstream scene pass reads it
-/// from here.
+/// map atlas (a [shadowMapFormat] texture in a layout of
+/// `shaders/shadow_depth.glsl`). The downstream scene pass reads it from here.
 const String kShadowMapBlackboardKey = 'directional_shadow_map';
+
+/// Forces the half float layout of the shadow maps, as on a device that
+/// renders no 32-bit float color target, so a test proves that layout on a
+/// GPU that renders both. Set it before the scene draws its first shadow: a
+/// cached static shadow tile keeps the format it was made with.
+bool debugSplitShadowMap = false;
+
+/// Whether the shadow maps take the half float layout of
+/// `shaders/shadow_depth.glsl`.
+///
+/// True where the probe measured that a 32-bit float color target does not
+/// render, or under [debugSplitShadowMap]. Every writer encodes through
+/// `EncodeShadowDepth` and every reader decodes through `ShadowDepthOf` of
+/// that include, which fill and read either layout, so only the targets
+/// consult this.
+bool get shadowMapIsSplit =>
+    debugSplitShadowMap || platformRendersFloat32ColorTargets == false;
+
+/// The format of a shadow map, its cached static tiles and the scratch target
+/// its pipelines build against: a half float target in the half float layout,
+/// else a 32-bit float one.
+///
+/// Not a single half float channel: the far cascade's orthographic depth range
+/// spans hundreds of world units, and a half float's 11 significant bits
+/// quantize window-space depth into steps coarser than the shadow depth bias,
+/// which made the flat distant ground self-shadow in moire bands. The half
+/// float layout keeps about 20 bits.
+gpu.PixelFormat get shadowMapFormat => shadowMapIsSplit
+    ? gpu.PixelFormat.r16g16b16a16Float
+    : gpu.PixelFormat.r32Float;
 
 /// Blackboard key for the frame's [SpotShadowInfo], set when spots cast.
 const String kSpotShadowInfoBlackboardKey = 'spot_shadow_info';
@@ -217,15 +248,11 @@ class ShadowPass extends RenderGraphPass {
     final totalTiles =
         _cascades.length + spotCount + pointCount * kPointShadowTilesPerLight;
     final atlasWidth = _tileResolution * totalTiles;
-    // fp32 (not fp16): the far cascade's orthographic depth range spans
-    // hundreds of world units, and fp16's ~11-bit mantissa quantizes
-    // window-space depth into steps coarser than the shadow depth bias.
-    // That made the flat distant ground self-shadow in moire bands.
     final color = context.texturePool.acquire(
       TransientTextureDescriptor.color(
         width: atlasWidth,
         height: _tileResolution,
-        format: gpu.PixelFormat.r32Float,
+        format: shadowMapFormat,
         debugName: 'directional_shadow_map',
       ),
     );
@@ -417,7 +444,7 @@ class ShadowPass extends RenderGraphPass {
           gpu.StorageMode.devicePrivate,
           _tileResolution,
           _tileResolution,
-          format: gpu.PixelFormat.r32Float,
+          format: shadowMapFormat,
         ),
       );
       // Every refresh clears it, so one texture serves all the tiles.

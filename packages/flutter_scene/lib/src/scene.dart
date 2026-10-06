@@ -2256,7 +2256,7 @@ base class Scene implements SceneGraph {
           gpu.StorageMode.devicePrivate,
           1,
           1,
-          format: gpu.PixelFormat.r32Float,
+          format: shadowMapFormat,
           enableShaderReadUsage: false,
         ),
       ),

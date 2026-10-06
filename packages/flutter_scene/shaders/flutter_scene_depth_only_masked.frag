@@ -11,8 +11,9 @@
 #include <material_varyings.glsl>
 #include <material_inputs.glsl>
 #include <depth_mask.glsl>
+#include <shadow_depth.glsl>
 
 void main() {
   ApplyDepthAlphaMask();
-  frag_color = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0);
+  frag_color = EncodeShadowDepth(gl_FragCoord.z);
 }

@@ -8,6 +8,8 @@
 // material_engine_lighting.glsl.
 
 #ifndef FLUTTER_SCENE_SKIP_SHADOWS
+#include <shadow_depth.glsl>
+
 // One rotated Poisson-disk PCF tap into a cascade's atlas tile.
 // Samples the caster depth for the soft-shadow blocker search, with the
 // same tile mapping as ShadowTap and no comparison.
@@ -19,7 +21,7 @@ highp float ShadowTapDepth(vec2 p, float ca, float sa, highp float radius,
                    vec2(1.0 - frag_info.shadow_texel_size));
   highp vec2 atlas_uv = vec2((float(cascade) + cuv.x) * inv_count, cuv.y);
   atlas_uv.y = 1.0 - atlas_uv.y;
-  return texture(shadow_map, atlas_uv).r;
+  return ShadowDepthOf(texture(shadow_map, atlas_uv));
 }
 
 float ShadowTap(vec2 p, float ca, float sa, highp float radius, highp vec2 uv,
@@ -35,7 +37,7 @@ float ShadowTap(vec2 p, float ca, float sa, highp float radius, highp vec2 uv,
   // is v=0, so flip V to sample the matching row. This is intrinsic to the
   // top-down storage (not a backend Y-flip workaround), so it is unconditional.
   atlas_uv.y = 1.0 - atlas_uv.y;
-  highp float caster_depth = texture(shadow_map, atlas_uv).r;
+  highp float caster_depth = ShadowDepthOf(texture(shadow_map, atlas_uv));
   return receiver_depth <= caster_depth ? 1.0 : 0.0;
 }
 
@@ -56,10 +58,12 @@ float ShadowTapBilinear(vec2 p, highp float radius, highp vec2 uv, int cascade,
   highp vec2 step_uv = vec2(frag_info.shadow_texel_size * inv_count,
                       frag_info.shadow_texel_size);
 
-  highp float d00 = texture(shadow_map, atlas_uv00).r;
-  highp float d10 = texture(shadow_map, atlas_uv00 + vec2(step_uv.x, 0.0)).r;
-  highp float d01 = texture(shadow_map, atlas_uv00 + vec2(0.0, step_uv.y)).r;
-  highp float d11 = texture(shadow_map, atlas_uv00 + step_uv).r;
+  highp float d00 = ShadowDepthOf(texture(shadow_map, atlas_uv00));
+  highp float d10 =
+      ShadowDepthOf(texture(shadow_map, atlas_uv00 + vec2(step_uv.x, 0.0)));
+  highp float d01 =
+      ShadowDepthOf(texture(shadow_map, atlas_uv00 + vec2(0.0, step_uv.y)));
+  highp float d11 = ShadowDepthOf(texture(shadow_map, atlas_uv00 + step_uv));
 
   float s00 = receiver_depth <= d00 ? 1.0 : 0.0;
   float s10 = receiver_depth <= d10 ? 1.0 : 0.0;
@@ -360,7 +364,7 @@ float SpotShadowTap(highp vec2 uv, highp float tile, highp float total,
                     highp float receiver) {
   highp vec2 atlas_uv = vec2((tile + clamp(uv.x, 0.0, 1.0)) / total,
                        1.0 - clamp(uv.y, 0.0, 1.0));
-  return receiver <= texture(shadow_map, atlas_uv).r ? 1.0 : 0.0;
+  return receiver <= ShadowDepthOf(texture(shadow_map, atlas_uv)) ? 1.0 : 0.0;
 }
 
 // Number of ring taps around the center for the spot-shadow PCF.
@@ -418,7 +422,7 @@ float PointShadowTap(highp vec2 uv, highp float tile, highp float qx,
   highp vec2 cuv = clamp(uv, vec2(half_texel), vec2(1.0 - half_texel));
   highp vec2 tile_uv = vec2(qx, 1.0 - qy) * 0.5 + cuv * 0.5;
   highp vec2 atlas_uv = vec2((tile + tile_uv.x) / total, 1.0 - tile_uv.y);
-  return receiver <= texture(shadow_map, atlas_uv).r ? 1.0 : 0.0;
+  return receiver <= ShadowDepthOf(texture(shadow_map, atlas_uv)) ? 1.0 : 0.0;
 }
 
 // Point-shadow visibility (1 lit .. 0 shadowed) for the shadow-casting point
