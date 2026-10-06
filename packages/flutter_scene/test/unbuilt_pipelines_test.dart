@@ -217,6 +217,57 @@ void main() {
     expect(sceneDrawRevision, greaterThan(at));
   });
 
+  test('a node\'s shadow mode or light channels, a primitive\'s shadow '
+      'opt-out, a material a new mesh swaps in, an alpha mode, an opacity and '
+      'a dropped pipeline each move sceneDrawRevision, while a set to the '
+      'same value or a colour that keeps the opacity does not', () async {
+    final scene = await _scene();
+    final lit = PhysicallyBasedMaterial();
+    final box = _box('box', material: lit);
+    scene.add(box);
+    final primitive = box.mesh!.primitives.single;
+    final unlit = UnlitMaterial();
+
+    var at = sceneDrawRevision;
+    box
+      ..shadowCastingMode = box.shadowCastingMode
+      ..lightChannelMask = box.lightChannelMask;
+    primitive.castsShadow = primitive.castsShadow;
+    unlit.alphaMode = unlit.alphaMode;
+    lit
+      ..alphaMode = lit.alphaMode
+      ..baseColorFactor = Vector4(0.2, 0.4, 0.6, 1);
+    box.mesh = Mesh.primitives(primitives: [primitive]);
+    expect(sceneDrawRevision, at);
+
+    void moves(String change, void Function() apply) {
+      final before = sceneDrawRevision;
+      apply();
+      expect(sceneDrawRevision, greaterThan(before), reason: change);
+    }
+
+    moves('shadow mode', () => box.shadowCastingMode = ShadowCastingMode.off);
+    moves('light channels', () => box.lightChannelMask = 1);
+    moves('primitive shadow', () => primitive.castsShadow = false);
+    moves('unlit alpha mode', () => unlit.alphaMode = AlphaMode.blend);
+    moves('lit alpha mode', () => lit.alphaMode = AlphaMode.mask);
+    moves('lit opacity', () {
+      lit
+        ..alphaMode = AlphaMode.opaque
+        ..baseColorFactor = Vector4(1, 1, 1, 0.5);
+    });
+    moves(
+      'swapped material',
+      () => box.mesh = Mesh.primitives(
+        primitives: [MeshPrimitive(primitive.geometry, unlit)],
+      ),
+    );
+    moves('dropped pipeline', _forgetMeshPipelines);
+    at = sceneDrawRevision;
+    lit.baseColorFactor = Vector4(1, 0, 0, 0.25);
+    expect(sceneDrawRevision, at);
+  });
+
   test('a culled instanced draw is listed once an instance comes into '
       'view', () async {
     final scene = await _scene();

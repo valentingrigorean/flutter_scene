@@ -56,7 +56,14 @@ base class MeshPrimitive implements MeshDrawSource {
   /// [visible], so a primitive can render while opting out of
   /// self-shadowing, or stay invisible while still casting a shadow.
   /// {@category Geometry}
-  bool castsShadow = true;
+  bool get castsShadow => _castsShadow;
+  set castsShadow(bool value) {
+    if (value == _castsShadow) return;
+    _castsShadow = value;
+    markSceneDrawChanged();
+  }
+
+  bool _castsShadow = true;
 
   /// Picks the instances and index range each draw uses, or null to draw
   /// everything. See [MeshDrawSelector].

@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart';
 import 'package:flutter_scene/src/material/physical_material_variant.dart';
@@ -994,16 +995,33 @@ class PhysicallyBasedMaterial extends Material {
   bool _materialDataDirty = true;
   PhysicalMaterialVariant? _preparedVariant;
 
+  // What picks this material's pipelines and passes: whether it draws opaque,
+  // whether its depth draws are alpha masked, and its shader variant. A new
+  // material draws opaque, unmasked, on the standard variant.
+  int _drawShape = 1;
+
+  int get _drawShapeNow =>
+      (isOpaque() ? 1 : 0) | (depthAlphaMasked ? 2 : 0) | _variantKey << 2;
+
+  void _noteDrawShape() {
+    final shape = _drawShapeNow;
+    if (shape == _drawShape) return;
+    _drawShape = shape;
+    markSceneDrawChanged();
+  }
+
   void _markMaterialDataDirty({bool variant = false}) {
     _materialDataDirty = true;
-    if (!variant) return;
-    final previousTransmission = _usesTransmissionVariant;
-    _variantKey = _computeVariantKey();
-    _updateStandardShaderNames();
-    _requestPhysicalAssetsIfNeeded();
-    if (previousTransmission != _usesTransmissionVariant) {
-      markMaterialSceneInputsChanged();
+    if (variant) {
+      final previousTransmission = _usesTransmissionVariant;
+      _variantKey = _computeVariantKey();
+      _updateStandardShaderNames();
+      _requestPhysicalAssetsIfNeeded();
+      if (previousTransmission != _usesTransmissionVariant) {
+        markMaterialSceneInputsChanged();
+      }
     }
+    _noteDrawShape();
   }
 
   /// Whether the scalar specular inputs differ from the glTF defaults, in
@@ -1387,6 +1405,7 @@ class PhysicallyBasedMaterial extends Material {
     _updateStandardShaderNames();
     _requestPhysicalAssetsIfNeeded();
     _materialDataDirty = true;
+    _noteDrawShape();
   }
 
   void _applyAdvancedDescriptor(PhysicalMaterialDescriptor d) {

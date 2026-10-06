@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_scene/src/components/component.dart';
+import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/light.dart' show ShadowCastingMode;
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/mesh.dart';
@@ -63,6 +64,7 @@ class MeshComponent extends Component {
         markMaterialSceneInputsChanged();
       }
       item.material = material;
+      markSceneDrawChanged();
       // Now, not at the next tick, so a capture before it never reaches a
       // material that cannot draw yet.
       item.visible = !material.drawsNothing;
