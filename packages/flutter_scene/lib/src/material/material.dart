@@ -668,6 +668,22 @@ abstract class Material {
   gpu.CullMode get renderCullMode =>
       (!doubleSided || !isOpaque()) ? gpu.CullMode.backFace : gpu.CullMode.none;
 
+  /// Whether this translucent material draws in the opaque pass, at its
+  /// node's [Node.renderOrder] among the opaque draws, rather than in the
+  /// translucent pass after every opaque draw.
+  ///
+  /// It draws blended as the translucent pass blends (premultiplied
+  /// source-over) and writes no depth. An opaque draw at a higher render
+  /// order then draws over it wherever it is nearer, however little: use it
+  /// for a translucent layer that lies on a surface and must yield to what
+  /// stands on that surface, such as a ground overlay that sits a little
+  /// toward the camera so it wins over the opaque marks on the ground drawn
+  /// before it. Give the surface and those marks a lower render order than
+  /// the layer, and the content that stands on it a higher one. It draws no
+  /// shadow, joins no depth prepass and is not sorted back to front. Defaults
+  /// to false.
+  bool blendsInOpaquePass = false;
+
   /// Whether this translucent material writes the nearest fragment depth.
   ///
   /// Most alpha-blended surfaces leave this off. Refractive surfaces can turn
