@@ -45,6 +45,7 @@ uniform SsrInfo {
 ssr;
 
 #include <view_projection.glsl>
+#include <linear_depth.glsl>
 
 in vec2 v_uv;
 out vec4 frag_color;
@@ -76,7 +77,7 @@ const float kGoldenAngle = 2.39996323;
 // prepass writes), so the stored planar depth is the view-space Z and the
 // X/Y follow from the projection. Mirrors the occlusion pass.
 vec3 ViewPositionAt(vec2 uv) {
-  return ViewPositionFromUv(uv, texture(linear_depth, uv).r, ssr.proj.xy,
+  return ViewPositionFromUv(uv, LinearDepthOf(texture(linear_depth, uv)), ssr.proj.xy,
                             ssr.proj_offset.xyz);
 }
 
@@ -136,12 +137,12 @@ void main() {
   // Debug views, evaluated before any early-out so they show what the trace
   // actually reads.
   if (debug_view == 5) {
-    float g = depth_sample.r / far;
+    float g = LinearDepthOf(depth_sample) / far;
     frag_color = vec4(vec3(g), 1.0);
     return;
   }
   if (debug_view == 3) {
-    vec3 dn = OctDecode(depth_sample.gb);
+    vec3 dn = OctDecode(LinearDepthOctNormalOf(depth_sample));
     frag_color = vec4(dn * 0.5 + 0.5, 1.0);
     return;
   }
@@ -156,8 +157,8 @@ void main() {
   // perceptual roughness (alpha) written by the depth prepass. Using the
   // shaded vertex normal rather than one reconstructed from depth keeps
   // reflections smooth across curved surfaces instead of faceted per triangle.
-  vec3 normal = OctDecode(depth_sample.gb);
-  float roughness = depth_sample.a;
+  vec3 normal = OctDecode(LinearDepthOctNormalOf(depth_sample));
+  float roughness = LinearDepthRoughnessOf(depth_sample);
 
   // Screen-space reflections are only coherent on smooth surfaces; fade the
   // whole trace out as roughness rises, leaving the image-based reflection.
@@ -228,7 +229,7 @@ void main() {
     }
     // Perspective-correct view-space depth of the ray at this screen point.
     float ray_z = DepthFromScreenLinear(mix(inv_z_start, inv_z_end, t));
-    float scene_z = texture(linear_depth, uv).r;
+    float scene_z = LinearDepthOf(texture(linear_depth, uv));
     // Skip background (sky) texels: no geometry to reflect there.
     if (scene_z >= far) {
       prev_t = t;
@@ -250,7 +251,7 @@ void main() {
         float mid = 0.5 * (lo + hi);
         vec2 muv = mix(uv_start, uv_end, mid);
         float mz = DepthFromScreenLinear(mix(inv_z_start, inv_z_end, mid));
-        if (mz - texture(linear_depth, muv).r > 0.0) {
+        if (mz - LinearDepthOf(texture(linear_depth, muv)) > 0.0) {
           hi = mid;
         } else {
           lo = mid;
@@ -264,7 +265,7 @@ void main() {
       // that occluder's, not the reflected surface's. Reject it and keep
       // marching (so a valid surface further along can still be found, and
       // if none is, the pixel falls back to its image-based reflection).
-      vec3 hit_normal = OctDecode(texture(linear_depth, candidate_uv).gb);
+      vec3 hit_normal = OctDecode(LinearDepthOctNormalOf(texture(linear_depth, candidate_uv)));
       float facing_hit = -dot(reflection, hit_normal);
       if (facing_hit > 0.0) {
         hit_t = hi;

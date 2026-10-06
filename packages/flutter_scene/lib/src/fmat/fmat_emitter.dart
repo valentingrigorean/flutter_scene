@@ -449,6 +449,9 @@ void _writeDepthSurfaceMain(
   List<FmatParameter> samplers,
   DepthSurfaceKind kind,
 ) {
+  if (kind != DepthSurfaceKind.shadow) {
+    sb.writeln('#include <linear_depth.glsl>');
+  }
   switch (kind) {
     case DepthSurfaceKind.linearDepth:
       sb.writeln('uniform DepthInfo {');
@@ -493,7 +496,10 @@ void _writeDepthSurfaceMain(
       sb.writeln(
         '  float view_depth = -dot(v_viewvector, depth_info.camera_forward.xyz);',
       );
-      sb.writeln('  frag_color = vec4(view_depth, 0.0, 0.0, 1.0);');
+      sb.writeln(
+        '  frag_color = EncodeLinearDepth(view_depth, vec2(0.0), 1.0, '
+        'depth_info.camera_forward.w);',
+      );
     case DepthSurfaceKind.linearDepthNormal:
       sb.writeln(
         '  float view_depth = -dot(v_viewvector, info.camera_forward.xyz);',
@@ -505,8 +511,8 @@ void _writeDepthSurfaceMain(
       sb.writeln('      dot(n, info.camera_forward.xyz)));');
       sb.writeln('  vec2 oct = DepthSurfaceOctEncode(view_normal);');
       sb.writeln(
-        '  frag_color = vec4(view_depth, oct.x, oct.y, '
-        'clamp(material.roughness, 0.0, 1.0));',
+        '  frag_color = EncodeLinearDepth(view_depth, oct, '
+        'clamp(material.roughness, 0.0, 1.0), info.camera_right.w);',
       );
     case DepthSurfaceKind.shadow:
       sb.writeln('  frag_color = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0);');

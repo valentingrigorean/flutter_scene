@@ -6,6 +6,8 @@
 
 precision highp float;
 
+#include <linear_depth.glsl>
+
 uniform sampler2D scene_color;
 uniform sampler2D linear_depth;
 
@@ -54,7 +56,7 @@ void main() {
     float w = 1.0 / (1.0 + max(c.r, max(c.g, c.b)));
     color += c * w;
     weight += w;
-    coc = min(coc, CocAt(texture(linear_depth, v_uv + o).r));
+    coc = min(coc, CocAt(LinearDepthOf(texture(linear_depth, v_uv + o))));
   }
   frag_color = vec4(color / weight, coc);
 }

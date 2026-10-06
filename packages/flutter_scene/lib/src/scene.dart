@@ -22,6 +22,7 @@ import 'package:flutter_scene/src/render/debug_view.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart'
     show beginRetainedInstanceFrame;
+import 'package:flutter_scene/src/render/linear_depth_probe.dart';
 import 'package:flutter_scene/src/render/mip_sampling_probe.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/gpu/raster_sync.dart';
@@ -555,6 +556,7 @@ base class Scene implements SceneGraph {
             // Needs the shader library, so it runs after the load and before
             // rendering unblocks (environment radiance builds consult it).
             .then((_) => probePlatformMipSampling())
+            .then((_) => probeFloat32ColorTargets())
             .then((_) => _buildDefaultEnvironmentBetweenFrames())
             .then((_) {
               _readyToRender = true;

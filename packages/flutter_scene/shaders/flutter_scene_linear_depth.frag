@@ -3,9 +3,9 @@
 // Pairs with the engine's standard vertex shaders (UnskinnedVertex /
 // SkinnedVertex), driven with the camera view-projection. Writes planar
 // view-space depth (the distance from the camera plane along the view
-// direction, in world units) into the red channel of a floating-point
-// color target, so screen-space passes such as ambient occlusion can
-// reconstruct view-space positions from it. A transient depth attachment
+// direction, in world units) into a floating-point color target, in the
+// layout linear_depth.glsl names, so screen-space passes such as ambient
+// occlusion can reconstruct view-space positions from it. A transient depth attachment
 // backs the depth test; the other standard vertex outputs are unused.
 //
 // View-space depth is computed from the world-space view vector rather
@@ -15,10 +15,11 @@
 // Varyings only; nothing here reads the view axis.
 #define FLUTTER_SCENE_NO_VIEW_INFO
 #include <material_varyings.glsl>
+#include <linear_depth.glsl>
 
 uniform DepthInfo {
   // xyz: normalized world-space camera forward (from the eye into the
-  // scene). w: unused.
+  // scene). w: 1 for the half float layout of linear_depth.glsl, else 0.
   vec4 camera_forward;
 }
 depth_info;
@@ -28,5 +29,6 @@ void main() {
   // projecting onto the forward axis gives the planar view-space depth
   // (positive in front of the camera).
   float view_depth = -dot(v_viewvector, depth_info.camera_forward.xyz);
-  frag_color = vec4(view_depth, 0.0, 0.0, 1.0);
+  frag_color =
+      EncodeLinearDepth(view_depth, vec2(0.0), 1.0, depth_info.camera_forward.w);
 }

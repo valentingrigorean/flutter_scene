@@ -33,14 +33,16 @@ import 'package:flutter_scene/src/scene_encoder.dart'
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/instance_batching.dart';
+import 'package:flutter_scene/src/render/linear_depth_probe.dart';
 import 'package:flutter_scene/src/material/instance_attributes.dart'
     show InstanceAttributeSchema;
 import 'package:flutter_scene/src/material/vertex_attributes.dart';
 import 'package:flutter_scene/src/render/uniform_slots.dart';
 
 /// Render-graph blackboard key under which [DepthPrepass] publishes the
-/// camera linear-depth texture: planar view-space depth (world units) in
-/// the red channel, with the far value where no geometry was drawn.
+/// camera linear-depth texture: planar view-space depth (world units) in a
+/// layout of `shaders/linear_depth.glsl`, which every reader decodes through
+/// its `LinearDepthOf`, with the far value where no geometry was drawn.
 const String kLinearDepthBlackboardKey = 'linear_depth';
 
 /// Render-graph blackboard key under which [DepthPrepass] publishes its
@@ -56,11 +58,13 @@ const String kPrepassDepthStencilBlackboardKey = 'prepass_depth_stencil';
 /// later) read this to reconstruct view-space positions. The prepass also
 /// primes early-Z for the following color pass.
 ///
-/// Planar view-space depth is written into the red channel of a
-/// floating-point color target (rather than relying on a shader-readable
-/// depth-stencil texture), mirroring how the shadow pass stores depth in a
-/// color attachment. That keeps the texture sampleable identically on
-/// every backend.
+/// Planar view-space depth is written into a floating-point color target
+/// (rather than relying on a shader-readable depth-stencil texture),
+/// mirroring how the shadow pass stores depth in a color attachment. That
+/// keeps the texture sampleable identically on every backend. The target is
+/// 32-bit float, or half float in the split layout of
+/// `shaders/linear_depth.glsl` where the device renders no 32-bit float color
+/// target ([linearDepthIsSplit]).
 class DepthPrepass extends RenderGraphPass {
   DepthPrepass({
     required Camera camera,
@@ -101,9 +105,8 @@ class DepthPrepass extends RenderGraphPass {
   final int _layerMask;
   final List<Plane> _cullingPlanes;
 
-  // When set, the prepass also writes the interpolated view-space normal
-  // into the linear-depth target's green/blue/alpha channels (the depth uses
-  // only red), for screen-space reflections. This forces the full vertex
+  // When set, the prepass also writes the interpolated view-space normal and
+  // the roughness into the linear-depth target, for screen-space reflections. This forces the full vertex
   // shader (the depth-only position path carries no normal), so it is left
   // off when only ambient occlusion needs the prepass.
   final bool _writeNormals;
@@ -124,17 +127,15 @@ class DepthPrepass extends RenderGraphPass {
     final width = _dimensions.width.toInt();
     final height = _dimensions.height.toInt();
 
-    // fp32 (not fp16): the occlusion pass reconstructs view-space positions
-    // and normals from this depth, and fp16's ~11-bit mantissa quantizes it
-    // into visibly banded steps (the same reason the shadow map is fp32).
-    // Depth alone fills one channel; the normals take the other three.
+    // fp32, or two fp16 channels split across the depth (not one fp16): the
+    // occlusion pass reconstructs view-space positions and normals from this
+    // depth, and fp16's ~11-bit mantissa quantizes it into visibly banded
+    // steps (the same reason the shadow map is fp32).
     final linearDepth = context.texturePool.acquire(
       TransientTextureDescriptor.color(
         width: width,
         height: height,
-        format: _writeNormals
-            ? gpu.PixelFormat.r32g32b32a32Float
-            : gpu.PixelFormat.r32Float,
+        format: linearDepthFormat(normals: _writeNormals),
         debugName: 'linear_depth',
         // The kept and transient depth attachments below are different
         // textures, so the color target gets a ring per setup.
@@ -165,7 +166,7 @@ class DepthPrepass extends RenderGraphPass {
         texture: linearDepth,
         // Background texels (no geometry) read as the far plane, i.e. fully
         // unoccluded for any consumer.
-        clearValue: Vector4(_farDepth, 0.0, 0.0, 1.0),
+        clearValue: linearDepthClearValue(_farDepth),
       ),
       depthStencilAttachment: gpu.DepthStencilAttachment(
         texture: depth,
@@ -520,6 +521,8 @@ class _DepthPrepassEncoder {
     // rebind per draw (clearBindings drops the binding between draws). The
     // normal-writing path also needs the right/up axes to rotate the world
     // normal into view space; the depth-only path uses just forward.
+    // The w the shaders leave free carries the layout of linear_depth.glsl.
+    final split = linearDepthIsSplit ? 1.0 : 0.0;
     if (writeNormals) {
       _depthInfo = Float32List(20)
         ..[0] = _cameraForward.x
@@ -528,6 +531,7 @@ class _DepthPrepassEncoder {
         ..[4] = cameraRight.x
         ..[5] = cameraRight.y
         ..[6] = cameraRight.z
+        ..[7] = split
         ..[8] = cameraUp.x
         ..[9] = cameraUp.y
         ..[10] = cameraUp.z;
@@ -535,7 +539,8 @@ class _DepthPrepassEncoder {
       _depthInfo = Float32List(4)
         ..[0] = _cameraForward.x
         ..[1] = _cameraForward.y
-        ..[2] = _cameraForward.z;
+        ..[2] = _cameraForward.z
+        ..[3] = split;
     }
   }
 

@@ -194,6 +194,7 @@ uniform FragInfo {
 frag_info;
 
 #include <view_projection.glsl>
+#include <linear_depth.glsl>
 
 // Engine time in seconds (wrapped to keep float precision), for material
 // animation. Zero when the engine provides no time.
@@ -263,7 +264,7 @@ uniform highp sampler2D scene_depth;
 highp float GetSceneDepth(highp vec2 uv_offset) {
   if (frag_info.scene_inputs.y < 0.5) return kSceneDepthUnavailable;
   highp vec2 uv = clamp(GetScreenUv() + uv_offset, vec2(0.001), vec2(0.999));
-  return texture(scene_depth, uv).r;
+  return LinearDepthOf(texture(scene_depth, uv));
 }
 
 // The world-space point on the opaque surface behind this fragment, offset in
@@ -283,7 +284,7 @@ highp vec3 GetSceneWorldPosition(highp vec2 uv_offset) {
   }
   highp vec2 uv = clamp(GetScreenUv() + uv_offset, vec2(0.001), vec2(0.999));
   highp vec3 view =
-      ViewPositionFromUv(uv, texture(scene_depth, uv).r, ViewProjectionScale(),
+      ViewPositionFromUv(uv, LinearDepthOf(texture(scene_depth, uv)), ViewProjectionScale(),
                          frag_info.view_projection.xyz);
   return frag_info.camera_position.xyz + frag_info.camera_forward.xyz * view.z +
          frag_info.camera_right.xyz * view.x + frag_info.camera_up.xyz * view.y;

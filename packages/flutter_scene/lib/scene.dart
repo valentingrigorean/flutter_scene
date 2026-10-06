@@ -272,6 +272,8 @@ export 'src/render/frame_transients.dart'
 export 'src/render/shadow_pass.dart' show SpotShadowInfo;
 export 'src/render/draw_recorder.dart'
     show BatchBreakReason, DrawPhase, DrawSkipReason;
+export 'src/render/linear_depth_probe.dart'
+    show debugSplitLinearDepth, linearDepthIsSplit;
 export 'src/render/mip_sampling_probe.dart' show mipChainsAreSampled;
 export 'src/render/render_graph_capture.dart'
     show

@@ -13,6 +13,7 @@
 
 #include <irradiance_field.glsl>
 #include <view_projection.glsl>
+#include <linear_depth.glsl>
 
 uniform InjectInfo {
   // xy: the depth-normal buffer's size in texels. zw: its reciprocal.
@@ -92,7 +93,7 @@ void main() {
   vec2 uv = (vec2(column, row) + vec2(0.5)) * info.source_size.zw;
 
   vec4 depth_normal = textureLod(linear_depth_normal, uv, 0.0);
-  float depth = depth_normal.r;
+  float depth = LinearDepthOf(depth_normal);
   bool orthographic = info.camera_forward.w > 0.5;
   if ((!orthographic && depth <= 0.0) || depth >= info.proj.z) {
     cull();
@@ -108,7 +109,7 @@ void main() {
                         info.camera_right.xyz * view_position.x +
                         info.camera_up.xyz * view_position.y +
                         info.camera_forward.xyz * view_position.z;
-  vec3 view_normal = DecodeViewNormal(depth_normal.gb);
+  vec3 view_normal = DecodeViewNormal(LinearDepthOctNormalOf(depth_normal));
   vec3 world_normal = normalize(info.camera_right.xyz * view_normal.x +
                                 info.camera_up.xyz * view_normal.y +
                                 info.camera_forward.xyz * view_normal.z);

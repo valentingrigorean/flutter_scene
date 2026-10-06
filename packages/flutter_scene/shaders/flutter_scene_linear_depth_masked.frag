@@ -9,12 +9,13 @@
 // Varyings only; nothing here reads the view axis.
 #define FLUTTER_SCENE_NO_VIEW_INFO
 #include <material_varyings.glsl>
+#include <linear_depth.glsl>
 #include <material_inputs.glsl>
 #include <depth_mask.glsl>
 
 uniform DepthInfo {
   // xyz: normalized world-space camera forward (from the eye into the
-  // scene). w: unused.
+  // scene). w: 1 for the half float layout of linear_depth.glsl, else 0.
   vec4 camera_forward;
 }
 depth_info;
@@ -22,5 +23,6 @@ depth_info;
 void main() {
   ApplyDepthAlphaMask();
   float view_depth = -dot(v_viewvector, depth_info.camera_forward.xyz);
-  frag_color = vec4(view_depth, 0.0, 0.0, 1.0);
+  frag_color =
+      EncodeLinearDepth(view_depth, vec2(0.0), 1.0, depth_info.camera_forward.w);
 }
