@@ -242,9 +242,12 @@ uniform sampler2D scene_opaque_color;
 // vec2(0.0) for no distortion). Returns black when the snapshot is
 // unavailable.
 vec3 GetSceneColor(highp vec2 uv_offset) {
-  if (frag_info.scene_inputs.x < 0.5) return vec3(0.0);
-  highp vec2 uv = clamp(GetScreenUv() + uv_offset, vec2(0.001), vec2(0.999));
-  return texture(scene_opaque_color, uv).rgb;
+  vec3 result = vec3(0.0);
+  if (frag_info.scene_inputs.x >= 0.5) {
+    highp vec2 uv = clamp(GetScreenUv() + uv_offset, vec2(0.001), vec2(0.999));
+    result = texture(scene_opaque_color, uv).rgb;
+  }
+  return result;
 }
 #endif
 
@@ -262,9 +265,12 @@ uniform highp sampler2D scene_depth;
 // depth when unavailable, so depth-difference effects fade out instead of
 // popping.
 highp float GetSceneDepth(highp vec2 uv_offset) {
-  if (frag_info.scene_inputs.y < 0.5) return kSceneDepthUnavailable;
-  highp vec2 uv = clamp(GetScreenUv() + uv_offset, vec2(0.001), vec2(0.999));
-  return LinearDepthOf(texture(scene_depth, uv));
+  highp float result = kSceneDepthUnavailable;
+  if (frag_info.scene_inputs.y >= 0.5) {
+    highp vec2 uv = clamp(GetScreenUv() + uv_offset, vec2(0.001), vec2(0.999));
+    result = LinearDepthOf(texture(scene_depth, uv));
+  }
+  return result;
 }
 
 // The world-space point on the opaque surface behind this fragment, offset in
@@ -277,17 +283,18 @@ highp float GetSceneDepth(highp vec2 uv_offset) {
 // position instead would sit exactly on a projection volume's boundary, where
 // round-off splits a decal's inside test across its box faces.
 highp vec3 GetSceneWorldPosition(highp vec2 uv_offset) {
-  if (frag_info.scene_inputs.y < 0.5 || frag_info.scene_inputs.w <= 0.0 ||
-      frag_info.camera_forward.w <= 0.0) {
-    return v_position + v_viewvector +
-           frag_info.camera_forward.xyz * kSceneDepthUnavailable;
+  highp vec3 result = v_position + v_viewvector +
+                      frag_info.camera_forward.xyz * kSceneDepthUnavailable;
+  if (frag_info.scene_inputs.y >= 0.5 && frag_info.scene_inputs.w > 0.0 &&
+      frag_info.camera_forward.w > 0.0) {
+    highp vec2 uv = clamp(GetScreenUv() + uv_offset, vec2(0.001), vec2(0.999));
+    highp vec3 view =
+        ViewPositionFromUv(uv, LinearDepthOf(texture(scene_depth, uv)), ViewProjectionScale(),
+                           frag_info.view_projection.xyz);
+    result = frag_info.camera_position.xyz + frag_info.camera_forward.xyz * view.z +
+             frag_info.camera_right.xyz * view.x + frag_info.camera_up.xyz * view.y;
   }
-  highp vec2 uv = clamp(GetScreenUv() + uv_offset, vec2(0.001), vec2(0.999));
-  highp vec3 view =
-      ViewPositionFromUv(uv, LinearDepthOf(texture(scene_depth, uv)), ViewProjectionScale(),
-                         frag_info.view_projection.xyz);
-  return frag_info.camera_position.xyz + frag_info.camera_forward.xyz * view.z +
-         frag_info.camera_right.xyz * view.x + frag_info.camera_up.xyz * view.y;
+  return result;
 }
 #endif
 

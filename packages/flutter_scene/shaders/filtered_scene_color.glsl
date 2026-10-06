@@ -50,21 +50,24 @@ vec3 SampleTransmissionBand(highp vec2 uv, float level, highp vec2 scene_size,
 // Samples the accumulated scene color with perceptual roughness and
 // IOR-dependent blur.
 vec3 GetSceneColorFiltered(highp vec2 uv_offset, float roughness, float ior) {
-  if (frag_info.scene_inputs.x < 0.5) return vec3(0.0);
-  highp vec2 uv = clamp(GetScreenUv() + uv_offset, vec2(0.001), vec2(0.999));
-  vec3 sharp = texture(scene_opaque_color, uv).rgb;
-  float bands = frag_info.transmission_info.y;
-  if (frag_info.transmission_info.x < 0.5 || bands < 1.0) return sharp;
-  float adjusted = roughness * clamp(ior * 2.0 - 2.0, 0.0, 1.0);
-  highp vec2 scene_size = 1.0 / max(frag_info.ssao_params.zw, vec2(1e-6));
-  highp float lod = clamp(log2(max(scene_size.x, scene_size.y)) * adjusted,
-                    0.0, bands);
-  if (lod <= 0.0) return sharp;
-  highp vec2 atlas_size = 1.0 / frag_info.transmission_info.zw;
-  highp float lo = max(floor(lod), 1.0);
-  highp float hi = min(lo + 1.0, bands);
-  vec3 lo_color = SampleTransmissionBand(uv, lo, scene_size, atlas_size);
-  vec3 hi_color = SampleTransmissionBand(uv, hi, scene_size, atlas_size);
-  vec3 filtered = mix(lo_color, hi_color, fract(lod));
-  return mix(sharp, filtered, min(lod, 1.0));
+  vec3 result = vec3(0.0);
+  if (frag_info.scene_inputs.x >= 0.5) {
+    highp vec2 uv = clamp(GetScreenUv() + uv_offset, vec2(0.001), vec2(0.999));
+    result = texture(scene_opaque_color, uv).rgb;
+    float bands = frag_info.transmission_info.y;
+    float adjusted = roughness * clamp(ior * 2.0 - 2.0, 0.0, 1.0);
+    highp vec2 scene_size = 1.0 / max(frag_info.ssao_params.zw, vec2(1e-6));
+    highp float lod = clamp(log2(max(scene_size.x, scene_size.y)) * adjusted,
+                      0.0, bands);
+    if (frag_info.transmission_info.x >= 0.5 && bands >= 1.0 && lod > 0.0) {
+      highp vec2 atlas_size = 1.0 / frag_info.transmission_info.zw;
+      highp float lo = max(floor(lod), 1.0);
+      highp float hi = min(lo + 1.0, bands);
+      vec3 lo_color = SampleTransmissionBand(uv, lo, scene_size, atlas_size);
+      vec3 hi_color = SampleTransmissionBand(uv, hi, scene_size, atlas_size);
+      vec3 filtered = mix(lo_color, hi_color, fract(lod));
+      result = mix(result, filtered, min(lod, 1.0));
+    }
+  }
+  return result;
 }

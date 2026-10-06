@@ -295,7 +295,7 @@ highp vec4 FetchPunctualTexel(int light_index, int col) {
   // 8 texels per light row: 0.0625 = 0.5 / 8 centers the first column.
   highp vec2 uv = vec2((float(col) + 0.5) * 0.125,
                  (float(light_index) + 0.5) / frag_info.punctual_dims.x);
-  return texture(punctual_lights, uv);
+  return textureLod(punctual_lights, uv, 0.0);
 }
 
 // Reads the full texel of entry `j` in the light-index texture (`j` decomposed
@@ -307,7 +307,7 @@ highp vec4 FetchPunctualEntry(int j) {
   highp float fj = float(j);
   highp vec2 uv = vec2((mod(fj, width) + 0.5) / width,
                  (floor(fj / width) + 0.5) / frag_info.punctual_dims.z);
-  return texture(punctual_index, uv);
+  return textureLod(punctual_index, uv, 0.0);
 }
 
 // Reads entry `j` of the per-object light-index buffer (or a froxel record),
@@ -364,7 +364,7 @@ float SpotShadowTap(highp vec2 uv, highp float tile, highp float total,
                     highp float receiver) {
   highp vec2 atlas_uv = vec2((tile + clamp(uv.x, 0.0, 1.0)) / total,
                        1.0 - clamp(uv.y, 0.0, 1.0));
-  return receiver <= ShadowDepthOf(texture(shadow_map, atlas_uv)) ? 1.0 : 0.0;
+  return receiver <= ShadowDepthOf(textureLod(shadow_map, atlas_uv, 0.0)) ? 1.0 : 0.0;
 }
 
 // Number of ring taps around the center for the spot-shadow PCF.
@@ -422,7 +422,7 @@ float PointShadowTap(highp vec2 uv, highp float tile, highp float qx,
   highp vec2 cuv = clamp(uv, vec2(half_texel), vec2(1.0 - half_texel));
   highp vec2 tile_uv = vec2(qx, 1.0 - qy) * 0.5 + cuv * 0.5;
   highp vec2 atlas_uv = vec2((tile + tile_uv.x) / total, 1.0 - tile_uv.y);
-  return receiver <= ShadowDepthOf(texture(shadow_map, atlas_uv)) ? 1.0 : 0.0;
+  return receiver <= ShadowDepthOf(textureLod(shadow_map, atlas_uv, 0.0)) ? 1.0 : 0.0;
 }
 
 // Point-shadow visibility (1 lit .. 0 shadowed) for the shadow-casting point

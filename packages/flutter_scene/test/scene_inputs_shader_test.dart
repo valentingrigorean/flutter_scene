@@ -50,8 +50,8 @@ void main() {
     // either path.
     expect(header, contains('scene_input_info.available.x >= 0.5'));
     expect(header, contains('scene_input_info.available.y >= 0.5'));
-    expect(emitter, contains('frag_info.scene_inputs.x < 0.5'));
-    expect(emitter, contains('frag_info.scene_inputs.y < 0.5'));
+    expect(emitter, contains('frag_info.scene_inputs.x >= 0.5'));
+    expect(emitter, contains('frag_info.scene_inputs.y >= 0.5'));
 
     // Missing color reads black and missing depth reads far, matching
     // `GetSceneColor` and `GetSceneDepth` in the emitter. The `.fmat` side
@@ -59,12 +59,12 @@ void main() {
     // through the unprojection that reuses it.
     expect(header, contains('vec3 result = vec3(0.0);'));
     expect(header, contains('highp float result = 1.0e8;'));
-    expect(emitter, contains('return vec3(0.0);'));
+    expect(emitter, contains('vec3 result = vec3(0.0);'));
     expect(
       emitter,
       contains('const highp float kSceneDepthUnavailable = 1.0e8;'),
     );
-    expect(emitter, contains('return kSceneDepthUnavailable;'));
+    expect(emitter, contains('highp float result = kSceneDepthUnavailable;'));
     // An unavailable depth unprojects to that same distance, so a projection
     // volume's inside test lands outside instead of on its own boundary.
     expect(

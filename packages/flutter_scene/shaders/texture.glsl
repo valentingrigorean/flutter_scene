@@ -160,19 +160,25 @@ vec3 SamplePrefilteredRadianceLod(sampler2D radiance, vec3 direction,
 // sampler.
 vec3 SamplePrefilteredRadiance(sampler2D atlas, vec3 direction,
                                float roughness) {
+  // One return: an early return compiles to a one pass loop, inside which
+  // Direct3D samples level 0.
+  vec3 radiance;
   if (radiance_layout_info.mip_layout > 0.5) {
-    return SamplePrefilteredRadianceLod(atlas, direction, roughness);
+    radiance = SamplePrefilteredRadianceLod(atlas, direction, roughness);
+  } else {
+    highp vec2 eq = SphericalToEquirectangular(direction);
+    eq.y = clamp(eq.y, kPrefilterBandEdgeClamp,
+                 1.0 - kPrefilterBandEdgeClamp);
+    float band = clamp(roughness, 0.0, 1.0) * (kPrefilterBands - 1.0);
+    float b0 = floor(band);
+    float b1 = min(b0 + 1.0, kPrefilterBands - 1.0);
+    float t = band - b0;
+    highp float v0 = (b0 + eq.y) / kPrefilterBands;
+    highp float v1 = (b1 + eq.y) / kPrefilterBands;
+    radiance = mix(texture(atlas, vec2(eq.x, v0)).rgb,
+                   texture(atlas, vec2(eq.x, v1)).rgb, t);
   }
-  highp vec2 eq = SphericalToEquirectangular(direction);
-  eq.y = clamp(eq.y, kPrefilterBandEdgeClamp, 1.0 - kPrefilterBandEdgeClamp);
-  float band = clamp(roughness, 0.0, 1.0) * (kPrefilterBands - 1.0);
-  float b0 = floor(band);
-  float b1 = min(b0 + 1.0, kPrefilterBands - 1.0);
-  float t = band - b0;
-  highp float v0 = (b0 + eq.y) / kPrefilterBands;
-  highp float v1 = (b1 + eq.y) / kPrefilterBands;
-  return mix(texture(atlas, vec2(eq.x, v0)).rgb,
-             texture(atlas, vec2(eq.x, v1)).rgb, t);
+  return radiance;
 }
 
 #endif  // !FLUTTER_SCENE_RADIANCE_CUBE && !FLUTTER_SCENE_NO_ENGINE_RADIANCE
