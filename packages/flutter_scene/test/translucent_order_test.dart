@@ -249,7 +249,7 @@ void main() {
   });
 
   test('a sort-depth bias set after a static node first draws moves its '
-      'draw in the next frame', () async {
+      'draw in the next frame of a scene that encodes every frame', () async {
     await Scene.initializeStaticResources();
     final drawn = <String>[];
     Node box(String name, double distance) => Node(
@@ -261,7 +261,7 @@ void main() {
       localTransform: Matrix4.translationValues(0, 0, -distance),
     );
     final line = box('line', 50);
-    final scene = Scene();
+    final scene = Scene()..maxGpuFramesInFlight = 0;
     for (final node in [
       box('far', 90),
       line,
