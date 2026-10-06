@@ -251,6 +251,9 @@ void main() {
       (b) => b.resolvedName == 'FrameInfo',
     );
     expect(loadedBlock.nameFor(loadedDraw), 'FrameInfo');
-    expect(loadedBlock.resolvedValues!.map((v) => v.name), contains('camera_transform'));
+    expect(
+      loadedBlock.resolvedValues!.map((v) => v.name),
+      contains('camera_transform'),
+    );
   });
 }
