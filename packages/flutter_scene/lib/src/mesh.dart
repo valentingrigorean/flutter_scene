@@ -1,3 +1,4 @@
+import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart';
 import 'package:flutter_scene/src/geometry/morph_targets.dart';
 import 'package:flutter_scene/src/material/material.dart';
@@ -18,13 +19,20 @@ import 'package:vector_math/vector_math.dart' as vm;
 /// {@category Geometry}
 base class MeshPrimitive implements MeshDrawSource {
   /// Pairs [geometry] with the [material] used to shade it.
-  MeshPrimitive(this.geometry, this.material);
+  MeshPrimitive(this.geometry, Material material) : _material = material;
 
   /// The vertex/index data drawn by this primitive.
   Geometry geometry;
 
   /// The shader and per-material parameters used to render [geometry].
-  Material material;
+  Material get material => _material;
+  set material(Material value) {
+    if (identical(value, _material)) return;
+    _material = value;
+    markSceneDrawChanged();
+  }
+
+  Material _material;
 
   /// Whether this primitive draws in the opaque/translucent color passes.
   /// Defaults to `true`.
@@ -33,7 +41,14 @@ base class MeshPrimitive implements MeshDrawSource {
   /// node or the primitive hides it. Independent of [castsShadow]; a
   /// primitive can stay invisible while still casting a shadow.
   /// {@category Geometry}
-  bool visible = true;
+  bool get visible => _visible;
+  set visible(bool value) {
+    if (value == _visible) return;
+    _visible = value;
+    markSceneDrawChanged();
+  }
+
+  bool _visible = true;
 
   /// Whether this primitive casts shadows. Defaults to `true`.
   ///

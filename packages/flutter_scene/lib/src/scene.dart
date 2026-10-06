@@ -2348,11 +2348,18 @@ base class Scene implements SceneGraph {
   /// post-processing passes, a debug view's fallback shader and the views
   /// that render into a [RenderTexture] are not queried.
   ///
+  /// With [everyLevel], a level-of-detail node counts the draws of each of its
+  /// levels, as a view at any distance could select them, and the query
+  /// leaves the level each node selected last untouched. A view that selects
+  /// no real level, such as an orthographic one that holds the whole scene,
+  /// then still lists a level a closer camera draws.
+  ///
   /// It records and builds nothing. [warmUp] with the same [views] and
   /// [size] builds the pipelines of every draw it lists.
   List<UnbuiltPipelineDraw> unbuiltPipelines(
     List<RenderView> views, {
     required ui.Size size,
+    bool everyLevel = false,
   }) {
     _checkNotDisposed('unbuiltPipelines');
     if (!_readyToRender || views.isEmpty || size.isEmpty) return const [];
@@ -2407,6 +2414,7 @@ base class Scene implements SceneGraph {
             cameraPosition: cameraPosition,
             lodProjection: lodProjection,
             draw: color,
+            everyLevel: everyLevel,
           );
         }
         if (colorUnbuilt) {
