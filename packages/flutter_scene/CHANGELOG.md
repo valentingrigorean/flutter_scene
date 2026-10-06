@@ -1,5 +1,6 @@
 ## 0.24.1
 
+* On OpenGL ES over Direct3D (ANGLE), a lit material reads its specular anti-aliasing derivatives, its normal-map frame and its prefiltered reflection level as on Metal: no engine material function that returns early takes a derivative or an implicit-level sample, since the compiler wraps such a function in a one pass loop where Direct3D reads a zero derivative and level 0.
 * A shader library loaded again under the same asset key keeps its shader reflection, so a `ShaderMaterial` made after an app's repeat load of its bundle neither re-reads the bundle nor holds the scene's frame for it.
 * On Apple platforms, a `ShaderMaterial` whose fragment shader reads a varying its vertex shader does not write at that location and type is skipped with a message naming the varying, instead of crashing the app on Flutter 3.47. `Scene.preload` also waits for the shader reflection the check reads.
 

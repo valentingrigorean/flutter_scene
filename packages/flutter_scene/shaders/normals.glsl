@@ -38,15 +38,19 @@ mat3 CotangentFrame(vec3 normal, highp vec3 view_vector, highp vec2 uv) {
 }
 
 mat3 TangentFrame(vec3 normal, highp vec3 view_vector, highp vec2 uv) {
+  // The cotangent frame's derivatives are taken before the per-vertex branch
+  // and the function returns once, so they stay out of divergent control flow
+  // and out of the one pass loop an early return compiles to.
+  mat3 frame = CotangentFrame(normal, view_vector, uv);
   vec4 authored = GetWorldTangent();
   highp vec3 tangent = authored.xyz - normal * dot(normal, authored.xyz);
   highp float tangent_length_squared = dot(tangent, tangent);
-  if (tangent_length_squared <= 1e-10 || abs(authored.w) < 0.5) {
-    return CotangentFrame(normal, view_vector, uv);
+  if (tangent_length_squared > 1e-10 && abs(authored.w) >= 0.5) {
+    tangent *= inversesqrt(tangent_length_squared);
+    vec3 bitangent = normalize(cross(normal, tangent)) * sign(authored.w);
+    frame = mat3(tangent, bitangent, normal);
   }
-  tangent *= inversesqrt(tangent_length_squared);
-  vec3 bitangent = normalize(cross(normal, tangent)) * sign(authored.w);
-  return mat3(tangent, bitangent, normal);
+  return frame;
 }
 
 vec3 PerturbNormal(sampler2D normal_tex, vec3 normal, highp vec3 view_vector,

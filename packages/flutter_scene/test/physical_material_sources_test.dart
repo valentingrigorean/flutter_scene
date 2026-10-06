@@ -646,7 +646,7 @@ void main() {
     expect(compiled.glsl, contains('#define FLUTTER_SCENE_SCENE_COLOR'));
     expect(
       File('shaders/material_scene_inputs.glsl').readAsStringSync(),
-      contains('frag_info.scene_inputs.x < 0.5) return vec3(0.0)'),
+      contains('if (frag_info.scene_inputs.x >= 0.5) {'),
     );
     expect(compiled.glsl, contains('texture(emissive_texture'));
     expect(compiled.glsl, contains('#include <filtered_scene_color.glsl>'));
@@ -730,7 +730,7 @@ void main() {
       source,
       contains('(1.0 - 0.5 * material.sheen_roughness) * occlusion *'),
     );
-    expect(source, contains('return roughness;'));
+    expect(source, contains('float filtered = roughness;'));
     expect(source, contains('max(material.sheen_roughness, kMinRoughness)'));
     expect(pbr, contains('kMinRoughness * kMinRoughness'));
     expect(
@@ -794,7 +794,7 @@ void main() {
     expect(normals, contains('vec4 authored = GetWorldTangent();'));
     expect(
       normals,
-      contains('return CotangentFrame(normal, view_vector, uv);'),
+      contains('mat3 frame = CotangentFrame(normal, view_vector, uv);'),
     );
   });
 
