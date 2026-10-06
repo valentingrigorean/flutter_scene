@@ -1,10 +1,10 @@
 // Fragment shader for the camera depth prepass when a consumer also needs
 // per-pixel normals and roughness (screen-space reflections).
 //
-// Like LinearDepthFragment it writes planar view-space depth into the red
-// channel, but it also packs the smooth interpolated view-space normal
-// (octahedral, two components) into green/blue and the perceptual roughness
-// into alpha of the same floating-point target, at no extra attachment cost.
+// Like LinearDepthFragment it writes planar view-space depth, but it also
+// packs the smooth interpolated view-space normal (octahedral, two
+// components) and the perceptual roughness into the same floating-point
+// target, in the layout linear_depth.glsl names, at no extra attachment cost.
 // Reflections need the shaded vertex normal, not a face normal reconstructed
 // from depth, so that curved surfaces reflect smoothly rather than
 // per-triangle; the roughness lets the trace fade out on rough surfaces
@@ -20,12 +20,14 @@
 #define FLUTTER_SCENE_NO_VIEW_INFO
 #include <material_varyings.glsl>
 #include <material_inputs.glsl>
+#include <linear_depth.glsl>
 
 uniform DepthNormalInfo {
   // xyz: normalized world-space camera forward (eye into the scene).
   // w: perceptual roughness multiplier (the material's roughnessFactor).
   vec4 camera_forward;
-  // xyz: world-space camera right axis.
+  // xyz: world-space camera right axis. w: 1 for the half float layout of
+  // linear_depth.glsl, else 0.
   vec4 camera_right;
   // xyz: world-space camera up axis.
   vec4 camera_up;
@@ -41,8 +43,8 @@ info;
 // leaving roughness at the factor.
 uniform sampler2D metallic_roughness_texture;
 
-// Octahedral-encode a unit vector into two components in [-1, 1]. The prepass
-// target is float, so the encoding is stored directly; SsrFragment decodes it.
+// Octahedral-encode a unit vector into two components in [-1, 1].
+// EncodeLinearDepth stores it; readers decode it through LinearDepthOctNormalOf.
 vec2 OctEncode(vec3 n) {
   n /= (abs(n.x) + abs(n.y) + abs(n.z));
   vec2 e = n.z >= 0.0
@@ -72,5 +74,6 @@ void main() {
       0.0, 1.0);
 
   vec2 oct = OctEncode(view_normal);
-  frag_color = vec4(view_depth, oct.x, oct.y, roughness);
+  frag_color =
+      EncodeLinearDepth(view_depth, oct, roughness, info.camera_right.w);
 }

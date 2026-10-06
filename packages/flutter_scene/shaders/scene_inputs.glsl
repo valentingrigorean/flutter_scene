@@ -46,6 +46,7 @@ uniform SceneInputInfo {
 scene_input_info;
 
 #include <view_projection.glsl>
+#include <linear_depth.glsl>
 
 // This fragment's screen UV, for sampling the screen-space inputs below.
 highp vec2 GetScreenUv() { return gl_FragCoord.xy * scene_input_info.screen.zw; }
@@ -120,7 +121,7 @@ highp float GetSceneDepth(highp vec2 uv_offset) {
   highp float result = 1.0e8;
   if (scene_input_info.available.y >= 0.5) {
     highp vec2 uv = clamp(GetScreenUv() + uv_offset, vec2(0.001), vec2(0.999));
-    result = texture(scene_depth, uv).r;
+    result = LinearDepthOf(texture(scene_depth, uv));
   }
   return result;
 }

@@ -62,12 +62,13 @@ const int kMaxSteps = 64;
 const float kShadowBias = 0.0015;
 
 #include <view_projection.glsl>
+#include <linear_depth.glsl>
 
 // Reconstructs the view-space position at [uv] from the linear depth (the eye
 // at the origin looking down +forward; see PostCameraInfo).
 vec3 ViewPositionAt(vec2 uv) {
   return ViewPositionFromUv(
-      uv, texture(input_depth, uv).r, cam.projection.xy,
+      uv, LinearDepthOf(texture(input_depth, uv)), cam.projection.xy,
       vec3(cam.camera_right.w, cam.camera_up.w, cam.camera_forward.w));
 }
 

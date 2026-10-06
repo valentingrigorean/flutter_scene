@@ -10,6 +10,8 @@ uniform FragInfo {
 }
 frag_info;
 
+#include <linear_depth.glsl>
+
 uniform sampler2D base_color_texture;
 // The opaque linear (planar view-space) depth in world units, bound to a
 // white placeholder when the depth prepass did not run (the fade is
@@ -48,7 +50,7 @@ void main() {
   if (soft_inv > 0.0) {
     vec2 screen_uv = clamp(gl_FragCoord.xy * frag_info.viewport.xy,
                            vec2(0.001), vec2(0.999));
-    float scene_d = texture(scene_depth, screen_uv).r;
+    float scene_d = LinearDepthOf(texture(scene_depth, screen_uv));
     alpha *= clamp((scene_d - v_view_depth) * soft_inv, 0.0, 1.0);
   }
   // Camera near fade: dissolve sprites before the camera clips through them.

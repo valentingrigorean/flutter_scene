@@ -8,6 +8,7 @@ import 'package:vector_math/vector_math.dart';
 import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/light.dart';
 import 'package:flutter_scene/src/render/depth_prepass.dart';
+import 'package:flutter_scene/src/render/linear_depth_probe.dart';
 import 'package:flutter_scene/src/render/object_filter.dart';
 import 'package:flutter_scene/src/render/projection_params.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
@@ -253,11 +254,16 @@ class RenderPassContext {
       _context.blackboard.require<gpu.Texture>(kDisplayColorBlackboardKey);
 
   /// The linear (view-space) depth buffer: planar view-space depth (world
-  /// units) in the red channel, with the octahedral-packed view-space normal in
-  /// green/blue when [RenderInput.normals] was requested. Non-null when the pass
-  /// declared [RenderInput.depth] (or [RenderInput.normals]); also present when
-  /// ambient occlusion or reflections ran. Its format is `r32Float` when no
-  /// pass of the frame wrote normals, and `r32g32b32a32Float` when one did.
+  /// units), with the octahedral-packed view-space normal when
+  /// [RenderInput.normals] was requested, in a layout of the engine include
+  /// `linear_depth.glsl`. Decode a texel with its `LinearDepthOf`,
+  /// `LinearDepthOctNormalOf` and `LinearDepthRoughnessOf`, which read either
+  /// layout. Non-null when the pass declared [RenderInput.depth] (or
+  /// [RenderInput.normals]); also present when ambient occlusion or
+  /// reflections ran. Its format is `r32Float` when no pass of the frame wrote
+  /// normals and `r32g32b32a32Float` when one did, or `r16g16b16a16Float` in
+  /// the half float layout ([linearDepthIsSplit]) where the device renders no
+  /// 32-bit float color target.
   gpu.Texture? get sceneDepthLinear =>
       _context.blackboard.get<gpu.Texture>(kLinearDepthBlackboardKey);
 

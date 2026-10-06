@@ -1,7 +1,8 @@
 // Covers the depth prepass target: the depth-only variant writes a
 // single-channel fp32 target, the normal-writing variant keeps four
-// channels, and both carry the planar view-space depth in red. GPU-gated
-// like the other render suites.
+// channels, the half float layout takes a four-channel fp16 target, and each
+// decodes to the planar view-space depth. GPU-gated like the other render
+// suites.
 
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -30,8 +31,9 @@ bool _gpuAvailable() {
 
 const int _size = 32;
 
-// Reads the prepass target and copies it into an 8-bit texture, so depths
-// in [0, 1] world units read back exactly enough and the far clear reads 255.
+// Decodes the prepass target into an 8-bit texture through the probe shader,
+// so depths in [0, 1] world units read back exactly enough and the far clear
+// reads 255.
 class _DepthProbe extends CustomRenderPass {
   _DepthProbe(this.inputs);
 
@@ -48,7 +50,8 @@ class _DepthProbe extends CustomRenderPass {
   gpu.Texture? copy;
 
   static final gpu.Shader _vertex = baseShaderLibrary['FullscreenVertex']!;
-  static final gpu.Shader _copyFragment = baseShaderLibrary['CopyFragment']!;
+  static final gpu.Shader _decodeFragment =
+      baseShaderLibrary['LinearDepthProbeFragment']!;
 
   @override
   void execute(RenderPassContext context) {
@@ -74,7 +77,7 @@ class _DepthProbe extends CustomRenderPass {
     final renderPass = commandBuffer.createRenderPass(
       gpu.RenderTarget.singleColor(gpu.ColorAttachment(texture: target)),
     );
-    renderPass.bindPipeline(resolvePipeline(_vertex, _copyFragment));
+    renderPass.bindPipeline(resolvePipeline(_vertex, _decodeFragment));
     renderPass.setDepthWriteEnable(false);
     renderPass.setDepthCompareOperation(gpu.CompareFunction.always);
     renderPass.setColorBlendEnable(false);
@@ -84,8 +87,14 @@ class _DepthProbe extends CustomRenderPass {
       gpu.BufferView(quad, offsetInBytes: 0, lengthInBytes: 6 * 2 * 4),
       6,
     );
+    renderPass.bindUniform(
+      _decodeFragment.getUniformSlot('ProbeInfo'),
+      uniformTransients.emplace(
+        ByteData.sublistView(Float32List.fromList([0, 2, 0, 0])),
+      ),
+    );
     renderPass.bindTexture(
-      _copyFragment.getUniformSlot('source_texture'),
+      _decodeFragment.getUniformSlot('written'),
       depth,
       sampler: gpu.SamplerOptions(
         minFilter: gpu.MinMagFilter.nearest,
@@ -153,5 +162,26 @@ void main() {
     expect(result.format, gpu.PixelFormat.r32g32b32a32Float);
     expect(result.centre, closeTo(128, 2));
     expect(result.corner, 255);
+  });
+
+  group('in the half float layout', () {
+    setUp(() => debugSplitLinearDepth = true);
+    tearDown(() => debugSplitLinearDepth = false);
+
+    test('the depth-only prepass writes four fp16 channels that decode to '
+        'the depth', () async {
+      final result = await _probe(const {RenderInput.depth});
+      expect(result.format, gpu.PixelFormat.r16g16b16a16Float);
+      expect(result.centre, closeTo(128, 2));
+      expect(result.corner, 255);
+    });
+
+    test('the normal-writing prepass writes four fp16 channels that decode '
+        'to the depth', () async {
+      final result = await _probe(const {RenderInput.normals});
+      expect(result.format, gpu.PixelFormat.r16g16b16a16Float);
+      expect(result.centre, closeTo(128, 2));
+      expect(result.corner, 255);
+    });
   });
 }

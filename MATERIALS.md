@@ -140,7 +140,11 @@ cost nothing when unused:
   prepass (already produced when SSAO or reflections are on) and renders it at
   full resolution, so a depth-driven edge is not stair-stepped by a
   reduced-resolution occlusion chain. Use it for depth-fade absorption,
-  shoreline foam, and soft-particle edges.
+  shoreline foam, and soft-particle edges. Read it through `GetSceneDepth` and
+  `GetSceneWorldPosition`, or decode a texel with `LinearDepthOf` of
+  `linear_depth.glsl`: where the device renders no 32-bit float color target
+  the depth spans two half float channels, so a texel's red channel alone is
+  not the depth.
 - `planar_reflection` binds the mirrored scene capture a
   `PlanarReflectorComponent` renders for the surface each frame, plus the
   capture's view-projection for projective sampling. Use it for mirrors and

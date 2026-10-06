@@ -11,6 +11,8 @@
 // view-space direction toward the light, w the march distance in world units,
 // 0 disables). Include ssao_geometry.glsl first.
 
+#include <linear_depth.glsl>
+
 float MarchContactShadow(vec3 origin, float noise) {
   vec3 to_light = AO_INFO.contact.xyz;
   float max_distance = AO_INFO.contact.w;
@@ -33,7 +35,7 @@ float MarchContactShadow(vec3 origin, float noise) {
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
       break;
     }
-    float scene_z = texture(linear_depth, uv).r;
+    float scene_z = LinearDepthOf(texture(linear_depth, uv));
     float delta = p.z - scene_z;
     if (delta > bias && delta < thickness) {
       // Taper by march distance so contact shadows fade out instead of

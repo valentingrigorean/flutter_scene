@@ -30,6 +30,7 @@ const float kEpsilon = 0.0001;
 
 #include <interleaved_gradient_noise.glsl>
 #include <octahedral.glsl>
+#include <linear_depth.glsl>
 
 float GaussianWeight(int offset) {
   int i = abs(offset);
@@ -41,7 +42,7 @@ float GaussianWeight(int offset) {
 }
 
 void main() {
-  float center_depth = texture(linear_depth, v_uv).r;
+  float center_depth = LinearDepthOf(texture(linear_depth, v_uv));
   float depth_scale = max(blur.texel.z, kEpsilon);
   vec2 gradient = vec2(dFdx(center_depth), dFdy(center_depth));
 
@@ -50,7 +51,7 @@ void main() {
   for (int i = -BLUR_RADIUS; i <= BLUR_RADIUS; i++) {
     vec2 pixel_offset = blur.axis.xy * float(i);
     vec2 uv = v_uv + pixel_offset * blur.texel.xy;
-    float depth = texture(linear_depth, uv).r;
+    float depth = LinearDepthOf(texture(linear_depth, uv));
     float slope = clamp(dot(gradient, pixel_offset), -depth_scale, depth_scale);
     float delta = abs(depth - (center_depth + slope));
     float weight = GaussianWeight(i) * exp(-delta / depth_scale);

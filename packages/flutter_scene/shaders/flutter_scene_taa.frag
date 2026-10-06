@@ -15,6 +15,7 @@ uniform TaaInfo {
 } info;
 
 #include <view_projection.glsl>
+#include <linear_depth.glsl>
 
 // Whether planar depth [d] is a surface inside the view volume. Orthographic
 // volumes can start behind the eye, so the lower bound is the near plane.
@@ -99,7 +100,7 @@ void main() {
   for (int dy = -1; dy <= 1; dy++) {
     for (int dx = -1; dx <= 1; dx++) {
       vec2 tap_uv = uv + vec2(float(dx), float(dy)) * texel_size;
-      float d = textureLod(current_depth, tap_uv, 0.0).r;
+      float d = LinearDepthOf(textureLod(current_depth, tap_uv, 0.0));
       if (IsSurfaceDepth(d) && d < closest_depth) {
         closest_depth = d;
         closest_uv = tap_uv;
@@ -112,7 +113,7 @@ void main() {
   vec2 object_delta = (obj_vel.b > 0.5 && info.taa_settings.w > 0.5) ? obj_vel.rg : vec2(0.0);
 
   // 3. Compute camera velocity at closest depth.
-  float depth = closest_depth < 1e7 ? closest_depth : textureLod(current_depth, uv, 0.0).r;
+  float depth = closest_depth < 1e7 ? closest_depth : LinearDepthOf(textureLod(current_depth, uv, 0.0));
   vec2 screen_ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
   vec2 unjittered_ndc = screen_ndc - info.jitter_params.xy;
 
@@ -156,7 +157,7 @@ void main() {
     if (history_uv.x < 0.0 || history_uv.x > 1.0 || history_uv.y < 0.0 || history_uv.y > 1.0) {
       history_valid = false;
     } else if (IsSurfaceDepth(depth)) {
-      float prev_depth = textureLod(previous_depth, history_uv, 0.0).r;
+      float prev_depth = LinearDepthOf(textureLod(previous_depth, history_uv, 0.0));
       // Planar depth in the previous frame: clip w under perspective, the
       // depth range mapping under an orthographic camera.
       float expected_depth = info.projection_offset.z > 0.5

@@ -6,13 +6,14 @@
 // offset and orthographic flag (see view_projection.glsl).
 
 #include <view_projection.glsl>
+#include <linear_depth.glsl>
 
 // Fetches the view-space depth at [uv] from level [level] of the depth chain.
 float DepthAtLevel(vec2 uv, int level) {
-  if (level <= 0) return texture(linear_depth, uv).r;
-  if (level == 1) return texture(depth_mip1, uv).r;
-  if (level == 2) return texture(depth_mip2, uv).r;
-  return texture(depth_mip3, uv).r;
+  if (level <= 0) return LinearDepthOf(texture(linear_depth, uv));
+  if (level == 1) return LinearDepthOf(texture(depth_mip1, uv));
+  if (level == 2) return LinearDepthOf(texture(depth_mip2, uv));
+  return LinearDepthOf(texture(depth_mip3, uv));
 }
 
 // Reconstructs a view-space position from a depth-buffer UV. Camera space
@@ -27,7 +28,7 @@ vec3 ViewPositionAt(vec2 uv, int level) {
 vec3 ViewPositionBase(ivec2 coord) {
   ivec2 size = textureSize(linear_depth, 0);
   coord = clamp(coord, ivec2(0), size - ivec2(1));
-  float z = texelFetch(linear_depth, coord, 0).r;
+  float z = LinearDepthOf(texelFetch(linear_depth, coord, 0));
   vec2 uv = (vec2(coord) + vec2(0.5)) / vec2(size);
   return ViewPositionFromUv(uv, z, AO_INFO.proj.xy, AO_INFO.proj_offset.xyz);
 }

@@ -7,13 +7,15 @@
 #define FLUTTER_SCENE_NO_VIEW_INFO
 #include <material_varyings.glsl>
 #include <material_inputs.glsl>
+#include <linear_depth.glsl>
 #include <depth_mask.glsl>
 
 uniform DepthNormalInfo {
   // xyz: normalized world-space camera forward (eye into the scene).
   // w: perceptual roughness multiplier (the material's roughnessFactor).
   vec4 camera_forward;
-  // xyz: world-space camera right axis.
+  // xyz: world-space camera right axis. w: 1 for the half float layout of
+  // linear_depth.glsl, else 0.
   vec4 camera_right;
   // xyz: world-space camera up axis.
   vec4 camera_up;
@@ -55,5 +57,6 @@ void main() {
       0.0, 1.0);
 
   vec2 oct = OctEncode(view_normal);
-  frag_color = vec4(view_depth, oct.x, oct.y, roughness);
+  frag_color =
+      EncodeLinearDepth(view_depth, oct, roughness, info.camera_right.w);
 }

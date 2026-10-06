@@ -7,6 +7,7 @@ import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 
 import 'package:flutter_scene/src/ambient_occlusion.dart';
 import 'package:flutter_scene/src/render/depth_prepass.dart';
+import 'package:flutter_scene/src/render/linear_depth_probe.dart';
 import 'package:flutter_scene/src/render/projection_params.dart';
 import 'package:flutter_scene/src/render/scene_pass.dart'
     show kSceneColorBlackboardKey;
@@ -158,9 +159,6 @@ class SsaoPass extends RenderGraphPass {
   static final gpu.Shader _downsampleShader =
       baseShaderLibrary['DepthDownsampleFragment']!;
 
-  // The depth mip chain matches the fp32 linear-depth prepass format.
-  static const gpu.PixelFormat _depthFormat = gpu.PixelFormat.r32g32b32a32Float;
-
   @override
   String get name => 'SsaoPass';
 
@@ -176,7 +174,9 @@ class SsaoPass extends RenderGraphPass {
       TransientTextureDescriptor.color(
         width: width,
         height: height,
-        format: _depthFormat,
+        // Each level copies whole texels of the prepass target, so it keeps
+        // the prepass layout and takes its four-channel format.
+        format: linearDepthFormat(normals: true),
         debugName: 'depth_mip',
       ),
     );
