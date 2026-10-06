@@ -1,6 +1,7 @@
 ## 0.24.1
 
 * On Apple platforms, a `ShaderMaterial` whose fragment shader reads a varying its vertex shader does not write at that location and type is skipped with a message naming the varying, instead of crashing the app on Flutter 3.47. `Scene.preload` also waits for the shader reflection the check reads.
+* A widget test that renders a scene no longer ends with "A Timer is still pending": the raster-thread rendezvous gives up on a root-zone timer, so the test's fake clock owns no timer of it.
 
 ## 0.24.0
 
