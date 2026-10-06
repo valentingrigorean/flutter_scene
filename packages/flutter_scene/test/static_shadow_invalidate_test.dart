@@ -1,6 +1,7 @@
 // Covers DirectionalLight.invalidateStaticShadows on a drawn scene: the
-// static shadow tiles re-render into the textures they hold, while a caster
-// channel change rebuilds the cache with new ones.
+// static shadow tiles re-render into the textures they hold, as they do on a
+// caster channel change, while a resolution change rebuilds them with new
+// ones.
 // GPU-gated; rendering a frame needs a device.
 
 import 'dart:ui' as ui;
@@ -48,6 +49,7 @@ void main() {
     await tester.runAsync(Scene.initializeStaticResources);
     final light = DirectionalLight(castsShadow: true);
     final scene = Scene()
+      ..maxGpuFramesInFlight = 0
       ..directionalLight = light
       ..add(
         Node(mesh: Mesh(CuboidGeometry(Vector3.all(1)), UnlitMaterial()))
@@ -64,6 +66,10 @@ void main() {
     expect(scene.debugStaticShadowTiles, orderedEquals(tiles));
 
     light.shadowCasterChannelMask ^= 0x100;
+    _render(scene);
+    expect(scene.debugStaticShadowTiles, orderedEquals(tiles));
+
+    light.shadowMapResolution *= 2;
     _render(scene);
     final rebuilt = scene.debugStaticShadowTiles;
     expect(rebuilt, hasLength(tiles.length));

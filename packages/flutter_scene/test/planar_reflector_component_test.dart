@@ -259,10 +259,11 @@ void main() {
     },
   );
 
-  test('frames reach mirror materials and clear when capture stops', () async {
+  test('frames reach mirror materials and clear when capture stops in a '
+      'scene that encodes every frame', () async {
     await Scene.initializeStaticResources();
     final material = _MirrorProbeMaterial();
-    final scene = Scene();
+    final scene = Scene()..maxGpuFramesInFlight = 0;
     final node = mirrorNode(material: material);
     scene.add(node);
 
