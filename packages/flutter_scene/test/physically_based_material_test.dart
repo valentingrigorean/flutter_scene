@@ -137,6 +137,28 @@ void main() {
     expect(material.variantKey & bit, 0);
   });
 
+  test('a material draws through the standard shaders until a physical '
+      'feature or a lightmap picks another variant', () {
+    final material = PhysicallyBasedMaterial()
+      ..ior = 2.0
+      ..specular = 0.5;
+    expect(material.drawsWithStandardShaders, isTrue);
+
+    material.clearcoat = 1.0;
+    expect(material.drawsWithStandardShaders, isFalse);
+    material.clearcoat = 0.0;
+    expect(material.drawsWithStandardShaders, isTrue);
+
+    material.specularTexture = _FakeTextureSource();
+    expect(material.drawsWithStandardShaders, isFalse);
+    material.specularTexture = null;
+
+    material.lightmapTexture = _FakeTextureSource();
+    expect(material.drawsWithStandardShaders, isFalse);
+    material.lightmapTexture = null;
+    expect(material.drawsWithStandardShaders, isTrue);
+  });
+
   test('the lightmap uniform carries the transform, intensity, and rgbm', () {
     final info = Float32List(12);
     EngineLightingUniforms.packLightmapInfo(

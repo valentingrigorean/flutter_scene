@@ -1082,6 +1082,13 @@ class PhysicallyBasedMaterial extends Material {
 
   bool get _usesPhysicalVariant => (_variantKey & 0x7f) != 0;
 
+  /// Whether the material draws through the standard fragment shaders of the
+  /// base shader library: it has no physical extension feature and no baked
+  /// lightmap. A variant of those shaders that adds its own inputs can replace
+  /// them for such a material alone.
+  bool get drawsWithStandardShaders =>
+      (_variantKey & (0x7f | _lightmapFeature)) == 0;
+
   // Starts the physical bundle loading as soon as a feature needs it, usually
   // during setup, so it is in before the first frame.
   void _requestPhysicalAssetsIfNeeded() {
