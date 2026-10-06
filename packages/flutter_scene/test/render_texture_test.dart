@@ -284,5 +284,32 @@ void main() {
       renderFrame(scene, 32);
       expect(scene.pacedFrameCount, 1);
     });
+
+    testWidgets('a frame held for the physical shaders with only a texture '
+        'view counts no paced frame', (tester) async {
+      await tester.runAsync(Scene.initializeStaticResources);
+      resetPhysicalMaterialResourcesForTesting();
+      addTearDown(resetPhysicalMaterialResourcesForTesting);
+      final material = PhysicallyBasedMaterial()..clearcoat = 1;
+      final scene = Scene()
+        ..add(Node(mesh: Mesh(CuboidGeometry(Vector3.all(1)), material)));
+      addTearDown(scene.dispose);
+      expect(physicalMaterialResourcesPending, isTrue);
+
+      final recorder = ui.PictureRecorder();
+      scene.renderViews(
+        [
+          RenderView(
+            camera: PerspectiveCamera(position: Vector3(0, 0, 5)),
+            target: RenderTexture(width: 16, height: 16),
+          ),
+        ],
+        ui.Canvas(recorder),
+        region: const ui.Rect.fromLTWH(0, 0, 32, 32),
+        pixelRatio: 1.0,
+      );
+      recorder.endRecording();
+      expect(scene.pacedFrameCount, 0);
+    });
   });
 }
