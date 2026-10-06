@@ -48,10 +48,14 @@ bool get shadowMapIsSplit =>
 /// spans hundreds of world units, and a half float's 11 significant bits
 /// quantize window-space depth into steps coarser than the shadow depth bias,
 /// which made the flat distant ground self-shadow in moire bands. The half
-/// float layout keeps about 20 bits.
+/// float layout keeps about 23 bits.
 gpu.PixelFormat get shadowMapFormat => shadowMapIsSplit
     ? gpu.PixelFormat.r16g16b16a16Float
     : gpu.PixelFormat.r32Float;
+
+/// The clear of a shadow map and its cached static tiles: depth 1 in either
+/// layout of `shaders/shadow_depth.glsl`, so a texel no caster covers is lit.
+Vector4 get _shadowMapClearValue => Vector4(1.0, 0.0, 1.0, -1.0);
 
 /// Blackboard key for the frame's [SpotShadowInfo], set when spots cast.
 const String kSpotShadowInfoBlackboardKey = 'spot_shadow_info';
@@ -265,11 +269,7 @@ class ShadowPass extends RenderGraphPass {
       ),
     );
     final target = gpu.RenderTarget.singleColor(
-      gpu.ColorAttachment(
-        texture: color,
-        // White = depth 1.0 in .r => fragments no caster covers are lit.
-        clearValue: Vector4(1.0, 1.0, 1.0, 1.0),
-      ),
+      gpu.ColorAttachment(texture: color, clearValue: _shadowMapClearValue),
       depthStencilAttachment: gpu.DepthStencilAttachment(
         texture: depth,
         depthClearValue: 1.0,
@@ -461,7 +461,7 @@ class ShadowPass extends RenderGraphPass {
       final target = gpu.RenderTarget.singleColor(
         gpu.ColorAttachment(
           texture: entry.tile!,
-          clearValue: Vector4(1.0, 1.0, 1.0, 1.0),
+          clearValue: _shadowMapClearValue,
         ),
         depthStencilAttachment: gpu.DepthStencilAttachment(
           texture: depth,
