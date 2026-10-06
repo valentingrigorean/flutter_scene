@@ -87,6 +87,9 @@ void main() {
     var presses = 0;
     await tester.pumpWidget(
       MaterialApp(
+        // The tester's shader bundle carries no Metal stage for the sparkle
+        // shader, so the button splashes with the shaderless ripple.
+        theme: ThemeData(splashFactory: InkRipple.splashFactory),
         home: WidgetTexture(
           controller: controller,
           width: 200,
