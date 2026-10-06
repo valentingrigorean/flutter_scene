@@ -7,6 +7,7 @@ import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/components/component.dart';
 import 'package:flutter_scene/src/components/instanced_mesh_component.dart';
 import 'package:flutter_scene/src/components/mesh_component.dart';
+import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/geometry/mesh_data.dart';
 import 'package:flutter_scene/src/geometry/morph_targets.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
@@ -109,7 +110,14 @@ base class Node implements SceneGraph {
   String name;
 
   /// Whether this node is visible in the scene. If false, the node and its children will not be rendered.
-  bool visible = true;
+  bool get visible => _visible;
+  set visible(bool value) {
+    if (value == _visible) return;
+    _visible = value;
+    markSceneDrawChanged();
+  }
+
+  bool _visible = true;
 
   /// A highlight/outline color (linear RGBA) for this node, or null for none.
   ///
@@ -138,7 +146,14 @@ base class Node implements SceneGraph {
   /// (`layers & layerMask != 0`). Defaults to [kRenderLayerDefault]
   /// (layer 0). Each node carries its own layers; the value is not
   /// inherited by children.
-  int layers = kRenderLayerDefault;
+  int get layers => _layers;
+  set layers(int value) {
+    if (value == _layers) return;
+    _layers = value;
+    markSceneDrawChanged();
+  }
+
+  int _layers = kRenderLayerDefault;
 
   /// Where this node's meshes draw within their pass, lowest first. Draws
   /// sort by it before anything else: opaque ones before their state and

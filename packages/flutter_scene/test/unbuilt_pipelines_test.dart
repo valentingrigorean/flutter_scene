@@ -93,6 +93,46 @@ List<(String, ScenePipelinePass)> _unbuilt(
     (draw.node.name, draw.pass),
 ];
 
+List<(String, ScenePipelinePass)> _unbuiltEveryLevel(
+  Scene scene,
+  List<RenderView> views,
+  ui.Size size,
+) => [
+  for (final draw in scene.unbuiltPipelines(
+    views,
+    size: size,
+    everyLevel: true,
+  ))
+    (draw.node.name, draw.pass),
+];
+
+List<RenderView> _wholeScene() => [
+  RenderView(
+    camera: OrthographicCamera(
+      projection: OrthographicProjection.bounds(
+        left: -1e6,
+        right: 1e6,
+        bottom: -1e6,
+        top: 1e6,
+        near: -1e6,
+        far: 1e6,
+      ),
+      position: Vector3.zero(),
+      target: Vector3(0, 0, 1),
+    ),
+  ),
+];
+
+List<RenderView> _viewFrom(double distance) => [
+  RenderView(
+    camera: PerspectiveCamera(
+      position: Vector3(0, 0, distance),
+      target: Vector3.zero(),
+      fovRadiansY: math.pi / 4,
+    ),
+  ),
+];
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   if (!_gpuAvailable()) {
@@ -143,6 +183,39 @@ void main() {
       );
     },
   );
+
+  test('a node hidden at a query is not listed, and showing it in place, '
+      'showing a primitive, moving its layers or swapping a material moves '
+      'sceneDrawRevision while a set to the same value does not', () async {
+    final scene = await _scene();
+    final box = _box('box')..visible = false;
+    scene.add(box);
+    final views = [RenderView(camera: _camera())];
+    expect(_unbuilt(scene, views, _square), isEmpty);
+
+    var at = sceneDrawRevision;
+    box.visible = false;
+    expect(sceneDrawRevision, at);
+    box.visible = true;
+    expect(sceneDrawRevision, greaterThan(at));
+    expect(_unbuilt(scene, views, _square), [('box', ScenePipelinePass.color)]);
+
+    final primitive = box.mesh!.primitives.single;
+    at = sceneDrawRevision;
+    primitive
+      ..visible = true
+      ..material = primitive.material;
+    box.layers = box.layers;
+    expect(sceneDrawRevision, at);
+    primitive.visible = false;
+    expect(sceneDrawRevision, greaterThan(at));
+    at = sceneDrawRevision;
+    primitive.material = UnlitMaterial();
+    expect(sceneDrawRevision, greaterThan(at));
+    at = sceneDrawRevision;
+    box.layers = 2;
+    expect(sceneDrawRevision, greaterThan(at));
+  });
 
   test('a culled instanced draw is listed once an instance comes into '
       'view', () async {
@@ -256,6 +329,42 @@ void main() {
     expect(_unbuilt(scene, views, _square), [
       ('ground', ScenePipelinePass.shadow),
     ]);
+  });
+
+  test('a level a closer camera selects is listed through a view of the '
+      'whole scene with every level, and that query keeps the level the '
+      'node selected last', () async {
+    final scene = await _scene();
+    scene.add(
+      Node(name: 'lod')..addComponent(
+        LodComponent([
+          LodLevel(
+            geometry: CuboidGeometry(Vector3.all(1)),
+            material: UnlitMaterial(),
+            screenSize: 0.5,
+          ),
+          LodLevel(
+            geometry: CuboidGeometry(Vector3.all(1)),
+            material: PhysicallyBasedMaterial(),
+            screenSize: 0,
+          ),
+        ]),
+      ),
+    );
+    final whole = _wholeScene();
+    await scene.warmUp(whole, size: _square);
+    expect(_unbuilt(scene, whole, _square), isEmpty);
+    expect(_unbuiltEveryLevel(scene, whole, _square), [
+      ('lod', ScenePipelinePass.color),
+    ]);
+
+    final near = _viewFrom(3);
+    final edge = _viewFrom(4.45);
+    expect(_unbuilt(scene, near, _square), [('lod', ScenePipelinePass.color)]);
+    _unbuiltEveryLevel(scene, whole, _square);
+    expect(_unbuilt(scene, edge, _square), [('lod', ScenePipelinePass.color)]);
+    _unbuilt(scene, whole, _square);
+    expect(_unbuilt(scene, edge, _square), isEmpty);
   });
 
   test('a node at the side of a wide view is listed, and only a '

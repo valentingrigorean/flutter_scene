@@ -760,6 +760,10 @@ bool colorPipelinesBuilt(RenderItem item, Lighting lighting) {
 /// [lodProjection] from [cameraPosition] (the highest level without one);
 /// else the item's own geometry and material.
 ///
+/// With [everyLevel], a level-of-detail item yields each of its levels, at a
+/// cross-fade coverage where its levels blend, as a view at any distance could
+/// select them, and its selection memory stays untouched.
+///
 /// It selects as [SceneEncoder.submit] does, for `Scene.unbuiltPipelines`.
 void selectColorDraws(
   RenderItem item, {
@@ -770,6 +774,7 @@ void selectColorDraws(
   required ProjectionParams? lodProjection,
   required void Function(Geometry geometry, Material material, double fade)
   draw,
+  bool everyLevel = false,
 }) {
   if (!item.drawsColor) return;
   if ((item.layers & layerMask) == 0) return;
@@ -777,6 +782,13 @@ void selectColorDraws(
   final lod = item.lod;
   if (lod == null) {
     draw(item.geometry, item.material, 1.0);
+    return;
+  }
+  if (everyLevel) {
+    final fade = lod.blendRange > 0 ? 0.5 : 1.0;
+    for (final level in lod.levels) {
+      draw(level.geometry, level.material, fade);
+    }
     return;
   }
   for (final selection in resolveLodLevels(
