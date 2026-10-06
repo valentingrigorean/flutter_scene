@@ -98,7 +98,7 @@ jobs:
         run: flutter config --enable-native-assets --enable-dart-data-assets
       - name: Run tests
         working-directory: ${{ matrix.package }}
-        run: flutter test --enable-impeller
+        run: flutter test --enable-impeller --enable-flutter-gpu
 
   # flutter_scene's Dart code ships to the web too, where an int is a double
   # (exact only to 53 bits) and bitwise results are unsigned. Test files that
