@@ -706,15 +706,18 @@ base class Scene implements SceneGraph {
   SharedShadowAtlas? _sharedShadowAtlas;
   RenderView? _sharedShadowAnchor;
 
-  /// Frames a screen view has presented from its previous image because the
-  /// GPU was [maxGpuFramesInFlight] frames behind. A diagnostic counter.
+  /// Frames a screen view has presented from its previous image, or left
+  /// empty before it drew one, instead of a new frame: the GPU was
+  /// [maxGpuFramesInFlight] frames behind, or a material waited on the
+  /// physical shaders. A paint that grows it shows no new frame.
   /// {@category Rendering}
   int get pacedFrameCount => _pacedFrameCount;
   int _pacedFrameCount = 0;
 
   /// Notifies when the scene wants painting again outside any repaint the
   /// app drives: a screen view held its previous image because the GPU was
-  /// [maxGpuFramesInFlight] frames behind, and that work has now finished.
+  /// [maxGpuFramesInFlight] frames behind or a material waited on the
+  /// physical shaders, and that work or load has now finished.
   /// [SceneView] listens. A custom painter that repaints only on demand
   /// should pass this as its `repaint`, or the held frame never shows.
   /// {@category Rendering}
@@ -3296,6 +3299,7 @@ base class Scene implements SceneGraph {
       for (final view in views)
         if (view.target == null) view,
     ]..sort((a, b) => a.order.compareTo(b.order));
+    _pacedFrameCount += screenViews.length;
     for (var i = 0; i < screenViews.length; i++) {
       final view = screenViews[i];
       final previous = surface.lastSwapchainColorTexture(i);

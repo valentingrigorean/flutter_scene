@@ -8,6 +8,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart' show SizedBox;
 import 'package:flutter_scene/scene.dart';
+import 'package:flutter_scene/src/material/physical_material_variant.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
@@ -263,6 +264,52 @@ void main() {
       renderFrame(scene, 48);
       expect(scene.pacedFrameCount, 1);
       expect(rendered, 2);
+    });
+
+    testWidgets('a frame held while a material awaits the physical shaders '
+        'counts as a paced frame', (tester) async {
+      await tester.runAsync(Scene.initializeStaticResources);
+      resetPhysicalMaterialResourcesForTesting();
+      addTearDown(resetPhysicalMaterialResourcesForTesting);
+      final material = PhysicallyBasedMaterial();
+      final scene = Scene()
+        ..add(Node(mesh: Mesh(CuboidGeometry(Vector3.all(1)), material)));
+      addTearDown(scene.dispose);
+
+      renderFrame(scene, 32);
+      expect(scene.pacedFrameCount, 0);
+
+      material.clearcoat = 1;
+      expect(physicalMaterialResourcesPending, isTrue);
+      renderFrame(scene, 32);
+      expect(scene.pacedFrameCount, 1);
+    });
+
+    testWidgets('a frame held for the physical shaders with only a texture '
+        'view counts no paced frame', (tester) async {
+      await tester.runAsync(Scene.initializeStaticResources);
+      resetPhysicalMaterialResourcesForTesting();
+      addTearDown(resetPhysicalMaterialResourcesForTesting);
+      final material = PhysicallyBasedMaterial()..clearcoat = 1;
+      final scene = Scene()
+        ..add(Node(mesh: Mesh(CuboidGeometry(Vector3.all(1)), material)));
+      addTearDown(scene.dispose);
+      expect(physicalMaterialResourcesPending, isTrue);
+
+      final recorder = ui.PictureRecorder();
+      scene.renderViews(
+        [
+          RenderView(
+            camera: PerspectiveCamera(position: Vector3(0, 0, 5)),
+            target: RenderTexture(width: 16, height: 16),
+          ),
+        ],
+        ui.Canvas(recorder),
+        region: const ui.Rect.fromLTWH(0, 0, 32, 32),
+        pixelRatio: 1.0,
+      );
+      recorder.endRecording();
+      expect(scene.pacedFrameCount, 0);
     });
   });
 }
