@@ -2,9 +2,9 @@ name: Flutter CI
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "master", "graticule-upstream-rebase" ]
   pull_request:
-    branches: [ "master" ]
+    branches: [ "master", "graticule-upstream-rebase" ]
   # Manual runs can pick a Flutter channel. Dispatching on the stable branch
   # defaults to the stable channel, so it runs the whole suite against the
   # latest Flutter stable without needing any input.
