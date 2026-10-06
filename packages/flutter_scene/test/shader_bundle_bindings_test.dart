@@ -116,4 +116,46 @@ uniform sampler2D variant_texture;
       temp.deleteSync(recursive: true);
     }
   });
+
+  test('a variant that predefines the base colour of the standard shader '
+      'compiles and binds the block its colour reads', () async {
+    final impellerc = await findImpellerC();
+    final temp = Directory.systemTemp.createTempSync('bundle_bindings');
+    try {
+      final variant = File.fromUri(temp.uri.resolve('variant.frag'))
+        ..writeAsStringSync('''
+uniform VariantInfo {
+  vec4 symbol;
+}
+variant_info;
+
+vec3 VariantAlbedo(vec3 internal, vec3 vertex, vec4 symbol) {
+  float brightness = max(internal.r, max(internal.g, internal.b));
+  return brightness * vertex * symbol.rgb;
+}
+
+#define FLUTTER_SCENE_BASE_COLOR(base_srgb, vertex_color, factor) \\
+  vec4(VariantAlbedo(SRGBToLinear((base_srgb).rgb) * (factor).rgb, \\
+                     (vertex_color).rgb, variant_info.symbol), \\
+       (base_srgb).a * (factor).a)
+#include <flutter_scene_standard.frag>
+''');
+      final reflection = await _reflect(
+        impellerc,
+        temp,
+        'variant',
+        variant.path,
+        'frag',
+      );
+      final blocks = {
+        for (final block
+            in (reflection['buffers'] as List<Object?>? ?? const [])
+                .cast<Map<String, Object?>>())
+          block['name'],
+      };
+      expect(blocks, contains('VariantInfo'));
+    } finally {
+      temp.deleteSync(recursive: true);
+    }
+  });
 }
