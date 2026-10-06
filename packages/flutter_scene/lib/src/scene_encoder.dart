@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart'
     show debugPrint, internal, kDebugMode, visibleForTesting;
+import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:vector_math/vector_math.dart';
 
@@ -876,6 +877,7 @@ void evictPipelinesForShaders(Set<gpu.Shader> shaders) {
     (key) => shaders.contains(key.$1) || shaders.contains(key.$2),
   );
   _pipelineIndex.clear();
+  markSceneDrawChanged();
   _pipelineCache.forEach((key, pipeline) {
     final byFragment = _pipelineIndex[key.$1] ??= HashMap.identity();
     (byFragment[key.$2] ??= {})[key.$3] = pipeline;
@@ -1013,6 +1015,7 @@ void _recordFailedDraw(
     _pipelineCache.remove(entry.key);
     _pipelineIndex[entry.key.$1]?[entry.key.$2]?.remove(entry.key.$3);
     _rejectedPipelines.add(entry.key);
+    markSceneDrawChanged();
     break;
   }
   debugPrint(

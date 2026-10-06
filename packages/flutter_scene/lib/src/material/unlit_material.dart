@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart';
 import 'package:flutter_scene/src/material/engine_lighting.dart';
@@ -61,7 +62,14 @@ class UnlitMaterial extends Material {
   // TODO(materials): support AlphaMode.mask for unlit (needs a cutoff
   // uniform and a discard in the unlit fragment shader); it currently
   // behaves like blend.
-  AlphaMode alphaMode = AlphaMode.opaque;
+  AlphaMode get alphaMode => _alphaMode;
+  set alphaMode(AlphaMode value) {
+    if (value == _alphaMode) return;
+    _alphaMode = value;
+    markSceneDrawChanged();
+  }
+
+  AlphaMode _alphaMode = AlphaMode.opaque;
 
   @override
   bool isOpaque() => alphaMode == AlphaMode.opaque;

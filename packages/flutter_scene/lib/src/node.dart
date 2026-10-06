@@ -178,7 +178,14 @@ base class Node implements SceneGraph {
   /// value, so a node can be lit without casting into that light's shadow map
   /// and the other way around.
   /// {@category Scene graph}
-  int lightChannelMask = 0xFF;
+  int get lightChannelMask => _lightChannelMask;
+  set lightChannelMask(int value) {
+    if (value == _lightChannelMask) return;
+    _lightChannelMask = value;
+    markSceneDrawChanged();
+  }
+
+  int _lightChannelMask = 0xFF;
 
   /// A surface debug view for this subtree, overriding the scene's
   /// `Scene.debug.view`. Null (the default) inherits from the nearest
@@ -244,7 +251,14 @@ base class Node implements SceneGraph {
   /// receive shadows. Ands with each `MeshPrimitive.castsShadow`, and is not
   /// inherited by children; set it on each mesh-bearing node.
   /// {@category Scene graph}
-  ShadowCastingMode shadowCastingMode = ShadowCastingMode.on;
+  ShadowCastingMode get shadowCastingMode => _shadowCastingMode;
+  set shadowCastingMode(ShadowCastingMode value) {
+    if (value == _shadowCastingMode) return;
+    _shadowCastingMode = value;
+    markSceneDrawChanged();
+  }
+
+  ShadowCastingMode _shadowCastingMode = ShadowCastingMode.on;
 
   /// Whether this node's meshes cast shadows.
   ///
