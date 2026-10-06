@@ -8,6 +8,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart' show SizedBox;
 import 'package:flutter_scene/scene.dart';
+import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
 
@@ -182,5 +183,86 @@ void main() {
     expect(target.texture, isNotNull);
     expect(target.texture!.width, 16);
     expect(notified, 1);
+  });
+
+  group('GPU pacing', () {
+    final heldFrames = <int>[];
+    tearDown(() {
+      for (final id in heldFrames) {
+        rendererSubmissions.complete(id);
+      }
+      heldFrames.clear();
+    });
+
+    void holdFrameInFlight() {
+      heldFrames.add(rendererSubmissions.record());
+      rendererSubmissions.endFrame();
+    }
+
+    void renderFrame(Scene scene, double size) {
+      final recorder = ui.PictureRecorder();
+      scene.render(
+        PerspectiveCamera(position: Vector3(0, 0, 5)),
+        ui.Canvas(recorder),
+        viewport: ui.Rect.fromLTWH(0, 0, size, size),
+        pixelRatio: 1.0,
+      );
+      recorder.endRecording();
+    }
+
+    Scene textureViewScene(RenderTexture target) => Scene()
+      ..views.add(
+        RenderView(
+          camera: PerspectiveCamera(position: Vector3(0, 0, 5)),
+          target: target,
+        ),
+      );
+
+    testWidgets(
+      'a new scene renders its texture views on its first frame while '
+      'another scene has its frames in flight',
+      (tester) async {
+        await tester.runAsync(Scene.initializeStaticResources);
+        final earlier = Scene();
+        addTearDown(earlier.dispose);
+        renderFrame(earlier, 32);
+        holdFrameInFlight();
+        expect(
+          rendererSubmissions.framesInFlight,
+          greaterThanOrEqualTo(earlier.maxGpuFramesInFlight),
+        );
+
+        final target = RenderTexture(width: 16, height: 16);
+        final scene = textureViewScene(target);
+        addTearDown(scene.dispose);
+        renderFrame(scene, 32);
+
+        expect(scene.pacedFrameCount, 0);
+        expect(target.texture, isNotNull);
+        expect(target.heldBytes, greaterThan(0));
+      },
+    );
+
+    testWidgets('a frame skips its texture views only when every screen view '
+        're-presents its previous image', (tester) async {
+      await tester.runAsync(Scene.initializeStaticResources);
+      final target = RenderTexture(width: 16, height: 16);
+      final scene = textureViewScene(target);
+      addTearDown(scene.dispose);
+      var rendered = 0;
+      target.addListener(() => rendered++);
+
+      renderFrame(scene, 32);
+      expect(rendered, 1);
+
+      holdFrameInFlight();
+      renderFrame(scene, 32);
+      expect(scene.pacedFrameCount, 1);
+      expect(rendered, 1);
+
+      renderFrame(scene, 48);
+      expect(scene.pacedFrameCount, 1);
+      expect(rendered, 2);
+    });
   });
 }
