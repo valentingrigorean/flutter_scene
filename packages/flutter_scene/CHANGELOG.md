@@ -1,5 +1,6 @@
 ## 0.24.1
 
+* A shader library loaded again under the same asset key keeps its shader reflection, so a `ShaderMaterial` made after an app's repeat load of its bundle neither re-reads the bundle nor holds the scene's frame for it.
 * On Apple platforms, a `ShaderMaterial` whose fragment shader reads a varying its vertex shader does not write at that location and type is skipped with a message naming the varying, instead of crashing the app on Flutter 3.47. `Scene.preload` also waits for the shader reflection the check reads.
 
 ## 0.24.0
