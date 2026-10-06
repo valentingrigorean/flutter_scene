@@ -43,6 +43,17 @@ texture_transforms;
 #define FLUTTER_SCENE_BASE_COLOR_SAMPLE(uv) texture(base_color_texture, uv)
 #endif
 
+// The linear base colour and the alpha of the surface from the base colour
+// sample (sRGB), the interpolated vertex colour and the material's colour
+// factor. A variant that mixes them another way (a tint that keeps the
+// brightness of the file colour) defines this before including the shader; the
+// define may read v_color and any uniform the variant declares.
+#ifndef FLUTTER_SCENE_BASE_COLOR
+#define FLUTTER_SCENE_BASE_COLOR(base_srgb, vertex_color, factor)            \
+  vec4(SRGBToLinear((base_srgb).rgb) * (vertex_color).rgb * (factor).rgb,    \
+       (base_srgb).a * (vertex_color).a * (factor).a)
+#endif
+
 // Fills the surface description for the standard glTF metallic-roughness
 // material from the FragInfo parameters and the material textures. The shared
 // lighting framework (material_lighting.glsl) consumes it.
@@ -60,9 +71,10 @@ void Surface(inout MaterialInputs material) {
             texture_transforms.base_color_rotation)
       : GetUV0();
   vec4 base_color_srgb = FLUTTER_SCENE_BASE_COLOR_SAMPLE(base_color_uv);
-  vec3 albedo = SRGBToLinear(base_color_srgb.rgb) * vertex_color.rgb *
-                frag_info.color.rgb;
-  float alpha = base_color_srgb.a * vertex_color.a * frag_info.color.a;
+  vec4 base_color =
+      FLUTTER_SCENE_BASE_COLOR(base_color_srgb, vertex_color, frag_info.color);
+  vec3 albedo = base_color.rgb;
+  float alpha = base_color.a;
   // MASK alpha mode renders fully opaque (glTF treats MASK output as binary).
   // The cutout itself comes from the main pass's coverage pre-draw, so this
   // shader never discards; a discard would turn off early depth testing and
