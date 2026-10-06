@@ -1,6 +1,6 @@
 name: flutter_scene
 description: A 3D game engine for Flutter, built on Flutter GPU. Renders glTF models with PBR lighting, shadows, animation, physics, and audio, with a scene editor.
-version: 0.23.0
+version: 0.24.0
 repository: https://github.com/bdero/flutter_scene
 homepage: https://fscene.dev
 documentation: https://fscene.dev/getting-started/
@@ -42,7 +42,7 @@ dependencies:
     git:
       url: https://github.com/valentingrigorean/flutter_scene.git
       path: packages/scene
-      ref: b233e1b84f746103f058e67e3bfc5072fc97ea5a
+      ref: aaa6e0f8753a34eb856b736b25dd15b737a57a6d
   # Offline glTF import (build hook + CLI) arg parsing. Build-time only.
   args: ^2.5.0
   collection: ^1.19.0

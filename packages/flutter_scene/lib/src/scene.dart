@@ -52,6 +52,8 @@ import 'material/physical_material_variant.dart'
         initializePhysicalMaterialResources,
         physicalMaterialResourcesLoad,
         physicalMaterialResourcesPending;
+import 'material/shader_interface.dart'
+    show stageInterfacesLoad, stageInterfacesPending;
 import 'memory_pressure.dart';
 import 'mesh.dart';
 import 'node.dart';
@@ -251,7 +253,9 @@ base class Scene implements SceneGraph {
   /// needs. Without this, a scene holds its last frame while one of its
   /// materials waits for those shaders, and renders without SMAA until the
   /// tables arrive. Await it before a one-shot render or capture that uses
-  /// either.
+  /// either. It also waits for the shader reflection a [ShaderMaterial]
+  /// created beforehand reads to check its stage interfaces on Apple
+  /// platforms.
   ///
   /// Safe to call more than once. Retries a load that failed, and completes
   /// with its error.
@@ -264,6 +268,7 @@ base class Scene implements SceneGraph {
       initializeStaticResources(),
       if (physicalMaterials) initializePhysicalMaterialResources(),
       if (smaa) SmaaPass.initializeStaticResources(),
+      ?stageInterfacesLoad,
     ]);
   }
 
@@ -290,6 +295,12 @@ base class Scene implements SceneGraph {
       physicalMaterialResourcesPending &&
       renderScene.anyMaterial(_awaitsDeferredResources);
 
+  // Whether one of this scene's materials is waiting on the shader reflection
+  // a ShaderMaterial's stage interface check reads.
+  bool get _awaitingStageInterfaces =>
+      stageInterfacesPending &&
+      renderScene.anyMaterial(_awaitsDeferredResources);
+
   /// Completes once the on-demand loads this scene's content and [views] need
   /// have settled, so a reveal or warm-up sees the frame as it will draw.
   /// Never fails; a failed load is reported where it started.
@@ -300,6 +311,7 @@ base class Scene implements SceneGraph {
     final physical = _awaitingPhysicalResources
         ? physicalMaterialResourcesLoad
         : null;
+    final interfaces = _awaitingStageInterfaces ? stageInterfacesLoad : null;
     final wantsSmaa =
         effectiveAntiAliasingMode == AntiAliasingMode.smaa ||
         [...this.views, ...views].any(
@@ -310,7 +322,7 @@ base class Scene implements SceneGraph {
               AntiAliasingMode.smaa,
         );
     final smaa = wantsSmaa ? SmaaPass.request() : null;
-    await Future.wait([?physical, ?smaa]);
+    await Future.wait([?physical, ?interfaces, ?smaa]);
   }
 
   /// Computes the linear exposure multiplier for a physical pinhole
@@ -545,39 +557,42 @@ base class Scene implements SceneGraph {
       return _initializeStaticResources!;
     }
     listenForMemoryPressure();
-    _initializeStaticResources =
-        Future.wait([
-              loadBaseShaderLibrary(),
-              Material.initializeStaticResources(),
-              // The physical material shaders and the SMAA tables load on
-              // first use or through preload, so a scene using neither never
-              // pays for them.
-            ])
-            // Needs the shader library, so it runs after the load and before
-            // rendering unblocks (environment radiance builds consult it).
-            .then((_) => probePlatformMipSampling())
-            .then((_) => probeFloat32ColorTargets())
-            .then((_) => _buildDefaultEnvironmentBetweenFrames())
-            .then((_) {
-              _readyToRender = true;
-            })
-            .onError<Object>((e, stacktrace) {
-              // Only a successful load marks the scene ready to render;
-              // rendering with these resources missing throws mid-frame.
-              // The memoized future is reset so a later call retries.
-              log(
-                'Failed to initialize static Flutter Scene resources',
-                error: e,
-                stackTrace: stacktrace,
-              );
-              _initializeStaticResources = null;
-              // Rethrow so an awaiting caller sees the real cause. Completing
-              // normally here left the failure visible only through
-              // `dart:developer` log(), which web does not surface, and sent
-              // the developer to the baseShaderLibrary getter's "await
-              // initializeStaticResources()" instead, the call they just made.
-              Error.throwWithStackTrace(e, stacktrace);
-            });
+    _initializeStaticResources = gpu
+        .initializeGpuBackend()
+        .then(
+          (_) => Future.wait([
+            loadBaseShaderLibrary(),
+            Material.initializeStaticResources(),
+            // The physical material shaders and the SMAA tables load on
+            // first use or through preload, so a scene using neither never
+            // pays for them.
+          ]),
+        )
+        // Needs the shader library, so it runs after the load and before
+        // rendering unblocks (environment radiance builds consult it).
+        .then((_) => probePlatformMipSampling())
+        .then((_) => probeFloat32ColorTargets())
+        .then((_) => _buildDefaultEnvironmentBetweenFrames())
+        .then((_) {
+          _readyToRender = true;
+        })
+        .onError<Object>((e, stacktrace) {
+          // Only a successful load marks the scene ready to render;
+          // rendering with these resources missing throws mid-frame.
+          // The memoized future is reset so a later call retries.
+          log(
+            'Failed to initialize static Flutter Scene resources',
+            error: e,
+            stackTrace: stacktrace,
+          );
+          _initializeStaticResources = null;
+          // Rethrow so an awaiting caller sees the real cause. Completing
+          // normally here left the failure visible only through
+          // `dart:developer` log(), which web does not surface, and sent
+          // the developer to the baseShaderLibrary getter's "await
+          // initializeStaticResources()" instead, the call they just made.
+          Error.throwWithStackTrace(e, stacktrace);
+        });
     return _initializeStaticResources!;
   }
 
@@ -1411,6 +1426,13 @@ base class Scene implements SceneGraph {
           'them. Await Scene.preload() first.',
         );
       }
+      if (_awaitingStageInterfaces) {
+        debugPrint(
+          'Scene.captureEnvironment ran while the shader reflection a '
+          'ShaderMaterial is checked against was still loading, so its '
+          'draws were skipped. Await Scene.preload() first.',
+        );
+      }
       return true;
     }());
     renderScene.rebuildIfDirty();
@@ -1518,6 +1540,13 @@ base class Scene implements SceneGraph {
           'Scene.bakeIrradianceField ran while the physical material shaders '
           'were still loading, so materials that need them drew without '
           'them. Await Scene.preload() first.',
+        );
+      }
+      if (_awaitingStageInterfaces) {
+        debugPrint(
+          'Scene.bakeIrradianceField ran while the shader reflection a '
+          'ShaderMaterial is checked against was still loading, so its '
+          'draws were skipped. Await Scene.preload() first.',
         );
       }
       return true;
@@ -2760,10 +2789,12 @@ base class Scene implements SceneGraph {
     _tickedThisFrame = false;
 
     // A material waiting on the physical shaders would draw with the wrong
-    // one, so hold the previous frame until they land. After the tick, which
-    // can give a material a feature that needs them.
-    if (_awaitingPhysicalResources) {
+    // one, and one waiting on its interface check would draw a pairing that
+    // may crash, so hold the previous frame until they land. After the tick,
+    // which can give a material a feature that needs them.
+    if (_awaitingPhysicalResources || _awaitingStageInterfaces) {
       _repaintWhenLoaded(physicalMaterialResourcesLoad);
+      _repaintWhenLoaded(stageInterfacesLoad);
       _presentHeldFrame(views, canvas, drawArea);
       renderStats.endFrame(pipelineCacheSize: pipelineCacheSize);
       rendererSubmissions.endFrame();
@@ -3409,7 +3440,12 @@ base class Scene implements SceneGraph {
       final srcRect = ui.Rect.fromLTWH(0, 0, pixelSize.width, pixelSize.height);
       final paint = ui.Paint()
         ..filterQuality = view.filterQuality ?? filterQuality;
-      canvas.drawImageRect(previous.asImage(), srcRect, drawArea, paint);
+      canvas.drawImageRect(
+        gpu.gpuHost.textureToImage(previous),
+        srcRect,
+        drawArea,
+        paint,
+      );
       return;
     }
 
@@ -3454,7 +3490,7 @@ base class Scene implements SceneGraph {
       }
     }
 
-    final image = swapchainColor.asImage();
+    final image = gpu.gpuHost.textureToImage(swapchainColor);
     final srcRect = ui.Rect.fromLTWH(0, 0, pixelSize.width, pixelSize.height);
     final paint = ui.Paint()
       ..filterQuality = view.filterQuality ?? filterQuality;
