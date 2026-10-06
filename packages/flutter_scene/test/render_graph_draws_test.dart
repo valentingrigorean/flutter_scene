@@ -34,6 +34,8 @@ class _FakePass extends RenderGraphPass {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('draws record the encoder context and pending uniforms', () {
     final graph = RenderGraph()
       ..addPass(
@@ -176,7 +178,7 @@ void main() {
     );
   });
 
-  testWidgets('captures a rendered scene\'s draws', (tester) async {
+  test('captures a rendered scene\'s draws', () async {
     if (!gpuAvailable()) return;
     await Scene.initializeStaticResources();
     Scene.debugAllowRenderGraphCapture = true;
@@ -226,7 +228,7 @@ void main() {
     final decoded = draw.uniformBlocks
         .firstWhere((b) => b.nameFor(draw) == 'FrameInfo')
         .decode(draw)!;
-    expect(decoded.map((v) => v.name), contains('mvp'));
+    expect(decoded.map((v) => v.name), contains('camera_transform'));
     expect(jsonEncode(draw.toJson()), contains('UnlitFragment'));
 
     // The frame's stats saw the same draws.
@@ -249,6 +251,6 @@ void main() {
       (b) => b.resolvedName == 'FrameInfo',
     );
     expect(loadedBlock.nameFor(loadedDraw), 'FrameInfo');
-    expect(loadedBlock.resolvedValues!.map((v) => v.name), contains('mvp'));
+    expect(loadedBlock.resolvedValues!.map((v) => v.name), contains('camera_transform'));
   });
 }
