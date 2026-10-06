@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter_scene/gpu.dart' as scene_gpu;
 import 'package:flutter_scene/scene.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/draw_recorder.dart';
@@ -31,6 +32,23 @@ class _FakePass extends RenderGraphPass {
 
   @override
   void execute(RenderGraphContext context) => body();
+}
+
+class _StagedQuad extends MeshGeometry {
+  _StagedQuad()
+    : super.fromArrays(
+        positions: Float32List.fromList([
+          -1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0, //
+        ]),
+        indices: const [0, 1, 2, 0, 2, 3],
+      );
+
+  @override
+  void draw(gpu.RenderPass pass, {int instanceCount = 1}) {
+    for (var stage = 0; stage < 2; stage++) {
+      scene_gpu.drawIndexedCompat(pass, 6, instanceCount: instanceCount);
+    }
+  }
 }
 
 void main() {
@@ -255,5 +273,47 @@ void main() {
       loadedBlock.resolvedValues!.map((v) => v.name),
       contains('camera_transform'),
     );
+  });
+
+  test('a geometry that issues its own draws through the public draw funnel '
+      'counts each one in the frame stats and the capture', () async {
+    if (!gpuAvailable()) return;
+    await Scene.initializeStaticResources();
+    Scene.debugAllowRenderGraphCapture = true;
+    Future<({int stats, int captured})> drawsOf(Geometry geometry) async {
+      final scene = Scene();
+      scene.add(Node(name: 'box', mesh: Mesh(geometry, UnlitMaterial())));
+      final future = scene.captureRenderGraph(
+        request: const RenderGraphCaptureRequest(captureImages: false),
+      );
+      final recorder = ui.PictureRecorder();
+      scene.render(
+        PerspectiveCamera(position: Vector3(0, 0, 5)),
+        ui.Canvas(recorder),
+        viewport: const ui.Rect.fromLTWH(0, 0, 64, 64),
+        pixelRatio: 1.0,
+      );
+      recorder.endRecording();
+      final result = await future;
+      return (
+        stats: scene.renderStats.latest!.counters.draws,
+        captured: result.passes
+            .expand((pass) => pass.draws)
+            .where((draw) => draw.nodePath?.endsWith('box') ?? false)
+            .length,
+      );
+    }
+
+    final plain = await drawsOf(
+      MeshGeometry.fromArrays(
+        positions: Float32List.fromList([
+          -1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0, //
+        ]),
+        indices: const [0, 1, 2, 0, 2, 3],
+      ),
+    );
+    final staged = await drawsOf(_StagedQuad());
+    expect(staged.captured, plain.captured * 2);
+    expect(staged.stats, plain.stats + plain.captured);
   });
 }
