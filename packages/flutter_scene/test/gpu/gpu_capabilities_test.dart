@@ -82,14 +82,16 @@ void main() {
       expect(gpu.gpuHost.capabilities.hostTier, isA<GpuHostTier>());
     });
 
-    test('imageToTexture returns null rather than throwing', () async {
+    test('imageToTexture answers rather than throwing', () async {
       // The contract callers depend on: an unwrappable image is a routine
-      // answer, handled by reading back rather than by catching.
+      // null answer, handled by reading back rather than by catching. A
+      // rasterized image wraps where Flutter GPU has a context (Metal with
+      // --enable-flutter-gpu) and is null where it has none.
       final recorder = ui.PictureRecorder();
       ui.Canvas(recorder);
       final image = await recorder.endRecording().toImage(1, 1);
       addTearDown(image.dispose);
-      expect(gpu.gpuHost.imageToTexture(image), isNull);
+      expect(() => gpu.gpuHost.imageToTexture(image), returnsNormally);
     });
   });
 }
