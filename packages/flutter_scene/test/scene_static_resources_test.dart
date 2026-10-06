@@ -1,16 +1,19 @@
 // Covers Scene.initializeStaticResources: the default studio environment is
 // built while the engine loads, so the first frame does not pay for it, and a
-// failing build ends the load and lets a later call retry. The failing build
-// runs first, while no load has completed in this isolate.
+// failing build ends the load with its error and lets a later call retry. The
+// failing build runs first, while no load has completed in this isolate. The
+// GPU gate reads the context rather than constructing a Scene, which would
+// start the load before the failing build is set up.
 // GPU-gated; building the environment needs a device.
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_scene/gpu.dart' as gpu;
 import 'package:flutter_scene/scene.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 bool _gpuAvailable() {
   try {
-    Scene();
+    gpu.gpuContext;
     return true;
   } catch (_) {
     return false;
@@ -47,7 +50,7 @@ void main() {
       FlutterError.onError = previousOnError;
       EnvironmentMap.radianceCubeSize = previousSize;
     }
-    expect(outcome, 'completed');
+    expect(outcome, startsWith('error '));
     expect(reported, isEmpty);
     expect(Scene.isReadyToRender, isFalse);
     expect(Material.debugDefaultEnvironmentMap, isNull);

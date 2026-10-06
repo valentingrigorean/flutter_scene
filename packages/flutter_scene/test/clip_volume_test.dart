@@ -142,7 +142,7 @@ void main() {
     return;
   }
 
-  setUpAll(Scene.initializeStaticResources);
+  setUpAll(Scene.preload);
 
   for (final MapEntry(key: name, value: material) in _materials.entries) {
     test('a $name material draws its fragments outside its clip volume '

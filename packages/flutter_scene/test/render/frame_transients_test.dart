@@ -140,7 +140,7 @@ void main() {
     });
   });
 
-  if (!gpuAvailable()) {
+  if (!gpuContextAvailable()) {
     test(
       'transient arena suite (skipped: no GPU device)',
       () {},
