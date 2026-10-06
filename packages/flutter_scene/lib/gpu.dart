@@ -16,10 +16,16 @@
 /// );
 /// final material = ShaderMaterial(fragmentShader: library!['MyFragment']!);
 /// ```
+///
+/// A `Geometry` that overrides `draw` issues its draw calls through
+/// [drawCompat] and [drawIndexedCompat], the funnel every engine draw goes
+/// through, so `Scene.renderStats` and render graph captures count them.
 library;
 
 export 'src/generated_assets/generated_asset_lookup.dart'
     show resolveShaderBundleKey;
+
+export 'src/gpu/render_pass_compat.dart' show drawCompat, drawIndexedCompat;
 
 export 'src/gpu/gpu.dart'
     show
