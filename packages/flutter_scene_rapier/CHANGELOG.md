@@ -1,8 +1,11 @@
 ## 0.5.2
 
+* Widen the `scene` constraint to `^0.4.0`.
 * Triangle mesh colliders are cooked with merged duplicate vertices and fixed internal edges, so a character crossing imported terrain stops catching on the seams between triangles.
-* Requires rebuilt binaries and wasm; the 0.5.0 prebuilts carry the old shape construction.
-* Allow `code_assets` 2.x. No native changes.
+* BREAKING: triangle mesh colliders collide from their front (counter-clockwise) face only, as `flutter_scene_box3d` already did, so a body behind a face passes through it. Imported glTF and `.fscene` geometry already winds that way; rewind a hand-built mesh whose triangles face away from what touches it.
+* Ships rebuilt native binaries and wasm. 0.5.0 and 0.5.1 reused the 0.4.0 prebuilts, which carry the old shape construction.
+* Allow `code_assets` 2.x.
+* Rewrite the README for the current API and add an example; the quick start used component classes this package no longer has.
 
 ## 0.5.1
 

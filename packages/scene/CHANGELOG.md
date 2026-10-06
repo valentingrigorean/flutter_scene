@@ -1,14 +1,20 @@
 # Changelog
 
+## 0.4.1
+
+- `TriMeshShape` documents that a triangle collides from its front (counter-clockwise) face only.
+
 ## 0.4.0
 
 - `GizmoOrthographicVolume` draws an orthographic camera's view volume, sized by a bound fit mode, extents, zoom, and offset.
 - `NodeSpec.shadowCastingMode` carries a node's shadow casting mode (`off`, `on`, `doubleSided`, `shadowsOnly`), delta-serialized and overridable on prefab instances through the `shadowCasting` path.
 - `EnvironmentEffectsSpec` carries SMAA quality (`smaaThreshold`, `smaaMaxSearchSteps`, `smaaMaxDiagonalSearchSteps`, `smaaCornerRounding`), delta-serialized like the other effects.
 - The spec's temporal anti-aliasing defaults now match the renderer's.
-
+- `SceneDocument.editor` (`EditorStateSpec`, `EditorCameraSpec`) carries the editor camera pose and selection.
 - Added grid mesh splitting shared by editors and import pipelines: `splitTriangleMeshByGrid` bins whole triangles by world-space centroid into per-cell vertex/index buffers, and `applyMeshSplitHints` applies `-split<N>` node-name hints across a document (split children named `Ground_x0_z3`, hint stripped, orphaned source data removed).
 - Added `documentWorldMatrix`, `countResourceReferences`, and `isPayloadReferenced` document utilities.
+- Documents keep data this build does not read through a load and save. Unknown keys ride on the document, its specs, and their nested value objects (`unknown`), unknown `.fsceneb` chunks on `SceneDocument.unknownChunks` (`UnknownChunk`), and a property value with an unknown tag loads as an inert `UnknownValue` instead of failing the document.
+- Added `encodeNode`, which encodes one node the way `encodeDocument` does.
 
 ## 0.3.0
 

@@ -1,8 +1,10 @@
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show internal, visibleForTesting;
 import 'package:flutter/services.dart' show AssetBundle;
 import 'package:flutter_scene/src/generated_assets/generated_asset_lookup.dart';
 import 'package:flutter_scene/src/generated_assets/generated_assets.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/material/shader_interface.dart'
+    show markEngineShaderLibrary;
 
 gpu.ShaderLibrary? _baseShaderLibrary;
 
@@ -60,6 +62,11 @@ Future<String?> resolveBaseShaderBundleKey({AssetBundle? bundle}) async {
   );
 }
 
+/// The base shader library once it has loaded, else null. For code that may
+/// run before [Scene.initializeStaticResources] completes.
+@internal
+gpu.ShaderLibrary? get loadedBaseShaderLibrary => _baseShaderLibrary;
+
 /// Asynchronously loads and caches the base shader bundle. Idempotent.
 /// Called by [Scene.initializeStaticResources] so the synchronous
 /// [baseShaderLibrary] getter has a cached library to return (shader assets
@@ -104,6 +111,7 @@ Future<void> _loadBaseShaderLibrary(AssetBundle? bundle) async {
   if (lib[baseShaderBundleProbeName] == null) {
     throw Exception(baseShaderBundleUnusableMessage(key));
   }
+  markEngineShaderLibrary(lib);
   _baseShaderLibrary = lib;
 }
 

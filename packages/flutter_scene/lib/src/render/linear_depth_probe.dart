@@ -205,7 +205,7 @@ Future<bool> measureLinearDepthRead({required bool split}) async {
   draw(verdict, written, check: true);
   await awaitRasterThread();
 
-  final ui.Image image = verdict.asImage();
+  final ui.Image image = gpu.gpuHost.textureToImage(verdict);
   final bytes = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
   image.dispose();
   if (bytes == null) {
