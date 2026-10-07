@@ -327,6 +327,75 @@ final class WebGlTexture extends Texture {
       );
       return;
     }
+    _upload(sourceBytes, sliceTarget, mipLevel, 0, 0, mipWidth, mipHeight);
+  }
+
+  /// Uploads the tightly packed rows of [source] into a region of one mip
+  /// level, the destination of a buffer-to-texture copy.
+  void _overwriteRegion(ByteData source, TextureRegion region) {
+    if (sampleCount != 1) {
+      throw Exception('Cannot overwrite a multisample texture');
+    }
+    if (_isCompressedFormat(format)) {
+      throw Exception('A region of a compressed texture cannot be overwritten');
+    }
+    final mipLevel = region.mipLevel;
+    if (mipLevel < 0 || mipLevel >= mipLevelCount) {
+      throw Exception(
+        'mipLevel ($mipLevel) must be in the range [0, $mipLevelCount)',
+      );
+    }
+    if (region.slice < 0 || region.slice >= sliceCount) {
+      throw Exception('slice (${region.slice}) must be in [0, $sliceCount)');
+    }
+    final mipWidth = (width >> mipLevel).clamp(1, width).toInt();
+    final mipHeight = (height >> mipLevel).clamp(1, height).toInt();
+    final regionWidth = region.width == -1 ? mipWidth : region.width;
+    final regionHeight = region.height == -1 ? mipHeight : region.height;
+    if (region.x < 0 ||
+        region.y < 0 ||
+        regionWidth < 1 ||
+        regionHeight < 1 ||
+        region.x + regionWidth > mipWidth ||
+        region.y + regionHeight > mipHeight) {
+      throw Exception(
+        'Texture region (${region.x}, ${region.y}, $regionWidth, '
+        '$regionHeight) exceeds mip level $mipLevel size '
+        '($mipWidth, $mipHeight)',
+      );
+    }
+    final expectedSize = bytesPerTexel * regionWidth * regionHeight;
+    if (source.lengthInBytes != expectedSize) {
+      throw Exception(
+        'The source BufferView length (bytes: ${source.lengthInBytes}) must '
+        'match the destination texture region size (bytes: $expectedSize)',
+      );
+    }
+    _gpuContext._bindTextureForSetup(glTarget, _texture);
+    _upload(
+      source,
+      glSliceTarget(region.slice),
+      mipLevel,
+      region.x,
+      region.y,
+      regionWidth,
+      regionHeight,
+    );
+  }
+
+  void _upload(
+    ByteData sourceBytes,
+    int sliceTarget,
+    int mipLevel,
+    int x,
+    int y,
+    int regionWidth,
+    int regionHeight,
+  ) {
+    final gl = _gpuContext._gl;
+    // Rows are tightly packed, so a row of a one- or two-byte format whose
+    // length is no multiple of four starts where the row above ends.
+    gl.pixelStorei(web.WebGL2RenderingContext.UNPACK_ALIGNMENT, 1);
     // texSubImage2D requires the JS typed-array view to match the GL pixel
     // type: FLOAT wants a Float32Array, HALF_FLOAT a Uint16Array, and the
     // integer formats a Uint8Array. (A Uint8Array for a FLOAT texture throws
@@ -355,10 +424,10 @@ final class WebGlTexture extends Texture {
     gl.texSubImage2D(
       sliceTarget,
       mipLevel,
-      0,
-      0,
-      mipWidth.toJS,
-      mipHeight.toJS,
+      x,
+      y,
+      regionWidth.toJS,
+      regionHeight.toJS,
       _glFormat.format.toJS,
       _glFormat.type,
       view,

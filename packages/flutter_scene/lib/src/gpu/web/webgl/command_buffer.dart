@@ -22,6 +22,23 @@ final class WebGlCommandBuffer extends CommandBuffer {
   }
 
   @override
+  void copyBufferToTexture(BufferView source, TextureRegion destination) {
+    if (source.offsetInBytes < 0 ||
+        source.lengthInBytes < 0 ||
+        source.offsetInBytes + source.lengthInBytes >
+            source.buffer.sizeInBytes) {
+      throw Exception('BufferView range is out of bounds');
+    }
+    destination.texture.webGl._overwriteRegion(
+      source.buffer.webGl._stagedBytes(
+        source.offsetInBytes,
+        source.lengthInBytes,
+      ),
+      destination,
+    );
+  }
+
+  @override
   void submit({CompletionCallback? completionCallback}) {
     // WebGL2 commands are already submitted; finishing the last pass runs
     // its MSAA resolve. `gl.flush()` is implicit at raster boundaries.
