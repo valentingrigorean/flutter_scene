@@ -60,6 +60,10 @@ enum BatchBreakReason {
   /// This or the next item picks its instances or index range per draw
   /// (a [MeshDrawSelector]).
   drawSelector,
+
+  /// This or the next item draws node-space instance records under its own
+  /// instance frame (`InstancedMesh.nodeSpaceInstances`).
+  nodeSpaceInstances,
 }
 
 /// What the encoder knows about the draw calls it is about to issue.

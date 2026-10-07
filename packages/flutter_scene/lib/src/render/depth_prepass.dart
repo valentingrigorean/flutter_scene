@@ -17,7 +17,11 @@ import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart'
-    show Geometry, bindUnskinnedFrameInfo;
+    show
+        Geometry,
+        bindUnskinnedFrameInfo,
+        currentDrawInstanceFrame,
+        positionOnlyLayoutOverRecords;
 import 'package:flutter_scene/src/material/material.dart'
     show MaskedDepthPass, Material;
 import 'package:flutter_scene/src/render/draw_recorder.dart';
@@ -430,7 +434,7 @@ PipelineInputs depthPrepassPipelineInputs(
   item.geometry,
   item.material,
   writeNormals: writeNormals,
-).pipelineInputs;
+).pipelineInputsFor(item);
 
 /// One depth prepass draw; see [depthPrepassDraw].
 final class DepthPrepassDraw {
@@ -469,10 +473,22 @@ final class DepthPrepassDraw {
   /// The custom vertex attributes the draw fetches.
   final VertexAttributeSchema? attributes;
 
-  PipelineInputs get pipelineInputs => (
+  /// Whether the draw of [item] reads its model transforms from the instance
+  /// records the color pass retains, which a position-only draw of
+  /// node-space records does.
+  bool retainsRecordsOf(RenderItem item) =>
+      positionOnly && vertexLayout != null && item.nodeSpaceInstances;
+
+  /// The pipeline inputs of the draw of [item].
+  PipelineInputs pipelineInputsFor(RenderItem item) => (
     vertexShader: vertexShader,
     fragmentShader: fragmentShader,
-    vertexLayout: vertexLayout,
+    vertexLayout: retainsRecordsOf(item)
+        ? positionOnlyLayoutOverRecords(
+            vertexLayout!,
+            kInstanceRecordFloats + item.instanceAttributeFloats,
+          )
+        : vertexLayout,
   );
 }
 
@@ -674,7 +690,10 @@ class _DepthPrepassEncoder {
     final instanceSchema = draw.instanceSchema;
     final attributeFloats = instanceSchema?.floatCount ?? 0;
     geometry.useVertexAttributes(draw.attributes);
-    final vertexLayout = draw.vertexLayout;
+    final retainsRecords = batches == null && draw.retainsRecordsOf(item);
+    final vertexLayout = retainsRecords
+        ? draw.pipelineInputsFor(item).vertexLayout
+        : draw.vertexLayout;
     final surface = draw.surface;
     final positionOnly = draw.positionOnly;
     final pipeline =
@@ -812,14 +831,17 @@ class _DepthPrepassEncoder {
         }
         return;
       }
+      currentDrawInstanceFrame = item.instanceFrame;
       _bindDraw(item.worldTransform);
+      currentDrawInstanceFrame = null;
       final packedWorldData = item.instanceWorldData;
       final packedWinding = item.instanceWorldWindingFlipped;
-      if (!positionOnly &&
+      if ((retainsRecords ||
+              (!positionOnly &&
+                  item.instanceAttributeFloats == attributeFloats)) &&
           item.visibleInstanceIndices == null &&
           packedWorldData != null &&
-          packedWinding != null &&
-          item.instanceAttributeFloats == attributeFloats) {
+          packedWinding != null) {
         final flipped = bindRetainedInstanceData(
           _renderPass,
           packedWorldData,
@@ -849,27 +871,31 @@ class _DepthPrepassEncoder {
               indices: visible,
               attributeFloats: item.instanceAttributeFloats,
             );
-      final PackedInstances packed = !positionOnly
+      final PackedInstances packed = !positionOnly || retainsRecords
           ? (cached == null
                 ? packInstanceData(
-                    item.worldTransform,
+                    item.instancePackTransform,
                     instances,
                     item.instanceColors!,
                     nodeWindingFlipped: item.windingFlipped,
                     instanceWindingFlipped: item.instanceWindingFlipped,
                     indices: visible,
                     attributeData: item.instanceAttributeData,
-                    attributeFloats: attributeFloats,
+                    attributeFloats: retainsRecords
+                        ? item.instanceAttributeFloats
+                        : attributeFloats,
                     scratch: transientInstancePackingScratch,
                   )
                 : packInstanceDataBatches(
                     cached,
-                    attributeFloats: attributeFloats,
+                    attributeFloats: retainsRecords
+                        ? item.instanceAttributeFloats
+                        : attributeFloats,
                     scratch: transientInstancePackingScratch,
                   ))
           : (cached == null
                 ? packInstanceTransforms(
-                    item.worldTransform,
+                    item.instancePackTransform,
                     instances,
                     nodeWindingFlipped: item.windingFlipped,
                     instanceWindingFlipped: item.instanceWindingFlipped,
@@ -880,7 +906,12 @@ class _DepthPrepassEncoder {
                     cached,
                     scratch: transientInstancePackingScratch,
                   ));
-      _drawPacked(geometry, packed, !positionOnly, instanceSlot);
+      _drawPacked(
+        geometry,
+        packed,
+        !positionOnly || retainsRecords,
+        instanceSlot,
+      );
       transientInstancePackingScratch.releaseSingleBatch();
       return;
     }

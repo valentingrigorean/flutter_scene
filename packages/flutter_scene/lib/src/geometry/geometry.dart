@@ -1974,6 +1974,29 @@ const VertexBufferDescriptor _kInstanceModelTransformBuffer =
       ],
     );
 
+final Map<VertexLayoutDescriptor, Map<int, VertexLayoutDescriptor>>
+_layoutsOverRecords = Map.identity();
+
+/// [layout], a position-only layout whose last slot is the instance-rate
+/// model transform, reading that transform from the leading floats of records
+/// [recordFloats] wide, so a depth-style pass binds the instance buffer a
+/// color pass retains.
+@internal
+VertexLayoutDescriptor positionOnlyLayoutOverRecords(
+  VertexLayoutDescriptor layout,
+  int recordFloats,
+) => (_layoutsOverRecords[layout] ??= {})[recordFloats] ??=
+    VertexLayoutDescriptor(
+      buffers: [
+        ...layout.buffers.take(layout.buffers.length - 1),
+        VertexBufferDescriptor(
+          strideInBytes: recordFloats * Float32List.bytesPerElement,
+          stepMode: gpu.VertexStepMode.instance,
+          attributes: layout.buffers.last.attributes,
+        ),
+      ],
+    );
+
 /// The instance-rate transform and color used by color passes.
 const VertexBufferDescriptor _kInstanceDataBuffer = VertexBufferDescriptor(
   strideInBytes: 80,
@@ -2188,7 +2211,18 @@ final VertexLayoutDescriptor kUnskinnedSoADepthLayout = VertexLayoutDescriptor(
 // Reused across every call: this runs for every draw of every pass, and
 // [TransientWriter.emplace] copies the bytes out immediately, so a shared
 // scratch is safe and avoids a per-draw allocation.
-final Float32List _unskinnedFrameInfoScratch = Float32List(28);
+final Float32List _unskinnedFrameInfoScratch = Float32List(44);
+
+final vm.Matrix4 _identityInstanceFrame = vm.Matrix4.identity();
+
+/// The transform the unskinned vertex stage applies after the instance-rate
+/// model transform of the draws bound next, or null for none.
+///
+/// A draw of node-space instance records (see
+/// `InstancedMesh.nodeSpaceInstances`) sets the node's world transform here
+/// and clears it once drawn.
+@internal
+vm.Matrix4? currentDrawInstanceFrame;
 
 @internal
 void bindUnskinnedFrameInfo(
@@ -2207,7 +2241,8 @@ void bindUnskinnedFrameInfo(
     ..[18] = cameraPosition.z
     ..[19] = depthBias
     ..setAll(20, currentDrawDepthOffset)
-    ..setAll(24, currentDrawDepthSlope);
+    ..setAll(24, currentDrawDepthSlope)
+    ..setAll(28, (currentDrawInstanceFrame ?? _identityInstanceFrame).storage);
   pass.bindUniform(
     frameInfoSlot,
     transientsBuffer.emplace(scratchBytesOf(scratch)),

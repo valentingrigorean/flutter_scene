@@ -20,6 +20,11 @@ class InstancedMeshComponent extends Component {
   final InstancedMesh instancedMesh;
 
   RenderItem? _renderItem;
+
+  /// The render item this component registered, while mounted.
+  @visibleForTesting
+  RenderItem? get debugRenderItem => _renderItem;
+
   int _worldTransformVersion = -1;
   int _instanceRevision = -1;
   int _geometryBoundsVersion = -1;
@@ -106,6 +111,7 @@ class InstancedMeshComponent extends Component {
     if (worldTransformVersion != _worldTransformVersion) {
       item.worldTransform.setFrom(worldTransform);
     }
+    final windingWas = item.windingFlipped;
     item.refreshWinding(node.windingFlipped);
     item.shadowStatic = node.shadowStatic;
     item.shadowCastingMode = node.shadowCastingMode;
@@ -116,7 +122,12 @@ class InstancedMeshComponent extends Component {
     item.instanceAttributeData = instancedMesh.instanceAttributeData;
     item.instanceAttributeFloats = instancedMesh.instanceAttributeFloats;
     item.instanceWindingFlipped = instancedMesh.windingFlipped;
-    item.cullInstances = instancedMesh.cullInstances;
+    final nodeSpace =
+        instancedMesh.nodeSpaceInstances &&
+        instancedMesh.geometry.instancedVertexLayout != null;
+    final recordSpaceChanged = item.nodeSpaceInstances != nodeSpace;
+    item.nodeSpaceInstances = nodeSpace;
+    item.cullInstances = instancedMesh.cullInstances && !nodeSpace;
     item.sortTransparentInstances = instancedMesh.sortTransparentInstances;
     if (staticShadowChanged) {
       node.internalRenderScene?.markStaticShadowDirty();
@@ -125,16 +136,22 @@ class InstancedMeshComponent extends Component {
         geometryBoundsVersion != _geometryBoundsVersion) {
       item.instanceBounds = instancedMesh.aggregateBounds;
     }
-    if (boundsChangedByInput) {
+    if (boundsChangedByInput || recordSpaceChanged) {
+      final recordsHold =
+          worldTransformVersion == _worldTransformVersion ||
+          (nodeSpace && windingWas == item.windingFlipped);
       final rows =
-          worldTransformVersion == _worldTransformVersion &&
+          recordsHold &&
+              !recordSpaceChanged &&
               geometryBoundsVersion == _geometryBoundsVersion
           ? instancedMesh.rowsChangedSince(_instanceRevision)
           : null;
       if (rows == null) {
         item.refreshInstanceData();
-      } else {
+      } else if (rows.isNotEmpty) {
         item.refreshInstanceRows(rows);
+      } else {
+        item.instanceFrameMoved();
       }
     }
 

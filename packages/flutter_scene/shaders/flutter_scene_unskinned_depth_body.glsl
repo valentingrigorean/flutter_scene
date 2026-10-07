@@ -23,6 +23,9 @@ uniform FrameInfo {
   // The color body's slope-scaled offsets, unused here: this stage reads no
   // normal, so it matches the position-only velocity pass instead.
   vec4 depth_slope;
+  // The transform applied after the instance-rate model transform: a node's
+  // world transform for node-space instance records, the identity otherwise.
+  mat4 instance_frame;
 }
 frame_info;
 
@@ -42,8 +45,9 @@ in vec4 model_transform_3;
 // material's custom varyings can follow them with matching interpolant slots.
 
 void main() {
-  mat4 model_transform = mat4(model_transform_0, model_transform_1,
-                              model_transform_2, model_transform_3);
+  mat4 model_transform =
+      frame_info.instance_frame * mat4(model_transform_0, model_transform_1,
+                                       model_transform_2, model_transform_3);
   vec4 model_position = model_transform * vec4(position, 1.0);
 
   VertexInputs vertex;
@@ -66,7 +70,7 @@ void main() {
       frame_info.camera_position, frame_info.depth_bias);
   vec4 clip_position = frame_info.camera_transform * vec4(draw_position, 1.0);
   gl_Position = ApplyDepthOffset(
-      clip_position, frame_info.depth_offset, model_transform_3.xyz,
+      clip_position, frame_info.depth_offset, model_transform[3].xyz,
       frame_info.camera_transform, draw_position, frame_info.camera_position);
   v_viewvector = frame_info.camera_position - vertex.world_position;
   v_normal = vec3(0.0);

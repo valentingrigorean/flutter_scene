@@ -30,6 +30,7 @@ class InstancedMesh implements MeshDrawSource {
     required this.material,
     this.cullInstances = false,
     this.sortTransparentInstances = true,
+    this.nodeSpaceInstances = false,
   });
 
   /// The geometry drawn for every instance.
@@ -50,6 +51,18 @@ class InstancedMesh implements MeshDrawSource {
   /// Disable this for dense particles or other order-independent batches when
   /// the sort costs more than the small blending difference it produces.
   final bool sortTransparentInstances;
+
+  /// Whether the renderer keeps each instance record relative to the owning
+  /// node and sends the node's world transform to the vertex stage as one
+  /// uniform.
+  ///
+  /// Moving the node then rewrites no instance record, so the retained
+  /// instance buffer of a large spatial cell survives a move of the whole
+  /// cell. Such a mesh draws alone from its own buffer in every pass: it joins
+  /// no cross-node batch, and the renderer culls it by its aggregate bounds
+  /// only, whatever [cullInstances] states. The geometry needs an instanced
+  /// vertex layout; other geometry draws as if this were false.
+  final bool nodeSpaceInstances;
 
   /// Picks how many leading instances and which index range each draw uses,
   /// or null to draw everything. Order instances so the ones worth keeping

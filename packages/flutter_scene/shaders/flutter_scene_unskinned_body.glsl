@@ -14,6 +14,9 @@ uniform FrameInfo {
   // The same as slope-scaled offsets: x the draw's layer, z its tie-break
   // rank, y one instance rank's. See ApplySlopedDepthOffset.
   vec4 depth_slope;
+  // The transform applied after the instance-rate model transform: a node's
+  // world transform for node-space instance records, the identity otherwise.
+  mat4 instance_frame;
 }
 frame_info;
 
@@ -57,8 +60,9 @@ void main() {
 #define in_normal normal
 #endif
 
-  mat4 model_transform = mat4(model_transform_0, model_transform_1,
-                              model_transform_2, model_transform_3);
+  mat4 model_transform =
+      frame_info.instance_frame * mat4(model_transform_0, model_transform_1,
+                                       model_transform_2, model_transform_3);
   vec4 model_position = model_transform * vec4(in_position, 1.0);
 
   VertexInputs vertex;
@@ -88,7 +92,7 @@ void main() {
   vec4 clip_position = frame_info.camera_transform * vec4(draw_position, 1.0);
   gl_Position = ApplySlopedDepthOffset(
       clip_position, frame_info.depth_offset, frame_info.depth_slope,
-      model_transform_3.xyz, frame_info.camera_transform, draw_position,
+      model_transform[3].xyz, frame_info.camera_transform, draw_position,
       frame_info.camera_position, vertex.world_normal);
   v_viewvector = frame_info.camera_position - vertex.world_position;
   // Unit length before interpolation (UnitOrZero, normal_transform.glsl).
