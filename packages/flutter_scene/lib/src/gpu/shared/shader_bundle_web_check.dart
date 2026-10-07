@@ -11,7 +11,7 @@ import 'glsl_transpile.dart';
 final RegExp _version300 = RegExp(r'^#version\s+300\s+es\b', multiLine: true);
 
 final RegExp _output = RegExp(
-  r'^\s*(?:layout\s*\([^)]*\)\s*)?out\s+[^;]+;',
+  r'^\s*(?:layout\s*\([^)]*\)\s*)?out\s+[^;(){}]+;',
   multiLine: true,
 );
 
