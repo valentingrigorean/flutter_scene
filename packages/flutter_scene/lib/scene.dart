@@ -263,6 +263,7 @@ export 'src/light.dart'
         RectAreaLight,
         ShadowCascade,
         ShadowCasterFaces,
+        SunHorizon,
         ShadowCastingMode,
         SpotLight;
 export 'src/render/custom_render_pass.dart'

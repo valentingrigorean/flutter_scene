@@ -27,15 +27,16 @@ import 'package:flutter_scene/src/render/uniform_slots.dart';
 /// [PhysicallyBasedMaterial] and `PreprocessedMaterial` use it so the lighting
 /// packing lives in one place.
 class EngineLightingUniforms {
-  /// The float count of the full `FragInfo` block (832 bytes / 208 floats:
+  /// The float count of the full `FragInfo` block (864 bytes / 216 floats:
   /// the mat4 `environment_transform` ends at float 155, the `ssao_params`
   /// vec4 at floats 156..159, then the `radiance_blend` vec4 at floats
   /// 160..163, `ssao_lighting` at 164..167, `model_scale` at 168..171,
   /// `dielectric_f0` at 172..175, the five irradiance-field vec4s at
-  /// 176..195, `froxel_grid` at 196..199, `view_projection` at 200..203, and
-  /// `camera_position` at 204..207). See the layout map in the
+  /// 176..195, `froxel_grid` at 196..199, `view_projection` at 200..203,
+  /// `camera_position` at 204..207, `sun_horizon` at 208..211 and
+  /// `sun_horizon_light` at 212..215). See the layout map in the
   /// implementation.
-  static const fragInfoFloatCount = 208;
+  static const fragInfoFloatCount = 216;
 
   /// Index of the `dielectric_f0` vec4 in `FragInfo`. [packInto] writes the
   /// standard 0.04 dielectric reflectance; a material with a non-default
@@ -274,6 +275,22 @@ class EngineLightingUniforms {
     fragInfo[205] = cameraPosition?.y ?? 0.0;
     fragInfo[206] = cameraPosition?.z ?? 0.0;
     fragInfo[207] = 0.0;
+    // sun_horizon [208..211] and sun_horizon_light [212..215]: the sphere the
+    // light shines on as a sun (center in xyz, twilight angle in w, 0 when
+    // the light has none) and the low-sun color (rgb) and night ambient
+    // factor (a). Neutral values without a horizon, so the shader's per-
+    // fragment shares come out as full daylight and no night.
+    final horizon = light?.horizon;
+    fragInfo[208] = horizon?.center.x ?? 0.0;
+    fragInfo[209] = horizon?.center.y ?? 0.0;
+    fragInfo[210] = horizon?.center.z ?? 0.0;
+    fragInfo[211] = horizon != null && horizon.twilight > 0
+        ? horizon.twilight
+        : 0.0;
+    fragInfo[212] = horizon?.lowSunColor.x ?? 1.0;
+    fragInfo[213] = horizon?.lowSunColor.y ?? 1.0;
+    fragInfo[214] = horizon?.lowSunColor.z ?? 1.0;
+    fragInfo[215] = horizon?.nightEnvironmentScale ?? 1.0;
     // spot_shadow_params [12..15] (more of the unused SH region): the shared
     // spot-shadow parameters. x is the total non-cascade tile count (spot
     // tiles then point-shadow tiles); 0 disables both spot and point shadow

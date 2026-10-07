@@ -190,6 +190,13 @@ uniform FragInfo {
   highp vec4 view_projection;
   // xyz: the camera's world-space position. w unused.
   highp vec4 camera_position;
+  // The sphere the directional light shines on as a sun (SunHorizon). xyz:
+  // its world-space center; w: the twilight angle in radians, 0 when the
+  // light has no horizon (the shares below are then full day and no night).
+  highp vec4 sun_horizon;
+  // rgb: the light's color factor with the sun on the horizon; a: the
+  // image-based ambient factor at full night.
+  vec4 sun_horizon_light;
 }
 frag_info;
 
