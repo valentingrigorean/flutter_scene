@@ -2468,9 +2468,10 @@ base class Scene implements SceneGraph {
 
   // Lists for [unbuiltPipelines] each caster of [view]'s shadow pass whose
   // shadow pipeline is unbuilt: an opaque caster inside a frustum the pass
-  // draws, under that frustum's caster channels. A cached tile drifts up to
-  // its slack from the ideal cascade and is fit with that slack, plus a
-  // margin for the fit tolerance and texel snapping of [DirectionalShadowCache].
+  // draws, under that frustum's caster channels. A cached tile reaches up to
+  // [DirectionalShadowCache.maxReachFactor] ideal radii from the ideal
+  // cascade's center, plus a margin for the fit tolerance and texel snapping
+  // of [DirectionalShadowCache].
   void _addUnbuiltShadowCasters(
     List<UnbuiltPipelineDraw> draws,
     RenderView view,
@@ -2483,7 +2484,7 @@ base class Scene implements SceneGraph {
     final light = lightComponent?.light;
     if (light != null && cascades.isNotEmpty) {
       final direction = lightComponent!.worldDirection.normalized();
-      const slack = (2 * DirectionalShadowCache.slackFactor - 1) * 1.01;
+      const slack = DirectionalShadowCache.maxReachFactor * 1.01;
       final cached = light.cacheStaticShadows && _refreshStaticShadowMetadata();
       for (final cascade in cascades) {
         final center = cascade.center;
