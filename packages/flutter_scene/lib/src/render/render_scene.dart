@@ -287,6 +287,13 @@ class RenderItem {
 
   final List<int> _visibleInstanceScratch = [];
 
+  /// Indices the shadow map being drawn accepts, or null when every instance
+  /// casts into it. Valid from [cullShadowInstances] until the next call.
+  @internal
+  List<int>? shadowInstanceIndices;
+
+  List<int>? _shadowInstanceScratch;
+
   /// Packed world-space instance AABBs, six floats per instance.
   Float32List? _instanceWorldBounds;
 
@@ -479,12 +486,42 @@ class RenderItem {
   /// Refreshes [visibleInstanceIndices] and returns whether anything remains.
   @internal
   bool cullVisibleInstances(Frustum frustum, List<Plane> additionalPlanes) {
+    final visible = _instancesInside(
+      frustum,
+      additionalPlanes,
+      _visibleInstanceScratch,
+    );
+    visibleInstanceIndices = visible;
+    return visible == null || visible.isNotEmpty;
+  }
+
+  /// Refreshes [shadowInstanceIndices] for a shadow map drawn through
+  /// [frustum] and [additionalPlanes], and returns whether anything remains.
+  ///
+  /// Kept apart from [cullVisibleInstances], whose result the color pass
+  /// reads after the shadow maps of the frame are drawn.
+  @internal
+  bool cullShadowInstances(Frustum frustum, List<Plane> additionalPlanes) {
+    final visible = _instancesInside(
+      frustum,
+      additionalPlanes,
+      _shadowInstanceScratch ??= [],
+    );
+    shadowInstanceIndices = visible;
+    return visible == null || visible.isNotEmpty;
+  }
+
+  // The instances whose bounds meet [frustum] and [additionalPlanes],
+  // ascending in [scratch], or null when every instance does or the item does
+  // not cull its instances.
+  List<int>? _instancesInside(
+    Frustum frustum,
+    List<Plane> additionalPlanes,
+    List<int> scratch,
+  ) {
     final instances = instanceTransforms;
     final bounds = geometry.localBounds;
-    if (!cullInstances || instances == null || bounds == null) {
-      visibleInstanceIndices = null;
-      return true;
-    }
+    if (!cullInstances || instances == null || bounds == null) return null;
 
     final aggregate = worldBounds;
     if (aggregate != null &&
@@ -501,10 +538,7 @@ class RenderItem {
           break;
         }
       }
-      if (insideAdditionalPlanes) {
-        visibleInstanceIndices = null;
-        return true;
-      }
+      if (insideAdditionalPlanes) return null;
     }
 
     if (_instanceWorldBounds?.length != instances.length * 6) {
@@ -512,7 +546,7 @@ class RenderItem {
     }
     final instanceWorldBounds = _instanceWorldBounds!;
 
-    final visible = _visibleInstanceScratch..clear();
+    final visible = scratch..clear();
     for (var i = 0; i < instances.length; i++) {
       final offset = i * 6;
       if (_outsidePlane(instanceWorldBounds, offset, frustum.plane0) ||
@@ -532,10 +566,7 @@ class RenderItem {
       }
       if (!outside) visible.add(i);
     }
-    visibleInstanceIndices = visible.length == instances.length
-        ? null
-        : visible;
-    return visible.isNotEmpty;
+    return visible.length == instances.length ? null : visible;
   }
 
   // World-space instance AABBs for the near-plane fit when instance culling
