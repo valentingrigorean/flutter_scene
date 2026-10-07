@@ -126,7 +126,16 @@ class InstancedMeshComponent extends Component {
       item.instanceBounds = instancedMesh.aggregateBounds;
     }
     if (boundsChangedByInput) {
-      item.refreshInstanceData();
+      final rows =
+          worldTransformVersion == _worldTransformVersion &&
+              geometryBoundsVersion == _geometryBoundsVersion
+          ? instancedMesh.rowsChangedSince(_instanceRevision)
+          : null;
+      if (rows == null) {
+        item.refreshInstanceData();
+      } else {
+        item.refreshInstanceRows(rows);
+      }
     }
 
     final wasBounded = item.worldBounds != null;

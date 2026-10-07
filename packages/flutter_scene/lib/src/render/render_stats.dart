@@ -53,6 +53,11 @@ class RenderCounters {
   /// Nodes folded into those merged draws.
   int batchedItems = 0;
 
+  /// Bytes of per-instance world records (transform, color and custom
+  /// attributes) instanced items packed again after their instances or their
+  /// node changed. A change to some instances packs only their records.
+  int instanceBytesPacked = 0;
+
   void reset() {
     draws = 0;
     instances = 0;
@@ -65,6 +70,7 @@ class RenderCounters {
     pipelineBuilds = 0;
     batches = 0;
     batchedItems = 0;
+    instanceBytesPacked = 0;
   }
 
   void copyFrom(RenderCounters other) {
@@ -79,6 +85,7 @@ class RenderCounters {
     pipelineBuilds = other.pipelineBuilds;
     batches = other.batches;
     batchedItems = other.batchedItems;
+    instanceBytesPacked = other.instanceBytesPacked;
   }
 
   /// Sets this to `now - start`.
@@ -94,6 +101,7 @@ class RenderCounters {
     pipelineBuilds = now.pipelineBuilds - start.pipelineBuilds;
     batches = now.batches - start.batches;
     batchedItems = now.batchedItems - start.batchedItems;
+    instanceBytesPacked = now.instanceBytesPacked - start.instanceBytesPacked;
   }
 
   Map<String, int> toJson() => {
@@ -108,6 +116,7 @@ class RenderCounters {
     'pipelineBuilds': pipelineBuilds,
     'batches': batches,
     'batchedItems': batchedItems,
+    'instanceBytesPacked': instanceBytesPacked,
   };
 }
 

@@ -479,6 +479,53 @@ void main() {
       expect(bound, greaterThan(50));
     });
 
+    test('a spread instanced set past the per-instance fit limit that culls '
+        'per instance is bounded per instance from its culling cache', () {
+      const count = 4096;
+      final instances = [
+        for (var i = 0; i < count; i++)
+          Matrix4.translation(
+            Vector3(
+              math.sin(i / count * math.pi * 2) * 100,
+              10,
+              math.cos(i / count * math.pi * 2) * 100,
+            ),
+          ),
+      ];
+      RenderItem ring({required bool culls}) =>
+          RenderItem(
+              geometry: _BoundedGeometry(
+                Aabb3.minMax(Vector3.all(-0.5), Vector3.all(0.5)),
+              ),
+              material: _StubMaterial(),
+            )
+            ..visible = true
+            ..cullInstances = culls
+            ..instanceTransforms = instances
+            ..worldBounds = Aabb3.minMax(
+              Vector3(-100.5, 9.5, -100.5),
+              Vector3(100.5, 10.5, 100.5),
+            )
+            ..refreshInstanceData();
+      final eye = Vector3(0, 0, 0);
+      final forward = Vector3(0, 0, 1);
+      final camera = PerspectiveCamera(
+        position: eye,
+        target: forward,
+        fovNear: 0.1,
+        fovFar: 1000,
+      );
+      final frustum = cullingFrustumOf(camera, const ui.Size(800, 600));
+      expect(
+        ring(culls: true).depthLowerBound(frustum, eye, forward, 0.7, 1e9),
+        greaterThan(50),
+      );
+      expect(
+        ring(culls: false).depthLowerBound(frustum, eye, forward, 0.7, 1e9),
+        lessThan(10),
+      );
+    });
+
     test('the BVH query matches a brute-force minimum', () {
       final random = math.Random(42);
       final items = <RenderItem>[];

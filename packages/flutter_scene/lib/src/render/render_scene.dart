@@ -27,6 +27,7 @@ import 'package:flutter_scene/src/render/instance_packing.dart'
     show invalidateRetainedInstanceData;
 import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/render/lod.dart';
+import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render_view.dart';
 
@@ -283,10 +284,29 @@ class RenderItem {
   static final Matrix4 _instanceWorldScratch = Matrix4.zero();
   static final Aabb3 _instanceAabbScratch = Aabb3();
 
+  // The stores behind [_instanceWorldBounds], [instanceWorldData] and
+  // [instanceWorldWindingFlipped], which are views of their first rows. A
+  // store grows geometrically, so rows appended one at a time pack only
+  // themselves.
+  Float32List _instanceBoundsStore = Float32List(0);
+  Float32List _instanceDataStore = Float32List(0);
+  Uint8List _instanceWindingStore = Uint8List(0);
+  int _instanceRecordFloats = 0;
+
   /// Rebuilds cached world-space bounds and draw data after a node, geometry,
   /// or instance change. Static groups pay this once during setup.
   @internal
-  void refreshInstanceData() {
+  void refreshInstanceData() => _packInstances(null);
+
+  /// Rebuilds the cached bounds and draw data of [rows] only, after an
+  /// instance change that moved no other row (see
+  /// [InstancedMesh.rowsChangedSince]). A row at or past the instance count
+  /// was removed from the end. Falls back to [refreshInstanceData] when the
+  /// record layout changed since the last pack.
+  @internal
+  void refreshInstanceRows(List<int> rows) => _packInstances(rows);
+
+  void _packInstances(List<int>? rows) {
     _depthFitInstanceBounds = null;
     final instances = instanceTransforms;
     final bounds = geometry.localBounds;
@@ -297,27 +317,69 @@ class RenderItem {
       instanceWorldWindingFlipped = null;
       return;
     }
-    final boundsLength = instances.length * 6;
-    final packedBounds = bounds == null || !cullInstances
-        ? null
-        : (_instanceWorldBounds?.length == boundsLength
-              ? _instanceWorldBounds!
-              : Float32List(boundsLength));
+    final count = instances.length;
+    final packsBounds = bounds != null && cullInstances;
     final attributes = instanceAttributeData;
     final attributeFloats = attributes == null ? 0 : instanceAttributeFloats;
     final recordFloats = 20 + attributeFloats;
-    final dataLength = instances.length * recordFloats;
-    final packedData = colors == null || colors.length != instances.length
-        ? null
-        : (instanceWorldData?.length == dataLength
-              ? instanceWorldData!
-              : Float32List(dataLength));
-    final packedWinding =
-        instanceWorldWindingFlipped?.length == instances.length
-        ? instanceWorldWindingFlipped!
-        : Uint8List(instances.length);
+    final packsData = colors != null && colors.length == count;
+    var changed = rows;
+    if (changed != null &&
+        (instanceWorldWindingFlipped == null ||
+            (_instanceWorldBounds != null) != packsBounds ||
+            (instanceWorldData != null) != packsData ||
+            _instanceRecordFloats != recordFloats)) {
+      changed = null;
+    }
+    final keep = changed != null;
+    _instanceRecordFloats = recordFloats;
+    if (packsBounds) {
+      final store = _grownStore(_instanceBoundsStore, count * 6, keep);
+      if (!identical(store, _instanceBoundsStore) ||
+          _instanceWorldBounds?.length != count * 6) {
+        _instanceBoundsStore = store;
+        _instanceWorldBounds = Float32List.sublistView(store, 0, count * 6);
+      }
+    } else {
+      _instanceWorldBounds = null;
+    }
+    if (packsData) {
+      final floats = count * recordFloats;
+      final store = _grownStore(_instanceDataStore, floats, keep);
+      if (!identical(store, _instanceDataStore) ||
+          instanceWorldData?.length != floats) {
+        _instanceDataStore = store;
+        instanceWorldData = Float32List.sublistView(store, 0, floats);
+      }
+    } else {
+      instanceWorldData = null;
+    }
+    var windingStore = _instanceWindingStore;
+    if (windingStore.length < count) {
+      windingStore = Uint8List(math.max(count, windingStore.length * 2));
+      if (keep) {
+        windingStore.setRange(
+          0,
+          _instanceWindingStore.length,
+          _instanceWindingStore,
+        );
+      }
+    }
+    if (!identical(windingStore, _instanceWindingStore) ||
+        instanceWorldWindingFlipped?.length != count) {
+      _instanceWindingStore = windingStore;
+      instanceWorldWindingFlipped = Uint8List.sublistView(
+        windingStore,
+        0,
+        count,
+      );
+    }
+    final packedBounds = _instanceWorldBounds;
+    final packedData = instanceWorldData;
+    final packedWinding = instanceWorldWindingFlipped!;
     final retainedWinding = instanceWindingFlipped;
-    for (var i = 0; i < instances.length; i++) {
+    var packedRows = 0;
+    void packRow(int i) {
       _instanceWorldScratch
         ..setFrom(worldTransform)
         ..multiply(instances[i]);
@@ -345,15 +407,34 @@ class RenderItem {
             i * attributeFloats,
           );
         }
+        packedRows++;
       }
       final instanceFlipped =
           retainedWinding?[i] ?? (instances[i].determinant() < 0);
       packedWinding[i] = windingFlipped != instanceFlipped ? 1 : 0;
     }
-    _instanceWorldBounds = packedBounds;
+
+    if (changed == null) {
+      for (var i = 0; i < count; i++) {
+        packRow(i);
+      }
+    } else {
+      var last = -1;
+      for (final i in changed) {
+        if (i < count && i != last) packRow(i);
+        last = i;
+      }
+    }
+    activeRenderCounters.instanceBytesPacked +=
+        packedRows * recordFloats * Float32List.bytesPerElement;
     if (packedData != null) invalidateRetainedInstanceData(packedData);
-    instanceWorldData = packedData;
-    instanceWorldWindingFlipped = packedWinding;
+  }
+
+  static Float32List _grownStore(Float32List store, int floats, bool keep) {
+    if (store.length >= floats) return store;
+    final grown = Float32List(math.max(floats, store.length * 2));
+    if (keep) grown.setRange(0, store.length, store);
+    return grown;
   }
 
   /// Refreshes [visibleInstanceIndices] and returns whether anything remains.
@@ -422,10 +503,12 @@ class RenderItem {
   // keeps none, built on demand and dropped by [refreshInstanceData].
   Float32List? _depthFitInstanceBounds;
 
-  // Instanced items with more instances than this fall back to their
-  // aggregate bounds in the near-plane fit, bounding its per-frame cost.
-  // Dense sets (grass, debris) hug the ground, where the aggregate bound is
-  // already close to the per-instance one.
+  // Instanced items with more instances than this and no culling cache fall
+  // back to their aggregate bounds in the near-plane fit, bounding its
+  // per-frame cost. Dense sets (grass, debris) hug the ground, where the
+  // aggregate bound is already close to the per-instance one. An item that
+  // culls per instance already scans its cached bounds each frame, so the fit
+  // reads them at any count.
   static const int _maxDepthFitInstances = 2048;
 
   /// A lower bound on the planar view depth of any of this item's visible
@@ -451,7 +534,8 @@ class RenderItem {
     if (whole >= best ||
         instances == null ||
         localBounds == null ||
-        instances.length > _maxDepthFitInstances) {
+        (instances.length > _maxDepthFitInstances &&
+            _instanceWorldBounds?.length != instances.length * 6)) {
       return whole;
     }
     final packed = _packedInstanceBounds(instances, localBounds);
