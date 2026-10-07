@@ -3,6 +3,7 @@
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/render_scene.dart';
+import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:flutter_scene/scene.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
@@ -295,5 +296,222 @@ void main() {
       item.refreshInstanceData();
       expect(item.cullVisibleInstances(frustum, const []), isFalse);
     });
+  });
+
+  group('InstancedMesh row changes', () {
+    test('lists the rows each change touched since a revision', () {
+      final mesh = _instancedMesh();
+      for (var i = 0; i < 4; i++) {
+        mesh.addInstance(Matrix4.translation(Vector3(i * 2.0, 0, 0)));
+      }
+      final seen = mesh.revision;
+      mesh
+        ..setInstanceTransform(2, Matrix4.identity())
+        ..setInstanceColor(1, Vector4(1, 0, 0, 1));
+      expect(mesh.rowsChangedSince(seen), [2, 1]);
+      expect(mesh.rowsChangedSince(mesh.revision), isEmpty);
+
+      final beforeAppend = mesh.revision;
+      mesh
+        ..addInstance(Matrix4.identity())
+        ..removeInstanceAt(4);
+      expect(mesh.rowsChangedSince(beforeAppend), [4, 4]);
+      expect(mesh.instanceCount, 4);
+    });
+
+    test('a removal before the last row, a clear or a bulk update moves '
+        'rows, so no row list stands for it', () {
+      InstancedMesh filled() {
+        final mesh = _instancedMesh();
+        for (var i = 0; i < 3; i++) {
+          mesh.addInstance(Matrix4.identity());
+        }
+        return mesh;
+      }
+
+      final removed = filled();
+      final seen = removed.revision;
+      removed.removeInstanceAt(0);
+      expect(removed.rowsChangedSince(seen), isNull);
+
+      final cleared = filled();
+      final clearedFrom = cleared.revision;
+      cleared.clearInstances();
+      expect(cleared.rowsChangedSince(clearedFrom), isNull);
+
+      final bulk = filled();
+      final bulkFrom = bulk.revision;
+      bulk.updateInstanceTransforms((_) {});
+      expect(bulk.rowsChangedSince(bulkFrom), isNull);
+      expect(bulk.rowsChangedSince(bulk.revision), isEmpty);
+    });
+
+    test('a log longer than the instances restarts, so a revision before it '
+        'reads every row again', () {
+      final mesh = _instancedMesh()..addInstance(Matrix4.identity());
+      final seen = mesh.revision;
+      for (var i = 0; i < 80; i++) {
+        mesh.setInstanceColor(0, Vector4(i / 80, 0, 0, 1));
+      }
+      expect(mesh.rowsChangedSince(seen), isNull);
+      expect(mesh.rowsChangedSince(mesh.revision), isEmpty);
+    });
+
+    test('aggregate bounds after a row change match bounds read from every '
+        'row', () {
+      final aabb = Aabb3.minMax(Vector3.all(-0.5), Vector3.all(0.5));
+      final mesh = _instancedMesh(aabb: aabb);
+      for (var i = 0; i < 100; i++) {
+        mesh.addInstance(Matrix4.translation(Vector3(i * 1.0, 0, 0)));
+      }
+      expect(mesh.aggregateBounds!.max.x, closeTo(99.5, 1e-6));
+
+      mesh.setInstanceTransform(99, Matrix4.translation(Vector3(10, 0, 0)));
+      expect(mesh.aggregateBounds!.max.x, closeTo(98.5, 1e-6));
+      mesh.setInstanceTransform(0, Matrix4.translation(Vector3(0, -7, 0)));
+      expect(mesh.aggregateBounds!.min.y, closeTo(-7.5, 1e-6));
+      mesh.removeInstanceAt(99);
+      mesh.removeInstanceAt(98);
+      expect(mesh.aggregateBounds!.max.x, closeTo(97.5, 1e-6));
+    });
+  });
+
+  group('RenderItem instance records', () {
+    const rows = 1000;
+    const recordBytes = 20 * 4;
+    final aabb = Aabb3.minMax(Vector3.all(-0.5), Vector3.all(0.5));
+
+    RenderItem itemOf(InstancedMesh mesh) =>
+        RenderItem(geometry: mesh.geometry, material: mesh.material)
+          ..cullInstances = true
+          ..instanceTransforms = mesh.instances
+          ..instanceColors = mesh.colors
+          ..instanceWindingFlipped = mesh.windingFlipped;
+
+    InstancedMesh meshOf(int count) {
+      final mesh = _instancedMesh(aabb: aabb);
+      for (var i = 0; i < count; i++) {
+        mesh.addInstance(
+          Matrix4.translation(Vector3(i * 2.0, 0, 0)),
+          color: Vector4(i / count, 0, 0, 1),
+        );
+      }
+      return mesh;
+    }
+
+    int packed(void Function() pack) {
+      final before = activeRenderCounters.instanceBytesPacked;
+      pack();
+      return activeRenderCounters.instanceBytesPacked - before;
+    }
+
+    void expectSameRecords(RenderItem item, InstancedMesh mesh) {
+      final fresh = itemOf(mesh)..refreshInstanceData();
+      expect(item.instanceWorldData, fresh.instanceWorldData);
+      expect(
+        item.instanceWorldWindingFlipped,
+        fresh.instanceWorldWindingFlipped,
+      );
+      final frustum = Frustum.matrix(
+        makeOrthographicMatrix(-5, 5, -5, 5, -5, 5),
+      );
+      item
+        ..worldBounds = Aabb3.minMax(Vector3.all(-1e6), Vector3.all(1e6))
+        ..cullVisibleInstances(frustum, const []);
+      fresh
+        ..worldBounds = Aabb3.minMax(Vector3.all(-1e6), Vector3.all(1e6))
+        ..cullVisibleInstances(frustum, const []);
+      expect(item.visibleInstanceIndices, fresh.visibleInstanceIndices);
+    }
+
+    test('a change of one row of $rows packs only that row\'s record, '
+        '$recordBytes bytes', () {
+      final mesh = meshOf(rows);
+      final item = itemOf(mesh);
+      expect(packed(item.refreshInstanceData), rows * recordBytes);
+      final seen = mesh.revision;
+
+      mesh.setInstanceTransform(500, Matrix4.translation(Vector3(1, 0, 0)));
+      expect(
+        packed(() => item.refreshInstanceRows(mesh.rowsChangedSince(seen)!)),
+        recordBytes,
+      );
+      expectSameRecords(item, mesh);
+
+      final again = mesh.revision;
+      mesh
+        ..setInstanceColor(5, Vector4(0, 1, 0, 1))
+        ..setInstanceColor(6, Vector4(0, 1, 0, 1))
+        ..setInstanceTransform(5, Matrix4.translation(Vector3(0, 9, 0)));
+      expect(
+        packed(() => item.refreshInstanceRows(mesh.rowsChangedSince(again)!)),
+        2 * recordBytes,
+      );
+      expectSameRecords(item, mesh);
+    });
+
+    test('rows appended one at a time and removed from the end pack only '
+        'themselves', () {
+      final mesh = meshOf(rows);
+      final item = itemOf(mesh)..refreshInstanceData();
+      var seen = mesh.revision;
+      for (var i = 0; i < 300; i++) {
+        mesh.addInstance(Matrix4.translation(Vector3(0, i * 2.0, 0)));
+        expect(
+          packed(() => item.refreshInstanceRows(mesh.rowsChangedSince(seen)!)),
+          recordBytes,
+        );
+        seen = mesh.revision;
+      }
+      expectSameRecords(item, mesh);
+
+      mesh
+        ..setInstanceTransform(3, mesh.instances.last)
+        ..removeInstanceAt(mesh.instanceCount - 1);
+      expect(
+        packed(() => item.refreshInstanceRows(mesh.rowsChangedSince(seen)!)),
+        recordBytes,
+      );
+      expect(item.instanceWorldData, hasLength((rows + 299) * 20));
+      expectSameRecords(item, mesh);
+    });
+
+    test('a mounted component packs only the rows its mesh changed, and '
+        'every row after its node moves', () {
+      final mesh = meshOf(rows);
+      final component = InstancedMeshComponent(mesh);
+      final node = Node()..addComponent(component);
+      Node().add(node);
+      node.parent!.debugMountInto(RenderScene());
+      expect(packed(component.refreshRenderItem), rows * recordBytes);
+      expect(packed(component.refreshRenderItem), 0);
+
+      mesh
+        ..setInstanceTransform(7, Matrix4.translation(Vector3(0, 3, 0)))
+        ..setInstanceColor(7, Vector4(0, 0, 1, 1));
+      expect(packed(component.refreshRenderItem), recordBytes);
+
+      node.localTransform = Matrix4.translation(Vector3(0, 0, 5));
+      expect(packed(component.refreshRenderItem), rows * recordBytes);
+    });
+
+    test(
+      'a record layout that changed since the last pack packs every row',
+      () {
+        final mesh = meshOf(10);
+        final item = itemOf(mesh)
+          ..instanceColors = null
+          ..refreshInstanceData();
+        expect(item.instanceWorldData, isNull);
+        final seen = mesh.revision;
+        mesh.setInstanceColor(4, Vector4(0, 1, 0, 1));
+        item.instanceColors = mesh.colors;
+        expect(
+          packed(() => item.refreshInstanceRows(mesh.rowsChangedSince(seen)!)),
+          10 * recordBytes,
+        );
+        expectSameRecords(item, mesh);
+      },
+    );
   });
 }

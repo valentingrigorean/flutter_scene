@@ -1,4 +1,5 @@
 import 'dart:collection';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_scene/src/fmat/fmat_ast.dart';
@@ -62,9 +63,42 @@ class InstancedMesh implements MeshDrawSource {
   List<Matrix4>? _instanceUpdateView;
 
   Aabb3? _boundsCache;
-  bool _boundsDirty = true;
+  int _boundsRevision = -1;
   int _boundsGeometryVersion = -1;
+  Float32List _rowBounds = Float32List(0);
   int _revision = 0;
+
+  // The rows each revision since [_changedFrom] changed, one entry per
+  // revision, so a consumer that saw an earlier revision rebuilds only those
+  // rows. A change that moves rows (a removal before the last, a clear, a bulk
+  // update) restarts the log, as does a log longer than the instances.
+  final List<int> _changedRows = [];
+  int _changedFrom = 0;
+
+  void _rowChanged(int index) {
+    _revision++;
+    if (_changedRows.length < _instances.length + 64) {
+      _changedRows.add(index);
+    } else {
+      _changedRows.clear();
+      _changedFrom = _revision;
+    }
+  }
+
+  void _rowsMoved() {
+    _revision++;
+    _changedRows.clear();
+    _changedFrom = _revision;
+  }
+
+  /// The rows changed after [revision], oldest first and possibly repeated,
+  /// or null when a change since then moved rows, so every row must be read
+  /// again. A row at or past [instanceCount] was removed from the end.
+  @internal
+  List<int>? rowsChangedSince(int revision) {
+    if (revision < _changedFrom || revision > _revision) return null;
+    return _changedRows.sublist(revision - _changedFrom);
+  }
 
   /// The number of instances.
   int get instanceCount => _instances.length;
@@ -78,8 +112,7 @@ class InstancedMesh implements MeshDrawSource {
     _colors.add((color ?? _white).clone());
     _windingFlipped.add(transform.determinant() < 0);
     _growAttributeStorage();
-    _boundsDirty = true;
-    _revision++;
+    _rowChanged(_instances.length - 1);
     return _instances.length - 1;
   }
 
@@ -89,8 +122,7 @@ class InstancedMesh implements MeshDrawSource {
   void setInstanceTransform(int index, Matrix4 transform) {
     _instances[index].setFrom(transform);
     _windingFlipped[index] = transform.determinant() < 0;
-    _boundsDirty = true;
-    _revision++;
+    _rowChanged(index);
   }
 
   /// Updates every instance transform in place and invalidates the batch once.
@@ -110,15 +142,14 @@ class InstancedMesh implements MeshDrawSource {
           _windingFlipped[i] = _instances[i].determinant() < 0;
         }
       }
-      _boundsDirty = true;
-      _revision++;
+      _rowsMoved();
     }
   }
 
   /// Replaces the color multiplier of the instance at [index].
   void setInstanceColor(int index, Vector4 color) {
     _colors[index].setFrom(color);
-    _revision++;
+    _rowChanged(index);
   }
 
   /// Sets one declared per-instance attribute on the instance at [index].
@@ -151,7 +182,7 @@ class InstancedMesh implements MeshDrawSource {
           'a ${value.runtimeType}.',
         );
     }
-    _revision++;
+    _rowChanged(index);
   }
 
   /// Writes every declared per-instance attribute of the instance at [index]
@@ -172,7 +203,7 @@ class InstancedMesh implements MeshDrawSource {
       );
     }
     _attributeData.setAll(index * schema.floatCount, packed);
-    _revision++;
+    _rowChanged(index);
   }
 
   /// Removes the instance at [index]. Instances after it shift down by
@@ -196,8 +227,11 @@ class InstancedMesh implements MeshDrawSource {
     _instances.removeAt(index);
     _colors.removeAt(index);
     _windingFlipped.removeAt(index);
-    _boundsDirty = true;
-    _revision++;
+    if (index == _instances.length) {
+      _rowChanged(index);
+    } else {
+      _rowsMoved();
+    }
   }
 
   /// Removes every instance.
@@ -207,8 +241,7 @@ class InstancedMesh implements MeshDrawSource {
     _windingFlipped.clear();
     _attributeUsed = 0;
     _attributeView = null;
-    _boundsDirty = true;
-    _revision++;
+    _rowsMoved();
   }
 
   static final Float32List _noAttributes = Float32List(0);
@@ -308,30 +341,68 @@ class InstancedMesh implements MeshDrawSource {
 
   /// Aggregate AABB over every instance, in the instanced mesh's local
   /// space, or `null` when [geometry] has no computable bounds or there
-  /// are no instances. Cached; recomputed after any instance change.
+  /// are no instances. Cached; after a change only the changed rows'
+  /// bounds are transformed again before the hull.
   @internal
   Aabb3? get aggregateBounds {
     final geometryVersion = geometry.localBoundsVersion;
-    if (_boundsDirty || _boundsGeometryVersion != geometryVersion) {
-      _boundsCache = _computeAggregateBounds();
-      _boundsDirty = false;
+    if (_boundsRevision != _revision ||
+        _boundsGeometryVersion != geometryVersion) {
+      final rows = _boundsGeometryVersion == geometryVersion
+          ? rowsChangedSince(_boundsRevision)
+          : null;
+      _boundsCache = _computeAggregateBounds(rows);
+      _boundsRevision = _revision;
       _boundsGeometryVersion = geometryVersion;
     }
     return _boundsCache;
   }
 
-  Aabb3? _computeAggregateBounds() {
+  static final Aabb3 _rowScratch = Aabb3();
+
+  Aabb3? _computeAggregateBounds(List<int>? rows) {
     final base = geometry.localBounds;
-    if (base == null || _instances.isEmpty) return null;
-    Aabb3? result;
-    for (final transform in _instances) {
-      final transformed = Aabb3.copy(base)..transform(transform);
-      if (result == null) {
-        result = transformed;
-      } else {
-        result.hull(transformed);
+    final count = _instances.length;
+    if (base == null || count == 0) return null;
+    if (_rowBounds.length < count * 6) {
+      final grown = Float32List(math.max(count, _rowBounds.length ~/ 3) * 6);
+      if (rows != null) grown.setRange(0, _rowBounds.length, _rowBounds);
+      _rowBounds = grown;
+    }
+    void boundRow(int row) {
+      _rowScratch
+        ..copyFrom(base)
+        ..transform(_instances[row]);
+      final offset = row * 6;
+      _rowBounds
+        ..[offset] = _rowScratch.min.x
+        ..[offset + 1] = _rowScratch.min.y
+        ..[offset + 2] = _rowScratch.min.z
+        ..[offset + 3] = _rowScratch.max.x
+        ..[offset + 4] = _rowScratch.max.y
+        ..[offset + 5] = _rowScratch.max.z;
+    }
+
+    if (rows == null) {
+      for (var row = 0; row < count; row++) {
+        boundRow(row);
+      }
+    } else {
+      for (final row in rows) {
+        if (row < count) boundRow(row);
       }
     }
-    return result;
+    final packed = _rowBounds;
+    var minX = packed[0], minY = packed[1], minZ = packed[2];
+    var maxX = packed[3], maxY = packed[4], maxZ = packed[5];
+    for (var offset = 6; offset < count * 6; offset += 6) {
+      minX = math.min(minX, packed[offset]);
+      minY = math.min(minY, packed[offset + 1]);
+      minZ = math.min(minZ, packed[offset + 2]);
+      maxX = math.max(maxX, packed[offset + 3]);
+      maxY = math.max(maxY, packed[offset + 4]);
+      maxZ = math.max(maxZ, packed[offset + 5]);
+    }
+    return Aabb3.minMax(Vector3(minX, minY, minZ), Vector3(maxX, maxY, maxZ));
   }
 }

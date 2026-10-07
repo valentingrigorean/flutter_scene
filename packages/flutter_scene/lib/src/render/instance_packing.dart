@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/frame_transients.dart';
+import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:vector_math/vector_math.dart';
 
 /// Reusable storage for instance data copied into transient GPU buffers.
@@ -943,13 +944,16 @@ ByteData? _lastPackedBytes;
 
 // Device-resident copies of cached instance records, keyed by the cached
 // list. An entry uploads only once the data has gone a frame unrefreshed, so
-// instancing refreshed every frame keeps using the transient arena.
+// instancing refreshed every frame keeps using the transient arena. The device
+// copy spans the whole store behind the list, so records appended within the
+// store's capacity are written in place.
 final Expando<_RetainedInstances> _retainedInstances = Expando();
 int _retainedInstanceFrame = 0;
 
 class _RetainedInstances {
   _RetainedInstances(this.seenFrame);
   final int seenFrame;
+  gpu.DeviceBuffer? buffer;
   gpu.BufferView? view;
   bool flipped = false;
   bool mixed = false;
@@ -961,6 +965,65 @@ void beginRetainedInstanceFrame() => _retainedInstanceFrame++;
 /// Drops the device copy of [packedWorldData] after its records change.
 void invalidateRetainedInstanceData(Float32List packedWorldData) {
   _retainedInstances[packedWorldData] = null;
+}
+
+/// Carries the device copy of [previous] over to [packedWorldData], the list
+/// over the same store after [rows] changed, and writes the records of those
+/// rows into it, [recordFloats] floats each.
+///
+/// While no submitted GPU work is pending the copy is written in place, the
+/// changed records only; otherwise in-flight frames may read it, so the whole
+/// store is copied to a new device buffer. A copy that no longer fits the
+/// records, or whose rows no longer share one winding, is dropped.
+void updateRetainedInstanceRows(
+  Float32List? previous,
+  Float32List packedWorldData,
+  Uint8List packedWindingFlipped,
+  List<int> rows,
+  int recordFloats,
+) {
+  final entry = previous == null ? null : _retainedInstances[previous];
+  if (previous != null) _retainedInstances[previous] = null;
+  final buffer = entry?.buffer;
+  final count = packedWindingFlipped.length;
+  if (entry == null ||
+      buffer == null ||
+      packedWorldData.offsetInBytes != 0 ||
+      packedWorldData.lengthInBytes > buffer.sizeInBytes) {
+    _retainedInstances[packedWorldData] = null;
+    return;
+  }
+  final winding = entry.flipped ? 1 : 0;
+  for (final row in rows) {
+    if (row < count && packedWindingFlipped[row] != winding) {
+      _retainedInstances[packedWorldData] = null;
+      return;
+    }
+  }
+  final recordBytes = recordFloats * Float32List.bytesPerElement;
+  if (rendererSubmissions.completedThrough <
+      rendererSubmissions.latestSubmission) {
+    final store = packedWorldData.buffer.asByteData(0, buffer.sizeInBytes);
+    entry.buffer = gpu.gpuContext.createDeviceBufferWithCopy(store);
+    activeRenderCounters.instanceBytesUploaded += store.lengthInBytes;
+  } else {
+    var low = buffer.sizeInBytes;
+    var high = 0;
+    for (final row in rows) {
+      if (row >= count) continue;
+      final offset = row * recordBytes;
+      buffer.overwrite(
+        packedWorldData.buffer.asByteData(offset, recordBytes),
+        destinationOffsetInBytes: offset,
+      );
+      activeRenderCounters.instanceBytesUploaded += recordBytes;
+      if (offset < low) low = offset;
+      if (offset + recordBytes > high) high = offset + recordBytes;
+    }
+    if (high > low) buffer.flush(offsetInBytes: low, lengthInBytes: high - low);
+  }
+  entry.view = null;
+  _retainedInstances[packedWorldData] = entry;
 }
 
 /// Binds every record of [packedWorldData] from a retained device buffer.
@@ -982,8 +1045,8 @@ bool? bindRetainedInstanceData(
     );
     return null;
   }
-  var view = entry.view;
-  if (view == null) {
+  var buffer = entry.buffer;
+  if (buffer == null) {
     if (entry.mixed || entry.seenFrame == _retainedInstanceFrame) return null;
     final first = packedWindingFlipped.isEmpty ? 0 : packedWindingFlipped[0];
     for (final flipped in packedWindingFlipped) {
@@ -991,14 +1054,18 @@ bool? bindRetainedInstanceData(
       entry.mixed = true;
       return null;
     }
-    final bytes = ByteData.sublistView(packedWorldData);
-    view = entry.view = gpu.BufferView(
-      gpu.gpuContext.createDeviceBufferWithCopy(bytes),
-      offsetInBytes: 0,
-      lengthInBytes: bytes.lengthInBytes,
-    );
+    final store = packedWorldData.offsetInBytes == 0
+        ? packedWorldData.buffer.asByteData()
+        : ByteData.sublistView(packedWorldData);
+    buffer = entry.buffer = gpu.gpuContext.createDeviceBufferWithCopy(store);
+    activeRenderCounters.instanceBytesUploaded += store.lengthInBytes;
     entry.flipped = first != 0;
   }
+  final view = entry.view ??= gpu.BufferView(
+    buffer,
+    offsetInBytes: 0,
+    lengthInBytes: packedWorldData.lengthInBytes,
+  );
   pass.bindVertexBuffer(view, slot: slot);
   return entry.flipped;
 }
