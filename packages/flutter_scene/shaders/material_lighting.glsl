@@ -388,8 +388,38 @@ highp vec3 EvaluateAnalyticLight(MaterialInputs material, vec3 light_vector,
 // color (linear HDR, premultiplied by alpha). This is the engine-owned half of
 // the material contract; a material's Surface() function fills `material` and
 // main() calls this.
+// The daylight (x) and night (y) shares of this fragment under the
+// directional light's SunHorizon: the sun's elevation above the fragment's own
+// horizon, whose up runs from the sphere's center through the fragment, over
+// the twilight angle. Without a horizon the fragment is in full daylight and no
+// night, (1, 0), which leaves every term below as it was.
+vec2 SunHorizonShares() {
+  vec2 shares = vec2(1.0, 0.0);
+#ifndef FLUTTER_SCENE_NO_DIRECTIONAL_LIGHT
+  if (frag_info.has_directional_light > 0.5 &&
+      frag_info.sun_horizon.w > 0.0) {
+    highp vec3 up = normalize(v_position - frag_info.sun_horizon.xyz);
+    highp vec3 toward_sun =
+        -normalize(frag_info.directional_light_direction.xyz);
+    highp float elevation = asin(clamp(dot(up, toward_sun), -1.0, 1.0));
+    shares = clamp(vec2(elevation, -elevation) / frag_info.sun_horizon.w,
+                   0.0, 1.0);
+  }
+#endif
+  return shares;
+}
+
 highp vec4 EvaluateLighting(MaterialInputs material) {
   ApplyClipVolume();
+  // The sun and the image-based ambient at this fragment's own sun elevation
+  // (SunHorizonShares); the scene-wide values when the light has no horizon.
+  vec2 horizon_shares = SunHorizonShares();
+  float lit_environment_intensity =
+      frag_info.environment_intensity *
+      mix(1.0, frag_info.sun_horizon_light.a, horizon_shares.y);
+  highp vec3 sun_radiance =
+      frag_info.directional_light_color.rgb * horizon_shares.x *
+      mix(frag_info.sun_horizon_light.rgb, vec3(1.0), horizon_shares.x);
   vec3 albedo = material.base_color.rgb;
   float alpha = material.base_color.a;
   vec3 normal = material.normal;
@@ -614,12 +644,12 @@ highp vec4 EvaluateLighting(MaterialInputs material) {
   // environment_intensity scales the image-based lighting; a bake carries its
   // own lightmap_intensity instead.
 #ifndef FLUTTER_SCENE_LIGHTMAP
-  irradiance *= frag_info.environment_intensity;
+  irradiance *= lit_environment_intensity;
 #ifdef FLUTTER_SCENE_PHYSICAL_MATERIAL
-  transmitted_irradiance *= frag_info.environment_intensity;
+  transmitted_irradiance *= lit_environment_intensity;
 #endif
 #endif
-  prefiltered_color *= frag_info.environment_intensity;
+  prefiltered_color *= lit_environment_intensity;
 
 #ifndef FLUTTER_SCENE_LIGHTMAP
   // The world-space irradiance field replaces the environment's diffuse term
@@ -764,7 +794,8 @@ highp vec4 EvaluateLighting(MaterialInputs material) {
   // occlusion also darkens the IBL ambient: a sky-baked environment already
   // contains the sun's energy, so the ambient alone otherwise reads as fully
   // lit inside shadows.
-  float ambient_shadow = mix(1.0, sun_visibility, frag_info.radiance_blend.y);
+  float ambient_shadow = mix(1.0, sun_visibility,
+                             frag_info.radiance_blend.y * horizon_shares.x);
 
   highp vec3 ambient =
       (indirect_diffuse * diffuse_occlusion +
@@ -797,7 +828,7 @@ highp vec4 EvaluateLighting(MaterialInputs material) {
         DfgLutUv(vec2(coat_n_dot_v, min(coat_roughness, 0.99)))).rg;
     coat_ibl = coat_prefiltered *
                (vec3(0.04) * coat_ab.x + coat_ab.y) *
-               frag_info.environment_intensity;
+               lit_environment_intensity;
   }
 #endif
   // TODO(sheen-ibl): replace this diffuse-scaled ambient term with a
@@ -825,7 +856,7 @@ highp vec4 EvaluateLighting(MaterialInputs material) {
   if (frag_info.has_directional_light > 0.5) {
 #ifdef FLUTTER_SCENE_LIGHTING_HOOKS
     light_context.light_vector = light_vector;
-    light_context.color = frag_info.directional_light_color.rgb;
+    light_context.color = sun_radiance;
     light_context.radiance = light_context.color * sun_visibility;
     light_context.direction = -light_vector;
     light_context.distance_attenuation = 1.0;
@@ -849,7 +880,7 @@ highp vec4 EvaluateLighting(MaterialInputs material) {
 #endif
 #else
     direct = EvaluateAnalyticLight(material, light_vector,
-                                   frag_info.directional_light_color.rgb, normal,
+                                   sun_radiance, normal,
                                    camera_normal, albedo, metallic, roughness,
                                    reflectance, n_dot_v, material.specular,
                                    anisotropic_tangent,
@@ -858,7 +889,7 @@ highp vec4 EvaluateLighting(MaterialInputs material) {
 #endif
 #ifdef FLUTTER_SCENE_PHYSICAL_MATERIAL
     coat_direct += EvaluateClearcoatLight(
-        light_vector, frag_info.directional_light_color.rgb, coat_normal,
+        light_vector, sun_radiance, coat_normal,
         camera_normal, coat_roughness) * sun_visibility;
 #endif
   }

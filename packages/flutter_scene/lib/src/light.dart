@@ -88,6 +88,53 @@ enum DirectionalShadowFilter {
   bilinearPcf,
 }
 
+/// A sphere a [DirectionalLight] shines on as its sun, such as a planet the
+/// scene draws whole.
+///
+/// Without a horizon, the light's strength and the image-based ambient are
+/// one value for the whole scene, which suits a scene small enough for one
+/// sun elevation. With one, each lit fragment takes the sun's elevation above
+/// its own horizon, the plane through it perpendicular to the line from
+/// [center]: the side of the sphere that faces the light draws in daylight,
+/// the far side at night, and the terminator falls where the geometry puts
+/// it, wherever the camera stands.
+///
+/// The elevation `e` gives the fragment a daylight share
+/// `clamp(e / twilight, 0, 1)` and a night share `clamp(-e / twilight, 0, 1)`.
+/// The light's radiance is multiplied by the daylight share and tinted by
+/// `mix(lowSunColor, 1, daylight)`; the image-based ambient is multiplied by
+/// `mix(1, nightEnvironmentScale, night)`; and the light's
+/// [DirectionalLight.shadowAmbientStrength] by the daylight share, so the
+/// sun's occlusion of the ambient fades out as the sun sets.
+/// {@category Lighting and environment}
+class SunHorizon {
+  /// Creates a [SunHorizon] around [center].
+  SunHorizon({
+    required this.center,
+    this.twilight = 12 * math.pi / 180,
+    this.nightEnvironmentScale = 1.0,
+    Vector3? lowSunColor,
+  }) : lowSunColor = lowSunColor ?? Vector3.all(1.0);
+
+  /// The world-space center of the sphere. A fragment's up runs from it
+  /// through the fragment. A scene that moves its world origin (to keep
+  /// coordinates small near the camera) moves this with it.
+  Vector3 center;
+
+  /// The sun elevation, in radians, over which the daylight share rises from
+  /// 0 at the horizon to 1, and the night share from 0 at the horizon to 1
+  /// as far below it. Must be positive.
+  double twilight;
+
+  /// The factor on the image-based ambient where the sun is [twilight] or
+  /// more below the horizon. `1.0` leaves the night as bright as the day.
+  double nightEnvironmentScale;
+
+  /// The linear RGB factor on the light where the sun stands on the horizon,
+  /// blending to white at full daylight. White leaves the color unchanged.
+  Vector3 lowSunColor;
+}
+
 /// An infinitely-distant light source (e.g. the sun) that illuminates
 /// the whole scene from a single direction.
 ///
@@ -141,6 +188,7 @@ class DirectionalLight {
     this.angularRadius = 0.005,
     this.channelMask = 0xFF,
     this.shadowCasterChannelMask = 0xFF,
+    this.horizon,
   }) : direction = direction ?? defaultDirection,
        color = color ?? Vector3(1.0, 1.0, 1.0);
 
@@ -259,6 +307,12 @@ class DirectionalLight {
   /// no slope-scaled depth-bias rasterizer state, so this carries the
   /// load of acne removal on grazing surfaces.
   double shadowNormalBias;
+
+  /// The sphere this light shines on as a sun, so each fragment is lit by
+  /// the sun's elevation above its own horizon. `null` (the default) lights
+  /// the whole scene with one strength and one ambient. Applies to the
+  /// fragments this light reaches (see [channelMask]).
+  SunHorizon? horizon;
 
   /// How much the cast shadow also darkens the image-based-lighting ambient,
   /// from `0.0` to `1.0`.
