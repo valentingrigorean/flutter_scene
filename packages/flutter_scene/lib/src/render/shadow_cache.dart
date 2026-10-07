@@ -20,7 +20,9 @@ class ShadowCascadeCacheEntry {
   /// correct while it is reused.
   final Matrix4 matrix = Matrix4.zero();
 
-  /// The ideal bounding-sphere the slack box was built around.
+  /// The bounding sphere the slack box was built around: the ideal center at
+  /// the refresh, and the ideal radius snapped up to a power of
+  /// [DirectionalShadowCache.radiusStep].
   final Vector3 center = Vector3.zero();
   double radius = 0.0;
 
@@ -75,7 +77,9 @@ class ShadowCachePlan {
 /// pass composites them into each frame's atlas and draws only the dynamic
 /// casters on top. Tiles are fit with [slackFactor] extra radius so the
 /// camera can move and turn inside the slack before a cascade must
-/// re-render. Stale tiles (a static caster appeared or vanished, or the light
+/// re-render, and their radius snaps up to a power of [radiusStep], so a zoom
+/// that changes every cascade's radius each frame keeps a tile until the
+/// ideal radius leaves that step. Stale tiles (a static caster appeared or vanished, or the light
 /// turned by up to [maxDirectionLagDegrees]) refresh at most
 /// [maxAmortizedRefreshes] per frame, nearest cascade first, so streaming
 /// worlds and a stepped sun never pay for every cascade at once. A stale tile
@@ -87,6 +91,32 @@ class DirectionalShadowCache {
   /// Costs ~13% effective resolution; buys re-render-free camera movement
   /// within the slack.
   static const double slackFactor = 1.15;
+
+  /// The ratio between the radii a tile is rendered at. A tile rendered for
+  /// one step serves every ideal radius down to the step below, so a cascade
+  /// whose radius follows the camera (a near plane that tracks the zoom)
+  /// re-renders once per step instead of once per frame. Costs up to this
+  /// factor of effective resolution on top of [slackFactor].
+  static const double radiusStep = slackFactor;
+
+  /// How many ideal radii from an ideal cascade's center a cached tile's box
+  /// can reach: the tile is rendered up to [radiusStep] larger with
+  /// [slackFactor] around it, and drifts until the ideal sphere touches its
+  /// edge.
+  static const double maxReachFactor = 2 * radiusStep * slackFactor - 1;
+
+  static final double _logRadiusStep = math.log(radiusStep);
+
+  // Tolerance on the lower radius bound, so an ideal radius that sits on a
+  // step does not flip between two steps on rounding.
+  static const double _radiusTolerance = 1e-3;
+
+  /// The smallest power of [radiusStep] that is at least [radius].
+  static double snappedRadius(double radius) {
+    if (!(radius > 0.0) || !radius.isFinite) return radius;
+    final step = (math.log(radius) / _logRadiusStep - 1e-9).ceil();
+    return math.max(radius, math.pow(radiusStep, step).toDouble());
+  }
 
   /// Upper bound on stale-but-usable tile refreshes per frame.
   static const int maxAmortizedRefreshes = 1;
@@ -177,13 +207,16 @@ class DirectionalShadowCache {
       final entry = _entries[i];
       final center = ideal.center ?? Vector3.zero();
       // A tile is reusable while the ideal sphere still fits inside its
-      // slack box; the radius only changes with camera/shadow parameters.
+      // slack box and is no smaller than the radius step below the tile's,
+      // under which the tile wastes more resolution than a step.
       final directionCos = entry.direction.dot(dir);
       final fits =
           entry.hasContent &&
           directionCos >= _minDirectionLagCos &&
-          (ideal.radius - entry.radius).abs() <= entry.radius * 1e-3 &&
-          (center - entry.center).length <= entry.radius * (slackFactor - 1.0);
+          ideal.radius >=
+              entry.radius / radiusStep * (1.0 - _radiusTolerance) &&
+          (center - entry.center).length + ideal.radius <=
+              entry.radius * slackFactor;
       final stale =
           entry.renderedSignature != staticSignature ||
           entry.direction.distanceToSquared(dir) > 1e-10;
@@ -200,15 +233,12 @@ class DirectionalShadowCache {
         amortized++;
       }
       if (refresh) {
+        final radius = snappedRadius(ideal.radius);
         entry.center.setFrom(center);
-        entry.radius = ideal.radius;
-        entry.boxSize = ideal.radius * slackFactor * 2.0;
+        entry.radius = radius;
+        entry.boxSize = radius * slackFactor * 2.0;
         entry.matrix.setFrom(
-          light.cascadeLightSpaceMatrix(
-            dir,
-            center,
-            ideal.radius * slackFactor,
-          ),
+          light.cascadeLightSpaceMatrix(dir, center, radius * slackFactor),
         );
         entry.renderedSignature = staticSignature;
         entry.direction.setFrom(dir);
