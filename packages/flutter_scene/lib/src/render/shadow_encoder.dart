@@ -90,6 +90,29 @@ int shadowBatchEnd(
   return cut;
 }
 
+/// Drops from [records] each instanced caster with no instance inside
+/// [frustum] and [receiverPlanes], and leaves on every other one the
+/// instances a shadow map drawn through them holds
+/// ([RenderItem.shadowInstanceIndices]).
+///
+/// A caster culls its instances here under the rule the color pass culls them
+/// by ([RenderItem.cullInstances]), so a cascade draws the instances whose
+/// bounds meet its light-space box and not every instance of an item whose
+/// aggregate bounds touch it.
+void cullShadowCasterInstances(
+  List<RenderItem> records,
+  Frustum frustum,
+  List<Plane> receiverPlanes,
+) {
+  var kept = 0;
+  for (var index = 0; index < records.length; index++) {
+    final item = records[index];
+    if (!item.cullShadowInstances(frustum, receiverPlanes)) continue;
+    records[kept++] = item;
+  }
+  records.length = kept;
+}
+
 /// Whether [item] draws in a shadow map: an accepted caster under [filter]
 /// and [casterChannelMask] whose material is opaque and scene-referred (UI
 /// composited over the scene casts no shadow into it).
@@ -350,6 +373,7 @@ class ShadowEncoder {
   /// Emits the accepted casters, merging compatible spatial cells back into
   /// one hardware-instanced draw after culling.
   void flush() {
+    cullShadowCasterInstances(_records, frustum, receiverPlanes);
     _records.sort((a, b) {
       final byMaterial = a.materialIdentity.compareTo(b.materialIdentity);
       if (byMaterial != 0) return byMaterial;
@@ -366,7 +390,8 @@ class ShadowEncoder {
       if (end > index + 1) {
         _batchPool.reset();
         for (var batchIndex = index; batchIndex < end; batchIndex++) {
-          _batchPool.addFor(_records[batchIndex], indices: null);
+          final record = _records[batchIndex];
+          _batchPool.addFor(record, indices: record.shadowInstanceIndices);
         }
         final batches = _batchPool.batches;
         _encode(first, batches: batches);
@@ -503,15 +528,15 @@ class ShadowEncoder {
     final instances = item.instanceTransforms;
     if (instances != null) {
       final visible = limitInstanceIndices(
-        null,
+        item.shadowInstanceIndices,
         instances.length,
         instanceLimit,
       );
       if (geometry.instancedVertexLayout == null) {
         // Skinned geometry has no instance-attribute path; loop.
-        for (final instanceTransform in instances.take(
-          visible?.length ?? instances.length,
-        )) {
+        final count = visible?.length ?? instances.length;
+        for (var slot = 0; slot < count; slot++) {
+          final instanceTransform = instances[visible?[slot] ?? slot];
           _bindDraw(item.worldTransform * instanceTransform);
           final flip =
               item.windingFlipped != (instanceTransform.determinant() < 0);
@@ -532,6 +557,7 @@ class ShadowEncoder {
       if ((retainsRecords ||
               (!positionOnly &&
                   item.instanceAttributeFloats == attributeFloats)) &&
+          item.shadowInstanceIndices == null &&
           packedWorldData != null &&
           packedWinding != null) {
         final flipped = bindRetainedInstanceData(
