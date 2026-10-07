@@ -1,5 +1,6 @@
 import 'dart:ui' as ui;
 
+import 'package:flutter_scene/gpu.dart' as gpu;
 import 'package:flutter_scene/scene.dart';
 // ignore: implementation_imports
 import 'package:flutter_scene/src/render/custom_render_pass.dart'
@@ -42,6 +43,20 @@ class _ViewCameraPass extends CustomRenderPass {
   void execute(RenderPassContext context) => cameras.add(context.viewCamera);
 }
 
+class _AttachmentPass extends CustomRenderPass {
+  _AttachmentPass(this.inputs);
+  @override
+  final Set<RenderInput> inputs;
+  final List<(gpu.Texture?, Matrix4?)> seen = [];
+  @override
+  String get name => 'attachment';
+  @override
+  RenderStage get stage => RenderStage.afterScene;
+  @override
+  void execute(RenderPassContext context) =>
+      seen.add((context.sceneDepthAttachment, context.sceneViewTransform));
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -69,6 +84,43 @@ void main() {
     expect(pass.cameras, hasLength(2));
     expect(pass.cameras.first, same(far));
     expect(pass.cameras.last, same(near));
+  });
+
+  test('a pass that requests the depth attachment reads the scene depth '
+      'and the transform the scene drew it with', () async {
+    if (!gpuAvailable()) return;
+    await Scene.initializeStaticResources();
+    final asks = _AttachmentPass(const {RenderInput.depthAttachment});
+    final skips = _AttachmentPass(const {});
+    final camera = PerspectiveCamera(position: Vector3(0, 2, 5));
+    for (final pass in [asks, skips]) {
+      final scene = Scene()
+        ..add(
+          Node(
+            mesh: Mesh(
+              CuboidGeometry(Vector3.all(1)),
+              PhysicallyBasedMaterial(),
+            ),
+          ),
+        )
+        ..addRenderPass(pass);
+      final recorder = ui.PictureRecorder();
+      scene.render(
+        camera,
+        ui.Canvas(recorder),
+        viewport: const ui.Rect.fromLTWH(0, 0, 64, 32),
+        pixelRatio: 1.0,
+      );
+      recorder.endRecording().dispose();
+    }
+    final (depth, transform) = asks.seen.single;
+    expect(depth, isNotNull);
+    expect(depth!.width, 64);
+    expect(depth.height, 32);
+    expect(transform, isNotNull);
+    final centre = transform!.transform(Vector4(0, 0, 0, 1));
+    expect((centre.x / centre.w).abs(), lessThan(1e-4));
+    expect(skips.seen.single, (null, null));
   });
 
   test(

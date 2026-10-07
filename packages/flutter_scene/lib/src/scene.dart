@@ -4324,6 +4324,7 @@ base class Scene implements SceneGraph {
         maxCaptureBatches: effectiveSceneColorCaptureBatches,
         // Depth binding needs the prepass, which needs a valid projection.
         bindSceneDepth: bindSceneDepth && projectionValid,
+        publishSceneDepth: customInputs.contains(RenderInput.depthAttachment),
         time: DateTime.now().millisecondsSinceEpoch.remainder(100000) / 1000.0,
         cullingPlanes: view.cullingPlanes,
         includeOffscreen: _warmUpIncludeOffscreen,

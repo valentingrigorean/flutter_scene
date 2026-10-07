@@ -118,6 +118,19 @@ enum RenderInput {
   /// current material draw. Materials use it for rough refraction. This
   /// implies [opaqueSceneColor] capture and is produced only when requested.
   filteredSceneColor,
+
+  /// The depth attachment the scene pass drew with, on
+  /// [RenderPassContext.sceneDepthAttachment], with the view-projection it
+  /// drew with on [RenderPassContext.sceneViewTransform]. A pass at an HDR
+  /// stage attaches it to a render pass of its own with
+  /// `depthLoadAction: LoadAction.load` and draws geometry depth tested
+  /// against the scene, compared with [RenderPassContext.depthNearerOrEqual]
+  /// and with depth writes off, so its color can composite once over the
+  /// scene (a layer of translucent sprites blended apart from the scene).
+  /// Its sample count is the scene's (4 under MSAA), so a color attachment of
+  /// that pass matches it and resolves. Requesting it makes the scene pass
+  /// store its depth, which otherwise stays in tile memory.
+  depthAttachment,
 }
 
 /// A user-supplied render pass inserted into the built-in pipeline at a
@@ -278,6 +291,24 @@ class RenderPassContext {
   /// [shadowInfo] for the cascades.
   gpu.Texture? get shadowMap =>
       _context.blackboard.get<gpu.Texture>(kShadowMapBlackboardKey);
+
+  /// The depth attachment the scene pass drew with. Non-null at the HDR
+  /// stages when the pass declared [RenderInput.depthAttachment]. Attach it
+  /// with a load action and leave depth writes off: later passes of the
+  /// frame may read it.
+  gpu.Texture? get sceneDepthAttachment =>
+      _context.blackboard.get<gpu.Texture>(kSceneDepthAttachmentBlackboardKey);
+
+  /// The view-projection the scene pass drew [sceneDepthAttachment] with,
+  /// jitter and depth raster included, so geometry drawn with it lands on the
+  /// depths the scene stored. Null when [sceneDepthAttachment] is.
+  Matrix4? get sceneViewTransform =>
+      _context.blackboard.get<Matrix4>(kSceneViewTransformBlackboardKey);
+
+  /// The compare function that passes a fragment at or nearer than the depth
+  /// [sceneDepthAttachment] stores, under the depth raster of this view.
+  gpu.CompareFunction get depthNearerOrEqual =>
+      depthRasterOf(camera).nearerOrEqual;
 
   /// The spot shadows' place in [shadowMap] (their matrices and tiles), or
   /// null when no spot cast this frame. Spot tiles share the atlas with the

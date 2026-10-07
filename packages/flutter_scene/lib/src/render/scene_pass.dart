@@ -42,6 +42,15 @@ import 'package:flutter_scene/src/render/uniform_slots.dart';
 /// reads whatever the last pass produced.
 const String kSceneColorBlackboardKey = 'scene_color';
 
+/// Render-graph blackboard key for the depth attachment [ScenePass] drew
+/// with, published when a custom pass requests
+/// `RenderInput.depthAttachment`.
+const String kSceneDepthAttachmentBlackboardKey = 'scene_depth_attachment';
+
+/// Render-graph blackboard key for the view-projection [ScenePass] drew its
+/// depth attachment with, published beside it.
+const String kSceneViewTransformBlackboardKey = 'scene_view_transform';
+
 const int _maxTransmissionFilterBands = 8;
 bool _reportedSceneColorPassCap = false;
 
@@ -103,6 +112,7 @@ class ScenePass extends RenderGraphPass {
     gpu.PixelFormat? displayReferredFormat,
     int maxCaptureBatches = maxSceneColorCaptureBatches,
     bool bindSceneDepth = false,
+    bool publishSceneDepth = false,
     double time = 0.0,
     List<Plane> cullingPlanes = const [],
     bool includeOffscreen = false,
@@ -119,6 +129,7 @@ class ScenePass extends RenderGraphPass {
        _maxCaptureBatches = maxCaptureBatches,
        _suppressPlanarReflections = suppressPlanarReflections,
        _bindSceneDepth = bindSceneDepth,
+       _publishSceneDepth = publishSceneDepth,
        _time = time,
        _camera = camera,
        _cameraTransform = cameraTransform,
@@ -197,6 +208,10 @@ class ScenePass extends RenderGraphPass {
   // readers share the final snapshot. See Scene.sceneColorCaptureBatches.
   final int _maxCaptureBatches;
   final bool _bindSceneDepth;
+
+  // A custom pass requested the depth attachment, so it is stored and
+  // published after the scene draws.
+  final bool _publishSceneDepth;
   final bool _suppressPlanarReflections;
   final double _time;
   final List<Plane> _cullingPlanes;
@@ -229,7 +244,7 @@ class ScenePass extends RenderGraphPass {
     // pooled texture (see TransientTextureDescriptor.attachmentKey).
     final attachmentKey = _enableMsaa
         ? 'resolve'
-        : capture || _displayReferredLayer
+        : capture || _displayReferredLayer || _publishSceneDepth
         ? 'depth_stored'
         : 'depth_transient';
     final hdrColor = context.texturePool.acquire(
@@ -247,7 +262,7 @@ class ScenePass extends RenderGraphPass {
     // storage does not survive that, so those cases take device memory.
     // Shader-read usage is a separate question and only the capture path
     // samples it.
-    final keepDepth = capture || _displayReferredLayer;
+    final keepDepth = capture || _displayReferredLayer || _publishSceneDepth;
     final depth = context.texturePool.acquire(
       TransientTextureDescriptor(
         width: width,
@@ -471,6 +486,7 @@ class ScenePass extends RenderGraphPass {
       }
       rendererSubmissions.submit(commandBuffer);
       _encodeDisplayReferredLayer(context, encoder, depth, width, height);
+      _publishDepth(context, encoder, depth);
       context.blackboard.set(kSceneColorBlackboardKey, hdrColor);
       return;
     }
@@ -593,6 +609,7 @@ class ScenePass extends RenderGraphPass {
     }
 
     _encodeDisplayReferredLayer(context, encoder, depth, width, height);
+    _publishDepth(context, encoder, depth);
     context.blackboard.set(kSceneColorBlackboardKey, currentColor);
     flushWatch?.stop();
     if (profileRendering) {
@@ -601,6 +618,19 @@ class ScenePass extends RenderGraphPass {
         flushWatch?.elapsedMicroseconds ?? 0,
       );
     }
+  }
+
+  void _publishDepth(
+    RenderGraphContext context,
+    SceneEncoder encoder,
+    gpu.Texture depth,
+  ) {
+    if (!_publishSceneDepth) return;
+    context.blackboard.set(kSceneDepthAttachmentBlackboardKey, depth);
+    context.blackboard.set(
+      kSceneViewTransformBlackboardKey,
+      encoder.cameraTransform.clone(),
+    );
   }
 
   // Draws the display-referred surfaces into their own display-encoded layer,
