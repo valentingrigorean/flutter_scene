@@ -192,13 +192,14 @@ class VelocityPass extends RenderGraphPass {
           item.jointsTexture != null &&
           _skinnedMotion;
 
+      final supplied = isSkinned ? null : item.geometry.velocityVertex;
       final vertexShader = isSkinned
           ? _skinnedVertexShader
-          : _unskinnedVertexShader;
+          : supplied?.shader ?? _unskinnedVertexShader;
       final vertexLayout = isSkinned
           ? _kSkinnedVelocityLayout
-          : item.geometry.velocityPositionLayout;
-      // A packed first stream has no position this shader can read.
+          : supplied?.layout ?? item.geometry.velocityPositionLayout;
+      // A packed first stream has no position the engine shader can read.
       if (vertexLayout == null) return;
       final pipeline = resolvePipeline(
         vertexShader,
@@ -267,7 +268,15 @@ class VelocityPass extends RenderGraphPass {
             ByteData.sublistView(unskinnedModelInfo),
           ),
         );
-        item.geometry.bindPositionStream(renderPass);
+        if (supplied == null) {
+          item.geometry.bindPositionStream(renderPass);
+        } else {
+          item.geometry.bindVelocityVertex(
+            renderPass,
+            context.transientsBuffer,
+            vertexShader,
+          );
+        }
         bindSingleInstanceData(renderPass, item.worldTransform, slot: 1);
       }
 

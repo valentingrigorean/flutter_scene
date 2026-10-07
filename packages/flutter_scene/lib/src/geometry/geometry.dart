@@ -1416,9 +1416,8 @@ abstract class Geometry {
   /// The layout the velocity pass reads this geometry's positions with, its
   /// first stream (a float3 `position`) and the instance-rate model
   /// transform, or null when that stream holds no position the pass's
-  /// engine shader can read, so the draw gets no motion vectors.
-  // TODO(custom-velocity-vertex): let a caller-formatted geometry supply a
-  // velocity vertex shader, so a packed position still gets motion vectors.
+  /// engine shader can read, so the draw gets no motion vectors unless the
+  /// geometry supplies its own shader with [setVelocityVertex].
   @internal
   VertexLayoutDescriptor? get velocityPositionLayout {
     if (_vertexLayout == null) {
@@ -1445,6 +1444,72 @@ abstract class Geometry {
 
   VertexBufferDescriptor? _velocityLayoutSource;
   VertexLayoutDescriptor? _velocityLayout;
+
+  /// The vertex shader and layout the velocity pass draws this geometry with
+  /// when it moves, or null to draw it with the engine's position-only
+  /// velocity shader over [velocityPositionLayout].
+  ///
+  /// A geometry whose drawn position is not the float3 `position` of its
+  /// first stream (a packed stream, or a position its vertex shader displaces
+  /// from a texture) assigns one with [setVelocityVertex], so the pass
+  /// rasterizes it where the depth prepass did and writes its motion vectors.
+  /// {@category Geometry}
+  ({gpu.Shader shader, VertexLayoutDescriptor layout})? get velocityVertex =>
+      _declaredVelocityVertex;
+
+  ({gpu.Shader shader, VertexLayoutDescriptor layout})? _declaredVelocityVertex;
+
+  /// Assigns the vertex [shader] the velocity pass draws this geometry with,
+  /// or clears it when [shader] is null.
+  ///
+  /// [shader] declares the `VelocityFrameInfo` and `VelocityModelInfo` uniform
+  /// blocks of the engine's `flutter_scene_velocity_unskinned.vert`, which the
+  /// pass binds, and writes the same `v_current_clip`, `v_previous_clip` and
+  /// `v_static_clip` varyings: the clip position under the current model
+  /// transform and view projection, under the previous of both, and under the
+  /// current model transform and the previous view projection. Its
+  /// `gl_Position` matches the position this geometry's vertex shader writes
+  /// in the depth prepass, which the pass tests against with equal.
+  ///
+  /// The pass binds the first vertex stream at slot 0 and the engine's
+  /// instance-rate model transform at slot 1. [positionStream] describes that
+  /// first stream as [shader] reads it; the engine appends the instance slot.
+  /// Whatever else [shader] reads (a texture, a uniform block of its own) the
+  /// geometry binds in [bindVelocityVertex].
+  /// {@category Geometry}
+  void setVelocityVertex(
+    gpu.Shader? shader, {
+    VertexBufferDescriptor? positionStream,
+  }) {
+    if (shader == null) {
+      _declaredVelocityVertex = null;
+      return;
+    }
+    if (positionStream == null) {
+      throw ArgumentError.notNull('positionStream');
+    }
+    _declaredVelocityVertex = (
+      shader: shader,
+      layout: VertexLayoutDescriptor(
+        buffers: [positionStream, _kInstanceModelTransformBuffer],
+      ),
+    );
+  }
+
+  /// Binds what the [velocityVertex] shader reads beyond the pass's own
+  /// uniform blocks and the instance-rate model transform: the first vertex
+  /// stream, the index buffer and, in an override, the geometry's own
+  /// uniforms and textures against [shader]'s slots.
+  ///
+  /// The velocity pass calls this once per draw of a geometry that supplies a
+  /// [velocityVertex]. Data emplaced in [transientsBuffer] lives for the
+  /// frame.
+  /// {@category Geometry}
+  void bindVelocityVertex(
+    gpu.RenderPass pass,
+    TransientWriter transientsBuffer,
+    gpu.Shader shader,
+  ) => bindPositionStream(pass);
 
   /// Assigns the position-only vertex [shader] the depth-style passes (shadow
   /// maps, the depth prepass, the selection mask) draw this geometry with, or
