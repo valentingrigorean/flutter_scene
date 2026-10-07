@@ -43,6 +43,25 @@ class _ViewCameraPass extends CustomRenderPass {
   void execute(RenderPassContext context) => cameras.add(context.viewCamera);
 }
 
+class _OneViewPass extends CustomRenderPass {
+  _OneViewPass(this.camera);
+  final Camera camera;
+  final List<Camera> cameras = [];
+  @override
+  String get name => 'one view';
+  @override
+  RenderStage get stage => RenderStage.afterScene;
+  @override
+  Set<RenderInput> get inputs => const {
+    RenderInput.depth,
+    RenderInput.depthAttachment,
+  };
+  @override
+  bool runsIn(RenderView view) => identical(view.camera, camera);
+  @override
+  void execute(RenderPassContext context) => cameras.add(context.viewCamera);
+}
+
 class _AttachmentPass extends CustomRenderPass {
   _AttachmentPass(this.inputs);
   @override
@@ -84,6 +103,41 @@ void main() {
     expect(pass.cameras, hasLength(2));
     expect(pass.cameras.first, same(far));
     expect(pass.cameras.last, same(near));
+  });
+
+  test('a pass that runs in one view executes there alone and gathers no '
+      'input for the other views', () async {
+    if (!gpuAvailable()) return;
+    await Scene.initializeStaticResources();
+    final far = PerspectiveCamera(position: Vector3(0, 2, 5));
+    final near = PerspectiveCamera(position: Vector3(0, 2, 5), fovNear: 0.5);
+    final pass = _OneViewPass(far);
+    final scene = Scene()
+      ..add(
+        Node(
+          mesh: Mesh(CuboidGeometry(Vector3.all(1)), PhysicallyBasedMaterial()),
+        ),
+      )
+      ..addRenderPass(pass);
+    final recorder = ui.PictureRecorder();
+    scene.renderViews(
+      [RenderView(camera: far), RenderView(camera: near, order: 1)],
+      ui.Canvas(recorder),
+      region: const ui.Rect.fromLTWH(0, 0, 64, 64),
+      pixelRatio: 1.0,
+    );
+    recorder.endRecording().dispose();
+    expect(pass.cameras.single, same(far));
+    final views = scene.renderStats.latest!.views;
+    List<String> passesOf(RenderViewStats view) => [
+      for (final pass in view.passes) pass.name,
+    ];
+    expect(views, hasLength(2));
+    expect(passesOf(views.first), contains('DepthPrepass'));
+    expect(passesOf(views.first), contains('TranslucentDepthPatchPass'));
+    expect(passesOf(views.last), isNot(contains('DepthPrepass')));
+    expect(passesOf(views.last), isNot(contains('TranslucentDepthPatchPass')));
+    expect(passesOf(views.last), isNot(contains('one view')));
   });
 
   test('a pass that requests the depth attachment reads the scene depth '

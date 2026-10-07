@@ -175,6 +175,13 @@ abstract class CustomRenderPass {
   /// chain.
   bool enabled = true;
 
+  /// Whether this enabled pass runs in [view]. A pass that answers false for
+  /// a view is skipped there like a disabled one: it never executes in that
+  /// view and its [inputs] make the engine produce nothing for it, so a pass
+  /// that draws for one view of a frame costs the other views nothing. True
+  /// for every view by default.
+  bool runsIn(RenderView view) => true;
+
   /// Records this pass's work for one frame using [context].
   void execute(RenderPassContext context);
 }

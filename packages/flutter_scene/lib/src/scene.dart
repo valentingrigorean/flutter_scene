@@ -1850,8 +1850,12 @@ base class Scene implements SceneGraph {
     frame?.completer.completeError(error);
   }
 
-  Iterable<CustomRenderPass> _passesAt(RenderStage stage) =>
-      _renderPasses.where((p) => p.enabled && p.stage == stage);
+  // The enabled custom passes that run in [view].
+  Iterable<CustomRenderPass> _viewPasses(RenderView view) =>
+      _renderPasses.where((p) => p.enabled && p.runsIn(view));
+
+  Iterable<CustomRenderPass> _passesAt(RenderStage stage, RenderView view) =>
+      _viewPasses(view).where((p) => p.stage == stage);
 
   /// Screen-space ambient occlusion settings. Off by default; set
   /// [AmbientOcclusionSettings.enabled] to turn it on. Works with perspective
@@ -2573,8 +2577,7 @@ base class Scene implements SceneGraph {
           )
         : const <ShadowCascade>[];
     final customInputs = <RenderInput>{
-      for (final pass in _renderPasses)
-        if (pass.enabled) ...pass.inputs,
+      for (final pass in _viewPasses(view)) ...pass.inputs,
     };
     if (godRays.enabled && cascades.isNotEmpty && !debugActive) {
       customInputs.addAll(_godRaysPass.inputs);
@@ -3795,9 +3798,9 @@ base class Scene implements SceneGraph {
     // a translucent fish must be in it) and depth of field.
     final patchTranslucentDepth =
         wantDof ||
-        _renderPasses.any(
-          (pass) => pass.enabled && pass.inputs.contains(RenderInput.depth),
-        );
+        _viewPasses(
+          view,
+        ).any((pass) => pass.inputs.contains(RenderInput.depth));
     final enableMsaa = effectiveAa == AntiAliasingMode.msaa;
     final enableFxaa = effectiveAa == AntiAliasingMode.fxaa && !debugActive;
     if (effectiveAa == AntiAliasingMode.smaa) {
@@ -3845,8 +3848,8 @@ base class Scene implements SceneGraph {
     // the engine produces depth/normals even without AO/SSR and publishes the
     // shadow uniform for depth-aware passes.
     final customInputs = <RenderInput>{};
-    for (final pass in _renderPasses) {
-      if (pass.enabled) customInputs.addAll(pass.inputs);
+    for (final pass in _viewPasses(view)) {
+      customInputs.addAll(pass.inputs);
     }
     if (wantGodRays) customInputs.addAll(_godRaysPass.inputs);
 
@@ -3941,9 +3944,9 @@ base class Scene implements SceneGraph {
         !(capturePlanarReflections &&
             !captureLinearColor &&
             renderScene.planarReflectorComponents.isNotEmpty) &&
-        !_renderPasses.any(
-          (pass) => pass.enabled && pass.inputs.contains(RenderInput.shadowMap),
-        );
+        !_viewPasses(
+          view,
+        ).any((pass) => pass.inputs.contains(RenderInput.shadowMap));
     if (receiverCullingAllowed) {
       // Receivers past the last cascade never sample the atlas, so an
       // infinite far plane can stop there.
@@ -4430,7 +4433,7 @@ base class Scene implements SceneGraph {
       pool,
       width,
       height,
-      view.layerMask,
+      view,
       postTime,
     );
 
@@ -4536,7 +4539,7 @@ base class Scene implements SceneGraph {
       pool,
       width,
       height,
-      view.layerMask,
+      view,
       postTime,
     );
 
@@ -4585,7 +4588,7 @@ base class Scene implements SceneGraph {
     }
 
     var userPassIndex = 0;
-    for (final pass in _passesAt(RenderStage.afterToneMapping)) {
+    for (final pass in _passesAt(RenderStage.afterToneMapping, view)) {
       final index = userPassIndex++;
       displaySteps.add(
         (output) => UserRenderGraphPass(
@@ -4650,7 +4653,7 @@ base class Scene implements SceneGraph {
       );
     }
 
-    for (final pass in _passesAt(RenderStage.afterAntiAliasing)) {
+    for (final pass in _passesAt(RenderStage.afterAntiAliasing, view)) {
       final index = userPassIndex++;
       displaySteps.add(
         (output) => UserRenderGraphPass(
@@ -4925,11 +4928,11 @@ base class Scene implements SceneGraph {
     TransientTexturePool pool,
     int width,
     int height,
-    int viewLayerMask,
+    RenderView view,
     double time,
   ) {
     var i = 0;
-    for (final pass in _passesAt(stage)) {
+    for (final pass in _passesAt(stage, view)) {
       final output = pool.acquire(
         TransientTextureDescriptor.color(
           width: width,
@@ -4945,7 +4948,7 @@ base class Scene implements SceneGraph {
           dimensions: pixelSize,
           destination: output,
           renderScene: renderScene,
-          viewLayerMask: viewLayerMask,
+          viewLayerMask: view.layerMask,
           passIndex: i,
           time: time,
         ),
