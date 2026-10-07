@@ -1,6 +1,10 @@
 import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart'
-    show Geometry, bindUnskinnedFrameInfo;
+    show
+        Geometry,
+        bindUnskinnedFrameInfo,
+        currentDrawInstanceFrame,
+        positionOnlyLayoutOverRecords;
 import 'package:flutter_scene/src/geometry/vertex_layout.dart'
     show VertexLayoutDescriptor;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
@@ -159,7 +163,7 @@ ShadowCasterDraw shadowCasterDraw(Geometry geometry, Material material) {
 /// The pipeline inputs of [item]'s draw in a shadow map, as [ShadowEncoder]
 /// resolves them.
 PipelineInputs shadowCasterPipelineInputs(RenderItem item) =>
-    shadowCasterDraw(item.geometry, item.material).pipelineInputs;
+    shadowCasterDraw(item.geometry, item.material).pipelineInputsFor(item);
 
 /// One shadow caster draw; see [shadowCasterDraw].
 final class ShadowCasterDraw {
@@ -198,10 +202,22 @@ final class ShadowCasterDraw {
   /// The custom vertex attributes the draw fetches.
   final VertexAttributeSchema? attributes;
 
-  PipelineInputs get pipelineInputs => (
+  /// Whether the draw of [item] reads its model transforms from the instance
+  /// records the color pass retains, which a position-only draw of
+  /// node-space records does.
+  bool retainsRecordsOf(RenderItem item) =>
+      positionOnly && vertexLayout != null && item.nodeSpaceInstances;
+
+  /// The pipeline inputs of the draw of [item].
+  PipelineInputs pipelineInputsFor(RenderItem item) => (
     vertexShader: vertexShader,
     fragmentShader: fragmentShader,
-    vertexLayout: vertexLayout,
+    vertexLayout: retainsRecordsOf(item)
+        ? positionOnlyLayoutOverRecords(
+            vertexLayout!,
+            kInstanceRecordFloats + item.instanceAttributeFloats,
+          )
+        : vertexLayout,
   );
 }
 
@@ -422,7 +438,10 @@ class ShadowEncoder {
     geometry.useVertexAttributes(draw.attributes);
     // A caster whose pipeline cannot build skips its own draw rather than
     // throwing out of the whole shadow pass.
-    final vertexLayout = draw.vertexLayout;
+    final retainsRecords = batches == null && draw.retainsRecordsOf(item);
+    final vertexLayout = retainsRecords
+        ? draw.pipelineInputsFor(item).vertexLayout
+        : draw.vertexLayout;
     final pipeline =
         cachedRenderPipeline(activeVertex, fragmentShader, vertexLayout) ??
         _resolvePipeline(activeVertex, fragmentShader, vertexLayout, geometry);
@@ -505,13 +524,16 @@ class ShadowEncoder {
         }
         return;
       }
+      currentDrawInstanceFrame = item.instanceFrame;
       _bindDraw(item.worldTransform);
+      currentDrawInstanceFrame = null;
       final packedWorldData = item.instanceWorldData;
       final packedWinding = item.instanceWorldWindingFlipped;
-      if (!positionOnly &&
+      if ((retainsRecords ||
+              (!positionOnly &&
+                  item.instanceAttributeFloats == attributeFloats)) &&
           packedWorldData != null &&
-          packedWinding != null &&
-          item.instanceAttributeFloats == attributeFloats) {
+          packedWinding != null) {
         final flipped = bindRetainedInstanceData(
           _renderPass,
           packedWorldData,
@@ -541,27 +563,31 @@ class ShadowEncoder {
               indices: visible,
               attributeFloats: item.instanceAttributeFloats,
             );
-      final PackedInstances packed = !positionOnly
+      final PackedInstances packed = !positionOnly || retainsRecords
           ? (cached == null
                 ? packInstanceData(
-                    item.worldTransform,
+                    item.instancePackTransform,
                     instances,
                     item.instanceColors!,
                     nodeWindingFlipped: item.windingFlipped,
                     instanceWindingFlipped: item.instanceWindingFlipped,
                     indices: visible,
                     attributeData: item.instanceAttributeData,
-                    attributeFloats: attributeFloats,
+                    attributeFloats: retainsRecords
+                        ? item.instanceAttributeFloats
+                        : attributeFloats,
                     scratch: transientInstancePackingScratch,
                   )
                 : packInstanceDataBatches(
                     cached,
-                    attributeFloats: attributeFloats,
+                    attributeFloats: retainsRecords
+                        ? item.instanceAttributeFloats
+                        : attributeFloats,
                     scratch: transientInstancePackingScratch,
                   ))
           : (cached == null
                 ? packInstanceTransforms(
-                    item.worldTransform,
+                    item.instancePackTransform,
                     instances,
                     nodeWindingFlipped: item.windingFlipped,
                     instanceWindingFlipped: item.instanceWindingFlipped,
@@ -572,7 +598,12 @@ class ShadowEncoder {
                     cached,
                     scratch: transientInstancePackingScratch,
                   ));
-      _drawPacked(geometry, packed, !positionOnly, instanceSlot);
+      _drawPacked(
+        geometry,
+        packed,
+        !positionOnly || retainsRecords,
+        instanceSlot,
+      );
       transientInstancePackingScratch.releaseSingleBatch();
       return;
     }

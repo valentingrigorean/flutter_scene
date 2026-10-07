@@ -18,6 +18,10 @@ abstract interface class OpaqueBatchRecord {
 
   /// Whether the item picks its instances or index range per draw.
   bool get hasDrawSelector;
+
+  /// Whether the item draws node-space instance records under its own
+  /// instance frame, which no other item shares.
+  bool get nodeSpaceInstances;
 }
 
 int opaqueBatchEnd(List<OpaqueBatchRecord> records, int start) {
@@ -33,7 +37,8 @@ int opaqueBatchEnd(List<OpaqueBatchRecord> records, int start) {
       first.jointsTexture != null ||
       first.morphWeights != null ||
       first.material.instanceAttributes != null ||
-      first.hasDrawSelector) {
+      first.hasDrawSelector ||
+      first.nodeSpaceInstances) {
     return start + 1;
   }
   var end = start + 1;
@@ -53,7 +58,8 @@ bool _canBatchOpaque(OpaqueBatchRecord first, OpaqueBatchRecord next) {
       first.lightChannelMask == next.lightChannelMask &&
       next.jointsTexture == null &&
       next.morphWeights == null &&
-      !next.hasDrawSelector;
+      !next.hasDrawSelector &&
+      !next.nodeSpaceInstances;
 }
 
 /// Why [first] does not merge with [next], mirroring [opaqueBatchEnd]'s
@@ -72,6 +78,7 @@ BatchBreakReason opaqueBatchBreakReason(
     return BatchBreakReason.instanceAttributes;
   }
   if (first.hasDrawSelector) return BatchBreakReason.drawSelector;
+  if (first.nodeSpaceInstances) return BatchBreakReason.nodeSpaceInstances;
   if (next == null) return BatchBreakReason.none;
   if (!identical(first.pipeline, next.pipeline)) {
     return BatchBreakReason.differentPipeline;
@@ -94,6 +101,7 @@ BatchBreakReason opaqueBatchBreakReason(
     return BatchBreakReason.nextSkinnedOrMorphed;
   }
   if (next.hasDrawSelector) return BatchBreakReason.drawSelector;
+  if (next.nodeSpaceInstances) return BatchBreakReason.nodeSpaceInstances;
   return BatchBreakReason.none;
 }
 
@@ -102,7 +110,8 @@ int depthBatchEnd(List<RenderItem> records, int start) {
   if (first.geometry.instancedVertexLayout == null ||
       first.jointsTexture != null ||
       first.morphWeights != null ||
-      hasMeshDrawSelector(first)) {
+      hasMeshDrawSelector(first) ||
+      first.nodeSpaceInstances) {
     return start + 1;
   }
   var end = start + 1;
@@ -112,7 +121,8 @@ int depthBatchEnd(List<RenderItem> records, int start) {
         !identical(first.material, next.material) ||
         next.jointsTexture != null ||
         next.morphWeights != null ||
-        hasMeshDrawSelector(next)) {
+        hasMeshDrawSelector(next) ||
+        next.nodeSpaceInstances) {
       break;
     }
     end++;
@@ -203,7 +213,7 @@ void fillInstanceDataBatch(
   final instances = item.instanceTransforms;
   if (instances == null) {
     batch.setSingle(
-      nodeTransform: item.worldTransform,
+      nodeTransform: item.instancePackTransform,
       nodeWindingFlipped: resolvedWinding,
     );
     return;
@@ -226,7 +236,7 @@ void fillInstanceDataBatch(
     return;
   }
   batch.setInstances(
-    nodeTransform: item.worldTransform,
+    nodeTransform: item.instancePackTransform,
     instances: instances,
     colors: item.instanceColors!,
     nodeWindingFlipped: resolvedWinding,

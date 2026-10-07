@@ -264,6 +264,24 @@ class RenderItem {
   /// Whether translucent instances are sorted back to front within this item.
   bool sortTransparentInstances = true;
 
+  /// Whether [instanceWorldData] holds each record relative to the node, with
+  /// [worldTransform] reaching the vertex stage as the instance frame (see
+  /// [InstancedMesh.nodeSpaceInstances]).
+  bool nodeSpaceInstances = false;
+
+  static final Matrix4 _identityTransform = Matrix4.identity();
+
+  /// The transform every instance record of this item is packed under: the
+  /// identity for node-space records, [worldTransform] otherwise.
+  @internal
+  Matrix4 get instancePackTransform =>
+      nodeSpaceInstances ? _identityTransform : worldTransform;
+
+  /// The transform the vertex stage applies after each instance record, or
+  /// null when the records already hold world transforms.
+  @internal
+  Matrix4? get instanceFrame => nodeSpaceInstances ? worldTransform : null;
+
   /// Indices accepted by the current view, or null when every instance passes.
   List<int>? visibleInstanceIndices;
 
@@ -305,6 +323,11 @@ class RenderItem {
   /// record layout changed since the last pack.
   @internal
   void refreshInstanceRows(List<int> rows) => _packInstances(rows);
+
+  /// Drops what was derived from [worldTransform] after the node of
+  /// node-space records moved, which leaves every record as packed.
+  @internal
+  void instanceFrameMoved() => _depthFitInstanceBounds = null;
 
   void _packInstances(List<int>? rows) {
     _depthFitInstanceBounds = null;
@@ -382,10 +405,11 @@ class RenderItem {
     final packedData = instanceWorldData;
     final packedWinding = instanceWorldWindingFlipped!;
     final retainedWinding = instanceWindingFlipped;
+    final packTransform = instancePackTransform;
     var packedRows = 0;
     void packRow(int i) {
       _instanceWorldScratch
-        ..setFrom(worldTransform)
+        ..setFrom(packTransform)
         ..multiply(instances[i]);
       if (packedBounds != null) {
         _instanceAabbScratch

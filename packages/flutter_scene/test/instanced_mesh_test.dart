@@ -495,6 +495,49 @@ void main() {
       expect(packed(component.refreshRenderItem), rows * recordBytes);
     });
 
+    test('a mounted component of node-space records packs no row after its '
+        'node moves, keeps each record relative to the node, and packs every '
+        'row once the node mirrors', () {
+      final mesh = InstancedMesh(
+        geometry: _StubGeometry(aabb: aabb)
+          ..setVertexLayout(const VertexLayoutDescriptor(buffers: [])),
+        material: _StubMaterial(),
+        cullInstances: true,
+        nodeSpaceInstances: true,
+      );
+      for (var i = 0; i < rows; i++) {
+        mesh.addInstance(Matrix4.translation(Vector3(i * 2.0, 0, 0)));
+      }
+      final component = InstancedMeshComponent(mesh);
+      final node = Node(localTransform: Matrix4.translation(Vector3(0, 7, 0)))
+        ..addComponent(component);
+      Node().add(node);
+      node.parent!.debugMountInto(RenderScene());
+      expect(packed(component.refreshRenderItem), rows * recordBytes);
+      final item = component.debugRenderItem!;
+      expect(item.nodeSpaceInstances, isTrue);
+      expect(item.cullInstances, isFalse);
+      expect(item.instanceWorldData!.sublist(20 * 3 + 12, 20 * 3 + 15), [
+        6,
+        0,
+        0,
+      ]);
+      final records = item.instanceWorldData;
+
+      node.localTransform = Matrix4.translation(Vector3(0, 0, 5));
+      expect(packed(component.refreshRenderItem), 0);
+      expect(item.instanceWorldData, same(records));
+      expect(item.instanceFrame!.getTranslation(), Vector3(0, 0, 5));
+      expect(item.worldBounds!.min, Vector3(-0.5, -0.5, 4.5));
+
+      mesh.setInstanceTransform(3, Matrix4.translation(Vector3(1, 0, 0)));
+      node.localTransform = Matrix4.translation(Vector3(0, 0, 9));
+      expect(packed(component.refreshRenderItem), recordBytes);
+
+      node.localTransform = Matrix4.diagonal3Values(-1, 1, 1);
+      expect(packed(component.refreshRenderItem), rows * recordBytes);
+    });
+
     test(
       'a record layout that changed since the last pack packs every row',
       () {

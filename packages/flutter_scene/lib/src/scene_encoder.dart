@@ -64,6 +64,9 @@ base class _OpaqueRecord implements OpaqueBatchRecord {
   RenderItem get item => _item!;
   @override
   bool get hasDrawSelector => hasMeshDrawSelector(item);
+
+  @override
+  bool get nodeSpaceInstances => item.nodeSpaceInstances;
   // The geometry and material to draw, which differ from the item's own when
   // a level of detail was selected.
   Geometry? _geometry;
@@ -1226,6 +1229,7 @@ base class SceneEncoder {
   bool _boundMaterialFallback = false;
   gpu.Shader? _boundMaterialVertex;
   gpu.Shader? _boundFrameInfoShader;
+  Matrix4? _boundFrameInfoFrame;
   double _boundFrameInfoDepthBias = double.nan;
   int _boundFrameInfoDepthKey = -1;
   double _boundMaterialFade = double.nan;
@@ -1861,7 +1865,9 @@ base class SceneEncoder {
     if (geometry is UnskinnedGeometry && geometry.morphTargets == null) {
       geometry.bindGeometryBuffers(_renderPass);
       final shader = materialVertex ?? geometry.vertexShader;
+      final frame = currentDrawInstanceFrame;
       if (!identical(_boundFrameInfoShader, shader) ||
+          !identical(_boundFrameInfoFrame, frame) ||
           _boundFrameInfoDepthBias != depthBias ||
           _boundFrameInfoDepthKey != depthKey) {
         bindUnskinnedFrameInfo(
@@ -1873,6 +1879,7 @@ base class SceneEncoder {
           depthBias: depthBias,
         );
         _boundFrameInfoShader = shader;
+        _boundFrameInfoFrame = frame;
         _boundFrameInfoDepthBias = depthBias;
         _boundFrameInfoDepthKey = depthKey;
       }
@@ -2194,6 +2201,86 @@ base class SceneEncoder {
   }
 
   void _encodeInstancedBody(
+    gpu.RenderPipeline pipeline,
+    Matrix4 nodeTransform,
+    Geometry geometry,
+    Material material,
+    List<Matrix4> instances,
+    List<Vector4> colors,
+    bool windingFlipped,
+    double fade, {
+    List<bool>? instanceWindingFlipped,
+    List<int>? instanceIndices,
+    Vector3? sortBackToFrontFrom,
+    Float32List? packedWorldData,
+    Uint8List? packedWorldWindingFlipped,
+    Float32List? attributeData,
+    int attributeFloats = 0,
+    RenderItem? item,
+    BatchBreakReason batchBreak = BatchBreakReason.none,
+    int? instanceLimit,
+    bool? debugFallback,
+  }) {
+    if (item == null || !item.nodeSpaceInstances) {
+      _encodeInstancedRecords(
+        pipeline,
+        nodeTransform,
+        geometry,
+        material,
+        instances,
+        colors,
+        windingFlipped,
+        fade,
+        instanceWindingFlipped: instanceWindingFlipped,
+        instanceIndices: instanceIndices,
+        sortBackToFrontFrom: sortBackToFrontFrom,
+        packedWorldData: packedWorldData,
+        packedWorldWindingFlipped: packedWorldWindingFlipped,
+        attributeData: attributeData,
+        attributeFloats: attributeFloats,
+        item: item,
+        batchBreak: batchBreak,
+        instanceLimit: instanceLimit,
+        debugFallback: debugFallback,
+      );
+      return;
+    }
+    // Node-space records draw under the node's transform as the instance
+    // frame, so the records pack under the identity and a back-to-front sort
+    // reads the eye in the node's space.
+    currentDrawInstanceFrame = nodeTransform;
+    try {
+      _encodeInstancedRecords(
+        pipeline,
+        _identityInstanceTransform,
+        geometry,
+        material,
+        instances,
+        colors,
+        windingFlipped,
+        fade,
+        instanceWindingFlipped: instanceWindingFlipped,
+        instanceIndices: instanceIndices,
+        sortBackToFrontFrom: sortBackToFrontFrom == null
+            ? null
+            : Matrix4.inverted(nodeTransform).transformed3(sortBackToFrontFrom),
+        packedWorldData: packedWorldData,
+        packedWorldWindingFlipped: packedWorldWindingFlipped,
+        attributeData: attributeData,
+        attributeFloats: attributeFloats,
+        item: item,
+        batchBreak: batchBreak,
+        instanceLimit: instanceLimit,
+        debugFallback: debugFallback,
+      );
+    } finally {
+      currentDrawInstanceFrame = null;
+    }
+  }
+
+  static final Matrix4 _identityInstanceTransform = Matrix4.identity();
+
+  void _encodeInstancedRecords(
     gpu.RenderPipeline pipeline,
     Matrix4 nodeTransform,
     Geometry geometry,

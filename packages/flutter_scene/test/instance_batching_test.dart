@@ -73,6 +73,8 @@ class _OpaqueCandidate implements OpaqueBatchRecord {
   final Object? morphWeights;
   @override
   bool get hasDrawSelector => false;
+  @override
+  bool get nodeSpaceInstances => false;
 }
 
 RenderItem _item(Geometry geometry, Material material) =>
@@ -90,6 +92,24 @@ void main() {
       ];
 
       expect(depthBatchEnd(records, 0), 3);
+    });
+
+    test('depth run leaves an item of node-space records alone, whichever '
+        'side of the run it stands on', () {
+      final geometry = _StubGeometry();
+      final material = _StubMaterial();
+      RenderItem nodeSpace() =>
+          _item(geometry, material)..nodeSpaceInstances = true;
+
+      expect(depthBatchEnd([nodeSpace(), _item(geometry, material)], 0), 1);
+      expect(
+        depthBatchEnd([
+          _item(geometry, material),
+          _item(geometry, material),
+          nodeSpace(),
+        ], 0),
+        2,
+      );
     });
 
     test('depth run splits on geometry and material', () {

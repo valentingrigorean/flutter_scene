@@ -214,9 +214,11 @@ class _WireframeEncoder {
         }
         return;
       }
+      currentDrawInstanceFrame = item.instanceFrame;
       bindDraw(item.worldTransform);
+      currentDrawInstanceFrame = null;
       final packed = packInstanceTransforms(
-        item.worldTransform,
+        item.instancePackTransform,
         instances,
         nodeWindingFlipped: item.windingFlipped,
         scratch: transientInstancePackingScratch,
