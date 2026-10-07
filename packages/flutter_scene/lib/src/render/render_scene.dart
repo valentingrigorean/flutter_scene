@@ -24,7 +24,7 @@ import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/render/bvh.dart';
 import 'package:flutter_scene/src/render/custom_render_pass.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart'
-    show invalidateRetainedInstanceData;
+    show invalidateRetainedInstanceData, updateRetainedInstanceRows;
 import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/render/lod.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
@@ -331,7 +331,11 @@ class RenderItem {
             _instanceRecordFloats != recordFloats)) {
       changed = null;
     }
+    if (changed != null && changed.length > 1) {
+      changed = changed.toSet().toList();
+    }
     final keep = changed != null;
+    final previousData = instanceWorldData;
     _instanceRecordFloats = recordFloats;
     if (packsBounds) {
       final store = _grownStore(_instanceBoundsStore, count * 6, keep);
@@ -419,15 +423,26 @@ class RenderItem {
         packRow(i);
       }
     } else {
-      var last = -1;
       for (final i in changed) {
-        if (i < count && i != last) packRow(i);
-        last = i;
+        if (i < count) packRow(i);
       }
     }
     activeRenderCounters.instanceBytesPacked +=
         packedRows * recordFloats * Float32List.bytesPerElement;
-    if (packedData != null) invalidateRetainedInstanceData(packedData);
+    if (packedData == null) {
+      if (previousData != null) invalidateRetainedInstanceData(previousData);
+    } else if (changed == null) {
+      if (previousData != null) invalidateRetainedInstanceData(previousData);
+      invalidateRetainedInstanceData(packedData);
+    } else {
+      updateRetainedInstanceRows(
+        previousData,
+        packedData,
+        packedWinding,
+        changed,
+        recordFloats,
+      );
+    }
   }
 
   static Float32List _grownStore(Float32List store, int floats, bool keep) {

@@ -437,6 +437,17 @@ void main() {
         recordBytes,
       );
       expectSameRecords(item, mesh);
+
+      final again = mesh.revision;
+      mesh
+        ..setInstanceColor(5, Vector4(0, 1, 0, 1))
+        ..setInstanceColor(6, Vector4(0, 1, 0, 1))
+        ..setInstanceTransform(5, Matrix4.translation(Vector3(0, 9, 0)));
+      expect(
+        packed(() => item.refreshInstanceRows(mesh.rowsChangedSince(again)!)),
+        2 * recordBytes,
+      );
+      expectSameRecords(item, mesh);
     });
 
     test('rows appended one at a time and removed from the end pack only '

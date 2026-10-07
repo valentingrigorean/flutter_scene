@@ -58,6 +58,11 @@ class RenderCounters {
   /// node changed. A change to some instances packs only their records.
   int instanceBytesPacked = 0;
 
+  /// Bytes of those records written to the device copies instanced items keep
+  /// while their instances rest. A change to some instances writes only their
+  /// records while no submitted GPU work is pending.
+  int instanceBytesUploaded = 0;
+
   void reset() {
     draws = 0;
     instances = 0;
@@ -71,6 +76,7 @@ class RenderCounters {
     batches = 0;
     batchedItems = 0;
     instanceBytesPacked = 0;
+    instanceBytesUploaded = 0;
   }
 
   void copyFrom(RenderCounters other) {
@@ -86,6 +92,7 @@ class RenderCounters {
     batches = other.batches;
     batchedItems = other.batchedItems;
     instanceBytesPacked = other.instanceBytesPacked;
+    instanceBytesUploaded = other.instanceBytesUploaded;
   }
 
   /// Sets this to `now - start`.
@@ -102,6 +109,8 @@ class RenderCounters {
     batches = now.batches - start.batches;
     batchedItems = now.batchedItems - start.batchedItems;
     instanceBytesPacked = now.instanceBytesPacked - start.instanceBytesPacked;
+    instanceBytesUploaded =
+        now.instanceBytesUploaded - start.instanceBytesUploaded;
   }
 
   Map<String, int> toJson() => {
@@ -117,6 +126,7 @@ class RenderCounters {
     'batches': batches,
     'batchedItems': batchedItems,
     'instanceBytesPacked': instanceBytesPacked,
+    'instanceBytesUploaded': instanceBytesUploaded,
   };
 }
 
