@@ -16,6 +16,30 @@ class BufferView {
   final int lengthInBytes;
 }
 
+/// A rectangular region of one mip level and slice of a [Texture].
+///
+/// [width] and [height] default to the full size of [texture] at [mipLevel].
+/// A buffer-to-texture copy reads tightly packed rows.
+base class TextureRegion {
+  const TextureRegion(
+    this.texture, {
+    this.x = 0,
+    this.y = 0,
+    this.width = -1,
+    this.height = -1,
+    this.mipLevel = 0,
+    this.slice = 0,
+  });
+
+  final Texture texture;
+  final int x;
+  final int y;
+  final int width;
+  final int height;
+  final int mipLevel;
+  final int slice;
+}
+
 // ---------------------------------------------------------------------------
 // Render-target value types (mirroring flutter_gpu).
 // ---------------------------------------------------------------------------

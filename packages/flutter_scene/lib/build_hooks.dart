@@ -9,7 +9,8 @@
 /// [buildTargetShaderBundleJson] compiles raw shader
 /// manifests without unused platform backends. A hook that runs `impellerc`
 /// itself passes [engineShaderIncludeDirectory] and [engineGlesLanguageVersion]
-/// so its shaders include the engine's GLSL. [buildEngineAssets] is
+/// so its shaders include the engine's GLSL, and checks the bundle it wrote
+/// with [webShaderBundleDefects]. [buildEngineAssets] is
 /// optional, putting the shaders flutter_scene itself needs in this app's
 /// generated assets rather than in flutter_scene's own.
 ///
@@ -52,6 +53,10 @@ export 'src/fmat/framework_shaders.dart'
 export 'src/texture/build_textures.dart'
     if (dart.library.js_interop) 'src/texture/build_textures_unsupported.dart'
     show TextureAssetMode, TextureEncoding, buildTextures;
+// The check a hook that compiles its own bundle runs so the bundle loads on
+// the WebGL2 backend.
+export 'src/gpu/shared/shader_bundle_web_check.dart'
+    show webShaderBundleDefects;
 // The per-texture downsample rule accepted by [buildTextures]. Also exported
 // by `package:flutter_scene/scene.dart`; re-exported here because hook code
 // runs on the plain Dart VM and cannot import the Flutter library.

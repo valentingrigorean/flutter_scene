@@ -1,12 +1,11 @@
-/// Curated public GPU surface for the custom-shader ([ShaderMaterial])
-/// workflow.
+/// The GPU surface flutter_scene renders through, for a caller that draws
+/// with it: a custom [ShaderMaterial], a `Geometry` that overrides `bind` and
+/// `draw`, or a pass of its own into an offscreen target.
 ///
-/// flutter_scene ships an internal `flutter_gpu` shim (a WebGL2 backend on
-/// web; a zero-cost re-export of `package:flutter_gpu` on native). Most of it
-/// is implementation detail. This library exposes only the handful of types a
-/// caller needs to author a custom material: load a compiled shader bundle,
-/// hand its fragment shader to a [ShaderMaterial], and name the pass and
-/// context types a `Material` override binds against.
+/// The library is `package:flutter_gpu` on native and a WebGL2 backend with
+/// the same names on the web, so code written against it compiles for both.
+/// Import this library in place of `package:flutter_gpu/gpu.dart`, which
+/// imports `dart:ffi` and so does not compile for the web.
 ///
 /// ```dart
 /// import 'package:flutter_scene/gpu.dart' as gpu;
@@ -27,21 +26,4 @@ export 'src/generated_assets/generated_asset_lookup.dart'
 
 export 'src/gpu/render_pass_compat.dart' show drawCompat, drawIndexedCompat;
 
-export 'src/gpu/gpu.dart'
-    show
-        GpuContext,
-        RenderPass,
-        Shader,
-        ShaderLibrary,
-        StorageMode,
-        gpuContext,
-        loadShaderLibraryAsync,
-        Texture,
-        SamplerOptions,
-        MinMagFilter,
-        MipFilter,
-        SamplerAddressMode,
-        // Value types a caller-declared vertex layout and index buffer need.
-        IndexType,
-        VertexFormat,
-        VertexStepMode;
+export 'src/gpu/gpu.dart';

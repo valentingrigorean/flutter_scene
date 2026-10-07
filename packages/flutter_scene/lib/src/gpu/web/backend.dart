@@ -66,6 +66,10 @@ abstract base class GpuContext {
   PixelFormat get defaultStencilFormat;
   PixelFormat get defaultDepthStencilFormat;
   int get minimumUniformByteAlignment;
+
+  /// The maximum anisotropy clamp a sampler takes; 1 where anisotropic
+  /// filtering is unsupported.
+  int get maxSamplerAnisotropy;
   bool get doesSupportOffscreenMSAA;
   bool get doesSupportFramebufferRenderMipmap;
   bool get doesSupportManuallyMippedTextures;
@@ -163,6 +167,9 @@ abstract base class RenderPipeline {
 
 abstract base class CommandBuffer {
   RenderPass createRenderPass(RenderTarget renderTarget);
+
+  /// Copies tightly packed texel data from [source] into [destination].
+  void copyBufferToTexture(BufferView source, TextureRegion destination);
   void submit({CompletionCallback? completionCallback});
 }
 

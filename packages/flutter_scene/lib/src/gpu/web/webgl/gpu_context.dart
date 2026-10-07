@@ -72,6 +72,9 @@ final class WebGlContext extends GpuContext {
   /// unavailable, which disables anisotropic filtering).
   int get maxSupportedAnisotropy => _maxSupportedAnisotropy;
 
+  @override
+  int get maxSamplerAnisotropy => _maxSupportedAnisotropy;
+
   /// The underlying `OffscreenCanvas`. Resized on demand by `snapshot`.
   web.OffscreenCanvas get canvas => _canvas;
 

@@ -152,6 +152,22 @@ final class WebGlDeviceBuffer extends DeviceBuffer {
     return buffer;
   }
 
+  /// The staged bytes of a range, the source of a buffer-to-texture copy. A
+  /// role-typed buffer keeps no CPU copy to read.
+  ByteData _stagedBytes(int offsetInBytes, int lengthInBytes) {
+    if (_typedTarget != null) {
+      throw StateError(
+        'A DeviceBuffer created for vertex or index use holds no bytes a '
+        'texture copy can read.',
+      );
+    }
+    return ByteData.sublistView(
+      _staging,
+      offsetInBytes,
+      offsetInBytes + lengthInBytes,
+    );
+  }
+
   /// Overwrite a byte range. Source bytes must fit at the destination
   /// offset. Returns true on success.
   @override

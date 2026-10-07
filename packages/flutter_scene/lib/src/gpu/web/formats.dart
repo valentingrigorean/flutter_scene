@@ -69,6 +69,71 @@ enum PixelFormat {
         return false;
     }
   }
+
+  /// The width, in texels, of a single block. Uncompressed formats return 1.
+  int get blockWidth {
+    switch (this) {
+      case PixelFormat.astc8x8LDR:
+      case PixelFormat.astc8x8LDRSRGB:
+      case PixelFormat.astc8x8HDR:
+        return 8;
+      default:
+        return isCompressed ? 4 : 1;
+    }
+  }
+
+  /// The height, in texels, of a single block. Uncompressed formats return 1.
+  int get blockHeight => blockWidth;
+
+  /// The number of bytes used to store one block. For uncompressed formats a
+  /// block is a single texel, so this matches the bytes per texel.
+  int get bytesPerBlock {
+    switch (this) {
+      case PixelFormat.unknown:
+        return 0;
+      case PixelFormat.a8UNormInt:
+      case PixelFormat.r8UNormInt:
+      case PixelFormat.s8UInt:
+        return 1;
+      case PixelFormat.r8g8UNormInt:
+        return 2;
+      case PixelFormat.r8g8b8a8UNormInt:
+      case PixelFormat.r8g8b8a8UNormIntSRGB:
+      case PixelFormat.b8g8r8a8UNormInt:
+      case PixelFormat.b8g8r8a8UNormIntSRGB:
+      case PixelFormat.r32Float:
+      case PixelFormat.b10g10r10XR:
+      case PixelFormat.b10g10r10XRSRGB:
+      case PixelFormat.d24UnormS8Uint:
+        return 4;
+      case PixelFormat.d32FloatS8UInt:
+        return 5;
+      case PixelFormat.r16g16b16a16Float:
+      case PixelFormat.b10g10r10a10XR:
+        return 8;
+      case PixelFormat.r32g32b32a32Float:
+        return 16;
+      case PixelFormat.bc1RGBAUNormInt:
+      case PixelFormat.bc1RGBAUNormIntSRGB:
+      case PixelFormat.etc2RGB8UNormInt:
+      case PixelFormat.etc2RGB8UNormIntSRGB:
+        return 8;
+      case PixelFormat.bc3RGBAUNormInt:
+      case PixelFormat.bc3RGBAUNormIntSRGB:
+      case PixelFormat.bc5RGUNormInt:
+      case PixelFormat.bc7RGBAUNormInt:
+      case PixelFormat.bc7RGBAUNormIntSRGB:
+      case PixelFormat.etc2RGBA8UNormInt:
+      case PixelFormat.etc2RGBA8UNormIntSRGB:
+      case PixelFormat.astc4x4LDR:
+      case PixelFormat.astc4x4LDRSRGB:
+      case PixelFormat.astc8x8LDR:
+      case PixelFormat.astc8x8LDRSRGB:
+      case PixelFormat.astc4x4HDR:
+      case PixelFormat.astc8x8HDR:
+        return 16;
+    }
+  }
 }
 
 /// Hardware families for block-compressed texture support.
