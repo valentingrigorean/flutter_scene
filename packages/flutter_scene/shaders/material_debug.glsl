@@ -17,6 +17,16 @@
 #ifndef MATERIAL_DEBUG_GLSL_
 #define MATERIAL_DEBUG_GLSL_
 
+// FLUTTER_SCENE_DEBUG_VIEWS compiles the views in. The engine's hook defines
+// it when the `debug_views` hook user-define for flutter_scene is set, and a
+// raw shader defines it itself. The fallback debug shader exists to draw
+// views, so it always has them.
+#if defined(FLUTTER_SCENE_DEBUG_FALLBACK) && !defined(FLUTTER_SCENE_DEBUG_VIEWS)
+#define FLUTTER_SCENE_DEBUG_VIEWS
+#endif
+
+#ifdef FLUTTER_SCENE_DEBUG_VIEWS
+
 uniform DebugViewInfo {
   // x: channel id (0 is off). y: split x in pixels, negative for no split;
   // pixels at or right of it show the view. z: gain. w: out-of-range policy
@@ -466,5 +476,66 @@ vec4 DebugSurfaceOutputLeft(MaterialInputs material) {
   debug_active_range = debug_view_info.left.zw;
   return DebugSurfaceOutputFor(material);
 }
+
+// Whether this draw shows the shaded result anywhere: no view is active, or a
+// split puts it left of the line. Uniform, so the caller can guard the
+// lighting with it.
+bool DebugViewNeedsShaded() {
+  float mode = DebugViewMode();
+  return mode < 0.5 || (mode > 1.5 && mode < 2.5);
+}
+
+// The final color: the active view where it shows, `shaded` elsewhere.
+// DebugSurfaceOutputFor has this one call site, with the view picked per
+// pixel as data. Every call is inlined, and each copy roughly doubled the
+// HLSL the D3D compiler behind ANGLE has to build (seconds per pipeline).
+vec4 DebugViewOutput(MaterialInputs material, vec4 shaded) {
+  float mode = DebugViewMode();
+  bool right = gl_FragCoord.x >= debug_view_info.view.y;
+  vec4 debug = vec4(0.0);
+  if (mode > 0.5) {
+    bool use_left = mode > 2.5 && !right;
+    debug_active_view = use_left
+        ? vec4(debug_view_info.left.x, debug_view_info.view.y,
+               debug_view_info.left.y, debug_view_info.view.w)
+        : debug_view_info.view;
+    debug_active_range =
+        use_left ? debug_view_info.left.zw : debug_view_info.params.xy;
+    debug = DebugSurfaceOutputFor(material);
+  }
+  bool show_debug = mode > 0.5 && (mode < 1.5 || mode > 2.5 || right);
+  return show_debug ? debug : shaded;
+}
+
+#else  // FLUTTER_SCENE_DEBUG_VIEWS
+
+// Debug views compiled out. The same functions, inert, so every caller builds
+// either way and no DebugViewInfo block is declared. A material without the
+// block draws through the fallback debug shader while a view is active.
+
+float DebugViewMode() { return 0.0; }
+
+vec4 DebugViewSplit(vec4 debug, vec4 lit) { return lit; }
+
+vec4 DebugSurfaceOutput(MaterialInputs material) { return vec4(0.0); }
+
+vec4 DebugSurfaceOutputLeft(MaterialInputs material) { return vec4(0.0); }
+
+bool DebugViewNeedsShaded() { return true; }
+
+vec4 DebugViewOutput(MaterialInputs material, vec4 shaded) {
+#ifndef FLUTTER_SCENE_NO_VIEW_INFO
+  // The views read ViewInfo, which kept the block bound in materials that
+  // read it nowhere else. Declared but unread, it reflects at binding 0 and
+  // collides with the vertex stage's FrameInfo on Vulkan (see
+  // material_varyings.glsl). camera_forward.w is 0 or 1, so this never fires.
+  if (view_info.camera_forward.w < -1.0) {
+    return vec4(view_info.camera_forward.xyz, 0.0);
+  }
+#endif  // FLUTTER_SCENE_NO_VIEW_INFO
+  return shaded;
+}
+
+#endif  // FLUTTER_SCENE_DEBUG_VIEWS
 
 #endif // MATERIAL_DEBUG_GLSL_

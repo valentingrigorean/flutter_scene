@@ -5,7 +5,13 @@ import 'dart:io';
 import 'dart:typed_data';
 
 // ignore: implementation_imports
+import 'package:flutter_scene/src/fmat/build_materials.dart'
+    show emitFragmentShaderVariants;
+// ignore: implementation_imports
 import 'package:flutter_scene/src/fmat/fmat.dart';
+// ignore: implementation_imports
+import 'package:flutter_scene/src/generated_assets/build_engine_assets.dart'
+    show wrapDebugViewsManifest;
 // ignore: implementation_imports
 import 'package:flutter_scene/src/geometry/geometry.dart';
 // ignore: implementation_imports
@@ -118,6 +124,27 @@ void main() {
   });
 
   group('DebugViewFrame', () {
+    test('splits against the lit image only when nothing is left of it', () {
+      DebugViewFrame frame(double split, DebugView? left) => DebugViewFrame(
+        sceneView: const DebugView(channel: SurfaceDebugChannel.worldNormal),
+        splitPixels: split,
+        splitView: left,
+        hasNodeOverrides: false,
+        overlays: const {},
+        wireframeColor: Vector4(1, 1, 1, 1),
+      );
+      expect(frame(-1, null).splitsAgainstLit, isFalse);
+      expect(frame(256, null).splitsAgainstLit, isTrue);
+      expect(frame(256, DebugView.none).splitsAgainstLit, isTrue);
+      expect(
+        frame(
+          256,
+          const DebugView(channel: SurfaceDebugChannel.uv0),
+        ).splitsAgainstLit,
+        isFalse,
+      );
+    });
+
     test('packs the block the shader reads', () {
       final frame = DebugViewFrame(
         sceneView: const DebugView(
@@ -294,14 +321,95 @@ void main() {
     });
   });
 
+  group('debug_views build option', () {
+    test('both builds of material_debug.glsl define the same functions', () {
+      final source = _readShader('material_debug.glsl');
+      final split = source.indexOf('#else  // FLUTTER_SCENE_DEBUG_VIEWS');
+      expect(split, greaterThan(0));
+      final compiledIn = source.substring(0, split);
+      final compiledOut = source.substring(split);
+      for (final name in [
+        'DebugViewMode',
+        'DebugViewSplit',
+        'DebugSurfaceOutput',
+        'DebugSurfaceOutputLeft',
+        'DebugViewNeedsShaded',
+        'DebugViewOutput',
+      ]) {
+        final declaration = RegExp('\\b$name\\(');
+        expect(compiledIn, contains(declaration), reason: name);
+        expect(compiledOut, contains(declaration), reason: name);
+      }
+      expect(compiledOut, isNot(contains('DebugViewInfo {')));
+    });
+
+    test('a material compiles the views into its shaded entries only', () {
+      final compiled = compileFmat(_litFmat, fileName: 'probe.fmat');
+      final plain = emitFragmentShaderVariants(
+        compiled,
+        generateShadowVariant: true,
+      );
+      expect(
+        plain.values.where(
+          (glsl) => glsl.contains('FLUTTER_SCENE_DEBUG_VIEWS'),
+        ),
+        isEmpty,
+      );
+      final withViews = emitFragmentShaderVariants(
+        compiled,
+        generateShadowVariant: true,
+        debugViews: true,
+      );
+      expect(withViews.keys, plain.keys);
+      for (final MapEntry(:key, :value) in withViews.entries) {
+        expect(
+          value.contains('#define FLUTTER_SCENE_DEBUG_VIEWS'),
+          !key.contains('Depth'),
+          reason: key,
+        );
+      }
+    });
+
+    test('the engine bundle wraps its fragment entries', () {
+      final root = Directory.systemTemp.createTempSync('debug_views_wrap_');
+      addTearDown(() => root.deleteSync(recursive: true));
+      final wrapped = wrapDebugViewsManifest({
+        'StandardFragment': {
+          'type': 'fragment',
+          'file': 'shaders/flutter_scene_standard.frag',
+        },
+        'UnskinnedVertex': {
+          'type': 'vertex',
+          'file': 'shaders/flutter_scene_unskinned.vert',
+        },
+      }, root.uri);
+      expect(
+        (wrapped['UnskinnedVertex'] as Map)['file'],
+        'shaders/flutter_scene_unskinned.vert',
+      );
+      final wrapperPath =
+          (wrapped['StandardFragment'] as Map)['file'] as String;
+      // A wrapper named like its original would include itself.
+      expect(wrapperPath.split('/').last, isNot('flutter_scene_standard.frag'));
+      expect(
+        File.fromUri(root.uri.resolve(wrapperPath)).readAsStringSync(),
+        '#define FLUTTER_SCENE_DEBUG_VIEWS\n'
+        '#include <flutter_scene_standard.frag>\n',
+      );
+    });
+  });
+
   group('fmat emitter', () {
     test('every material selects between the view and its shaded output', () {
       for (final source in [_litFmat, _unlitFmat]) {
         final glsl = compileFmat(source, fileName: 'probe.fmat').glsl;
         expect(glsl, contains('#include <material_debug.glsl>'));
         expect(glsl, contains('vec4 MaterialOutput(MaterialInputs material)'));
-        expect(glsl, contains('float debug_mode = DebugViewMode();'));
-        expect(glsl, contains('DebugViewSplit(DebugSurfaceOutput(material)'));
+        expect(glsl, contains('if (DebugViewNeedsShaded()) {'));
+        expect(
+          glsl,
+          contains('frag_color = DebugViewOutput(material, shaded);'),
+        );
         expect('MaterialOutput(material)'.allMatches(glsl), hasLength(1));
       }
     });
@@ -315,6 +423,26 @@ void main() {
       expect('MaterialOutput(material)'.allMatches(glsl), hasLength(1));
       final standard = _readShader('flutter_scene_standard.frag');
       expect('EvaluateLighting(material)'.allMatches(standard), hasLength(1));
+    });
+
+    // Each call also inlines the whole debug view. Four copies made the
+    // standard shader's link take twice as long under ANGLE's D3D11 backend.
+    test('the debug view is evaluated at one call site', () {
+      for (final name in [
+        'flutter_scene_standard.frag',
+        'flutter_scene_unlit.frag',
+      ]) {
+        final source = _readShader(name);
+        expect(source, isNot(contains('DebugSurfaceOutput(')), reason: name);
+        expect(
+          'DebugViewOutput('.allMatches(source),
+          hasLength(1),
+          reason: name,
+        );
+      }
+      final glsl = compileFmat(_litFmat, fileName: 'probe.fmat').glsl;
+      expect(glsl, isNot(contains('DebugSurfaceOutput(')));
+      expect('DebugViewOutput('.allMatches(glsl), hasLength(1));
     });
 
     test('a material can write the custom channel', () {

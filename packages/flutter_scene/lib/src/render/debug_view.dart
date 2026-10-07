@@ -6,6 +6,16 @@ import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:vector_math/vector_math.dart';
 import 'package:flutter_scene/src/render/uniform_slots.dart';
+import 'package:flutter_scene/src/shaders.dart';
+
+/// Whether the engine's own shaders were built with the surface debug views
+/// (flutter_scene's `debug_views` hook user-define). Reads the loaded base
+/// shader library, so call it once the scene's static resources are ready.
+bool engineDebugViewsCompiledIn() =>
+    baseShaderLibrary['StandardFragment']!
+        .cachedUniformSlot('DebugViewInfo')
+        .sizeInBytes !=
+    null;
 
 /// Which family a [SurfaceDebugChannel] belongs to, for grouping a menu and
 /// for hiding a family a material does not carry.
@@ -387,6 +397,23 @@ enum DebugOverlay {
 
 /// The scene's debug views: one surface [view], an optional [split], and a
 /// set of [overlays]. Read every frame; nothing is cached across frames.
+///
+/// The material channels are compiled into the shaders only when the app sets
+/// flutter_scene's `debug_views` hook user-define, since they lengthen every
+/// material's shader build. An app whose own hook builds materials or engine
+/// assets sets `flutter_scene_debug_views` under its own name too:
+///
+/// ```yaml
+/// hooks:
+///   user_defines:
+///     flutter_scene:
+///       debug_views: true
+///     my_app:
+///       flutter_scene_debug_views: true
+/// ```
+///
+/// Without it, a view draws every material through the fallback debug shader,
+/// which serves the geometry and identity channels.
 /// {@category Rendering}
 class SceneDebugSettings {
   /// The surface view for every node that does not override it.
@@ -510,6 +537,10 @@ class DebugViewFrame {
   /// The view left of the split, or null for the lit result.
   final DebugView? splitView;
 
+  /// Whether the lit result shows left of the split.
+  bool get splitsAgainstLit =>
+      splitPixels >= 0 && !(splitView?.isActive ?? false);
+
   /// Whether any node overrides the scene view this frame, which makes the
   /// effective view a per-item question.
   final bool hasNodeOverrides;
@@ -576,9 +607,9 @@ class DebugViewFrame {
     TransientWriter transients,
     gpu.Shader shader,
   ) {
-    pass.bindUniform(
-      shader.cachedUniformSlot('DebugViewInfo'),
-      transients.emplace(ByteData.sublistView(inactive)),
-    );
+    final slot = shader.cachedUniformSlot('DebugViewInfo');
+    // A shader built without the views declares no block.
+    if (slot.sizeInBytes == null) return;
+    pass.bindUniform(slot, transients.emplace(ByteData.sublistView(inactive)));
   }
 }
