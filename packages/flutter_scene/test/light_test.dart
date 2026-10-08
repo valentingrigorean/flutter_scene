@@ -1,6 +1,7 @@
 // Covers DirectionalLight.computeCascades: the cascaded shadow map
 // split scheme and per-cascade frustum fitting.
 
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter_scene/src/camera.dart';
@@ -121,6 +122,21 @@ void main() {
           shadowFilter: DirectionalShadowFilter.bilinearPcf,
         ).shadowFilter,
         DirectionalShadowFilter.bilinearPcf,
+      );
+    });
+
+    test('the shader selects a filter by its index, the single bilinear tap '
+        'above the four bilinear taps', () {
+      final shader = File(
+        'shaders/material_shadow_sampling.glsl',
+      ).readAsStringSync();
+      expect(DirectionalShadowFilter.bilinearPcf.index, 3);
+      expect(DirectionalShadowFilter.bilinear.index, 4);
+      expect(shader, contains('if (filter_index > 3.5) {'));
+      expect(shader, contains('} else if (filter_index > 2.5) {'));
+      expect(
+        shader,
+        contains('shadow = ShadowTapBilinear(vec2(0.0), radius, uv, cascade,'),
       );
     });
 

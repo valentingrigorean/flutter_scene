@@ -1,5 +1,6 @@
 ## 0.24.1
 
+* `DirectionalShadowFilter.bilinear` filters a directional shadow with one 2x2 bilinear tap at the receiver, 4 shadow map reads where the other filters take 16 or more, with a smooth one-texel edge and no noise. The bilinear filters also skip the per-fragment rotation noise and its trigonometry.
 * `Scene.reversedDepth` draws into a `d32FloatS8UInt` depth target on Vulkan where the device creates one, as on Metal, where it took the 24-bit default and gained no precision. OpenGL ES keeps its default.
 * `Camera.getFrustum`, and the CPU culling of every view with it, takes a perspective camera's near and far planes from its position, its forward axis and its projection's near and far distances, so a camera with a 5 cm near plane and a far plane at a planet's horizon culls by the planes it draws with; the Gribb-Hartmann extraction lost the far plane past a near/far ratio of about a million and culled everything.
 * `currentDrawDepthRaster` is the `DepthRaster` of the pass that encodes the draw a geometry binds, so a custom geometry whose vertex stage moves a surface in depth states the move with `DepthRaster.writeOffset` under reversed float depth as under the standard mapping.

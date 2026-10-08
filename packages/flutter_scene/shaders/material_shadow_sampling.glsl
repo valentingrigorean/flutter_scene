@@ -137,12 +137,18 @@ float SampleCascade(int cascade, int count, highp mat4 cascade_matrix,
   // in the generated GLES source even though the choice is uniform.
   float filter_index = frag_info.directional_light_direction.w;
   float fixed_filter = step(0.5, filter_index) * (1.0 - step(1.5, filter_index));
-  highp float noise = fract(
-      52.9829189 *
-      fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-  float angle = noise * 6.28318530718 * (1.0 - fixed_filter);
-  float ca = cos(angle);
-  float sa = sin(angle);
+  // Only the Poisson, fixed and PCSS kernels rotate; the bilinear ones read
+  // the grid as it is and skip the noise and its trigonometry.
+  float ca = 1.0;
+  float sa = 0.0;
+  if (filter_index < 2.5) {
+    highp float noise = fract(
+        52.9829189 *
+        fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float angle = noise * 6.28318530718 * (1.0 - fixed_filter);
+    ca = cos(angle);
+    sa = sin(angle);
+  }
 
   // World-space penumbra -> this cascade's UV space, floored at a texel.
   highp float max_radius =
@@ -178,7 +184,11 @@ float SampleCascade(int cascade, int count, highp mat4 cascade_matrix,
   // TODO(flutter_scene): use file-scope const arrays once impellerc/SPIRV-Cross
   // emits valid ES 1.00 array constructors for them.
   float shadow = 0.0;
-  if (filter_index > 2.5) {
+  if (filter_index > 3.5) {
+    // One 2x2 bilinear PCF tap at the receiver: 4 samples.
+    shadow = ShadowTapBilinear(vec2(0.0), radius, uv, cascade, inv_count,
+                               receiver_depth);
+  } else if (filter_index > 2.5) {
     // 4-tap bilinear PCF: 4 taps x 4 texels = 16 samples total (matching the
     // 16-sample budget), producing continuous analog filtering with zero
     // noise rotation or stepped banding.
