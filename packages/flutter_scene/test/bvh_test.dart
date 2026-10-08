@@ -215,11 +215,140 @@ void main() {
       scene.add(hidden);
       scene.rebuildIfDirty();
 
-      final inputs = scene.collectMaterialInputs(
+      final kept = scene.collectVisible(
         Frustum.matrix(makeOrthographicMatrix(-5, 5, -5, 5, -5, 5)),
+        ViewVisibleItems(),
       );
 
-      expect(inputs, const {RenderInput.opaqueSceneColor});
+      expect(kept.inputs, const {RenderInput.opaqueSceneColor});
+      expect(kept.items, unorderedEquals([visible, hidden]));
+      expect(kept.rejected, 1);
+    });
+  });
+
+  group('RenderScene, a scene that streams its items', () {
+    Set<RenderItem> culled(RenderScene scene, Frustum frustum) {
+      final hits = <RenderItem>{};
+      scene.cull(frustum, hits.add);
+      return hits;
+    }
+
+    test('adding one item to a scene of many items runs no full tree '
+        'build', () {
+      final scene = RenderScene();
+      final items = [for (var i = 0; i < 2000; i++) _itemAt(i * 4.0)];
+      items.forEach(scene.add);
+      scene.rebuildIfDirty();
+      final builds = Bvh.debugBuildCount;
+
+      final added = _itemAt(40002);
+      scene
+        ..add(added)
+        ..rebuildIfDirty();
+      expect(Bvh.debugBuildCount, builds);
+      final near = Frustum.matrix(
+        makeOrthographicMatrix(39990, 40010, -10, 10, -100, 100),
+      );
+      expect(culled(scene, near), {added});
+
+      scene
+        ..remove(added)
+        ..rebuildIfDirty();
+      expect(Bvh.debugBuildCount, builds);
+      expect(culled(scene, near), isEmpty);
+      expect(scene.bvh.itemCount, 2000);
+    });
+
+    test('items that join in order along a line leave a tree of logarithmic '
+        'depth', () {
+      final scene = RenderScene()
+        ..add(_itemAt(0))
+        ..add(_itemAt(4))
+        ..rebuildIfDirty();
+      for (var i = 2; i < 4096; i++) {
+        scene
+          ..add(_itemAt(i * 4.0))
+          ..rebuildIfDirty();
+      }
+      expect(scene.bvh.itemCount, 4096);
+      expect(scene.bvh.debugDepth, lessThan(40));
+    });
+
+    test('a scene that adds and removes items one frame at a time culls as '
+        'a brute-force frustum test does', () {
+      final scene = RenderScene();
+      final held = <RenderItem>[];
+      for (var i = 0; i < 64; i++) {
+        held.add(_itemAt(i * 3.0));
+        scene.add(held.last);
+      }
+      scene.rebuildIfDirty();
+      final builds = Bvh.debugBuildCount;
+      final frustum = Frustum.matrix(
+        makeOrthographicMatrix(40, 400, -10, 10, -100, 100),
+      );
+      for (var step = 0; step < 300; step++) {
+        if (step % 3 == 2) {
+          scene.remove(held.removeAt((step * 7) % held.length));
+        } else {
+          held.add(_itemAt(((step * 37) % 211) * 3.0));
+          scene.add(held.last);
+        }
+        scene.rebuildIfDirty();
+        expect(
+          culled(scene, frustum),
+          held
+              .where((item) => frustum.intersectsWithAabb3(item.worldBounds!))
+              .toSet(),
+        );
+      }
+      expect(Bvh.debugBuildCount, builds);
+      expect(scene.bvh.itemCount, held.length);
+
+      // An item that moved refits, and one that lost its bounds leaves the
+      // tree for the always visible.
+      held.first.worldBounds!
+        ..min.setValues(99.5, -0.5, -0.5)
+        ..max.setValues(100.5, 0.5, 0.5);
+      held.last.worldBounds = null;
+      scene
+        ..markBvhBoundsDirty()
+        ..markBvhStructureDirty(held.last)
+        ..rebuildIfDirty();
+      final hits = culled(scene, frustum);
+      expect(hits, contains(held.first));
+      expect(hits, contains(held.last));
+      expect(Bvh.debugBuildCount, builds);
+    });
+
+    test('the static shadow casters are counted by the items that change, '
+        'and an item that casts none leaves the cached shadows as they '
+        'are', () {
+      final scene = RenderScene();
+      for (var i = 0; i < 100; i++) {
+        scene.add(_itemAt(i * 4.0)..visible = true);
+      }
+      expect(scene.hasStaticShadowCasters, isFalse);
+      final revision = scene.staticShadowRevision;
+
+      final plain = _itemAt(500)..visible = true;
+      scene.add(plain);
+      expect(scene.staticShadowRevision, revision);
+
+      final caster = _itemAt(600);
+      scene.add(caster);
+      caster
+        ..visible = true
+        ..shadowStatic = true;
+      scene.markStaticShadowDirty(caster);
+      expect(scene.staticShadowRevision, revision + 1);
+      expect(scene.hasStaticShadowCasters, isTrue);
+
+      scene.remove(plain);
+      expect(scene.staticShadowRevision, revision + 1);
+      scene.remove(caster);
+      expect(scene.staticShadowRevision, revision + 2);
+      expect(scene.hasStaticShadowCasters, isFalse);
     });
   });
 }

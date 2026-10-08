@@ -152,7 +152,7 @@ void bindInstanceRows(
 }) {
   final records = item.instanceWorldData!;
   final recordBytes = item.instanceRecordFloats * Float32List.bytesPerElement;
-  final base = instanceRecordBase(records);
+  final base = instanceRecordBase(records, recordBytes);
   pass.bindVertexBuffer(
     first == 0 && count * recordBytes == base.lengthInBytes
         ? base

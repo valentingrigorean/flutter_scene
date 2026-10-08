@@ -6,7 +6,6 @@ import 'package:flutter/material.dart' hide Material;
 import 'package:flutter_scene/scene.dart';
 import 'package:flutter_test/flutter_test.dart';
 // ignore: implementation_imports
-import 'package:flutter_scene/src/render/display_referred_pass.dart';
 import 'package:vector_math/vector_math.dart' as vm;
 
 import 'support/gpu_available.dart';
@@ -69,11 +68,11 @@ void main() {
     }
 
     await render();
-    expect(sceneHasDisplayReferred(scene.renderScene), isFalse);
+    expect(scene.renderScene.hasVisibleDisplayReferred, isFalse);
 
     material.displayReferred = true;
     await render();
-    expect(sceneHasDisplayReferred(scene.renderScene), isTrue);
+    expect(scene.renderScene.hasVisibleDisplayReferred, isTrue);
   });
 
   testWidgets('WidgetComponent owns a display-referred material by default', (

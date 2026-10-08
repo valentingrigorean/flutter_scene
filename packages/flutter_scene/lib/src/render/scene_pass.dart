@@ -116,6 +116,7 @@ class ScenePass extends RenderGraphPass {
     double time = 0.0,
     List<Plane> cullingPlanes = const [],
     bool includeOffscreen = false,
+    ViewVisibleItems? visibleItems,
     bool suppressPlanarReflections = false,
     Matrix4? cameraTransform,
     Matrix4? displayReferredCameraTransform,
@@ -157,7 +158,8 @@ class ScenePass extends RenderGraphPass {
        _irradianceField = irradianceField,
        _fog = fog,
        _cullingPlanes = cullingPlanes,
-       _includeOffscreen = includeOffscreen;
+       _includeOffscreen = includeOffscreen,
+       _visibleItems = visibleItems;
 
   final Camera _camera;
   final Matrix4? _cameraTransform;
@@ -216,6 +218,10 @@ class ScenePass extends RenderGraphPass {
   final double _time;
   final List<Plane> _cullingPlanes;
   final bool _includeOffscreen;
+
+  // The cull the view already ran for this camera, or null for a pass that
+  // culls for itself.
+  final ViewVisibleItems? _visibleItems;
 
   static const gpu.PixelFormat _hdrFormat = gpu.PixelFormat.r16g16b16a16Float;
 
@@ -456,16 +462,28 @@ class ScenePass extends RenderGraphPass {
       primaryView: _primaryView,
     );
     final cullWatch = profileRendering ? (Stopwatch()..start()) : null;
+    final visibleItems = _visibleItems;
     if (_includeOffscreen) {
       for (final item in _renderScene.items) {
         encoder.submit(item);
       }
     } else {
-      final rejected = _renderScene.cull(
-        encoder.frustum,
-        encoder.submit,
-        additionalPlanes: _cullingPlanes,
-      );
+      // The view culled once to decide its passes; a pass that changed the
+      // items or their bounds since then leaves that cull stale.
+      final int rejected;
+      if (visibleItems != null && visibleItems.isCurrentFor(_renderScene)) {
+        final kept = visibleItems.items;
+        for (var i = 0; i < kept.length; i++) {
+          encoder.submit(kept[i]);
+        }
+        rejected = visibleItems.rejected;
+      } else {
+        rejected = _renderScene.cull(
+          encoder.frustum,
+          encoder.submit,
+          additionalPlanes: _cullingPlanes,
+        );
+      }
       // A rejected subtree never reaches `encoder.submit`, so nothing else
       // counts the items in it.
       activeRenderCounters.submitted += rejected;

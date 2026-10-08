@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:vector_math/vector_math.dart';
 
@@ -14,20 +16,35 @@ import 'package:vector_math/vector_math.dart';
 /// Nodes live in flat typed-data arrays rather than a pointer tree, so
 /// build, refit, and query all stream contiguous memory. The build sorts
 /// items along a Morton curve with a radix sort and splits ranges at the
-/// median, which costs O(n) per level with no per-level sorting; children
-/// are allocated before their parent, so [refit] is a single forward pass.
+/// median, which costs O(n) per level with no per-level sorting.
 ///
-/// Engine-internal; rebuilt by [RenderScene] when the scene changes.
+/// An item that joins or leaves the scene is put in with [insert] or taken
+/// out with [remove], each a walk of one path of the tree, so a scene that
+/// streams its content builds the tree once.
+///
+/// Engine-internal; kept by [RenderScene] as the scene changes.
 class Bvh {
-  Bvh._(this._bounds, this._children, this._items, this._nodeCount);
+  Bvh._(
+    this._bounds,
+    this._children,
+    this._parents,
+    this._items,
+    this._nodeCount,
+    this._itemCount,
+  ) : _root = _nodeCount - 1;
+
+  /// How many times [Bvh.build] sorted a set of items into a tree.
+  @visibleForTesting
+  static int debugBuildCount = 0;
 
   /// Builds a BVH over [items]. Every item must have a non-null
   /// [RenderItem.worldBounds].
   factory Bvh.build(List<RenderItem> items) {
     final n = items.length;
     if (n == 0) {
-      return Bvh._(Float32List(0), Int32List(0), const [], 0);
+      return Bvh._(Float32List(0), Int32List(0), Int32List(0), [], 0, 0);
     }
+    debugBuildCount++;
 
     // Quantize each item's centroid into a 30-bit Morton key.
     final centroids = Float32List(n * 3);
@@ -95,16 +112,16 @@ class Bvh {
     final nodeCap = 2 * n - 1;
     final bounds = Float32List(nodeCap * 6);
     final children = Int32List(nodeCap * 2);
-    final leafItems = List<RenderItem>.filled(n, items[0]);
+    final parents = Int32List(nodeCap)..fillRange(0, nodeCap, -1);
+    final nodeItems = List<RenderItem?>.filled(nodeCap, null, growable: true);
     var nodeCount = 0;
-    var leafCount = 0;
 
     int emit(int lo, int hi) {
       if (hi - lo == 1) {
         final item = items[order[lo]];
-        final leaf = leafCount++;
-        leafItems[leaf] = item;
         final node = nodeCount++;
+        nodeItems[node] = item;
+        item.bvhNode = node;
         final b = item.worldBounds!;
         final o = node * 6;
         bounds[o] = b.min.x;
@@ -113,7 +130,7 @@ class Bvh {
         bounds[o + 3] = b.max.x;
         bounds[o + 4] = b.max.y;
         bounds[o + 5] = b.max.z;
-        children[node * 2] = ~leaf;
+        children[node * 2] = -1;
         return node;
       }
       final mid = (lo + hi) >> 1;
@@ -129,29 +146,265 @@ class Bvh {
       }
       children[node * 2] = left;
       children[node * 2 + 1] = right;
+      parents[left] = node;
+      parents[right] = node;
       return node;
     }
 
     emit(0, n);
-    return Bvh._(bounds, children, leafItems, nodeCount);
+    return Bvh._(bounds, children, parents, nodeItems, nodeCount, n);
   }
 
   // Node storage. Node i owns bounds[i*6..i*6+6) as
   // (minX, minY, minZ, maxX, maxY, maxZ). children[i*2] is the left child
-  // index, or ~leafIndex for a leaf (children[i*2+1] then unused). The
-  // root is the last node.
-  final Float32List _bounds;
-  final Int32List _children;
-  final List<RenderItem> _items;
-  final int _nodeCount;
+  // index, or -1 for a leaf, whose item is items[i] (children[i*2+1] then
+  // unused). parents[i] is -1 for the root. A node an item left is kept on
+  // the free list and reused.
+  Float32List _bounds;
+  Int32List _children;
+  Int32List _parents;
+  final List<RenderItem?> _items;
+  final List<int> _freeNodes = [];
+  int _nodeCount;
+  int _itemCount;
+  int _root;
 
-  /// Items this tree was built over.
-  int get itemCount => _items.length;
+  /// Items in this tree.
+  int get itemCount => _itemCount;
 
-  // Traversal stack, sized for a balanced tree far deeper than any
-  // realistic item count. Queries are single-threaded and never nest (a
-  // visit callback must not query the same Bvh).
-  final Int32List _stack = Int32List(64);
+  int _takeNode() {
+    if (_freeNodes.isNotEmpty) return _freeNodes.removeLast();
+    final node = _nodeCount++;
+    if (node * 6 >= _bounds.length) {
+      final capacity = math.max(16, node * 2);
+      _bounds = Float32List(capacity * 6)..setRange(0, _bounds.length, _bounds);
+      _children = Int32List(capacity * 2)
+        ..setRange(0, _children.length, _children);
+      _parents = Int32List(capacity)..setRange(0, _parents.length, _parents);
+    }
+    if (node == _items.length) _items.add(null);
+    return node;
+  }
+
+  void _setLeafBounds(int node, Aabb3 b) {
+    final o = node * 6;
+    _bounds[o] = b.min.x;
+    _bounds[o + 1] = b.min.y;
+    _bounds[o + 2] = b.min.z;
+    _bounds[o + 3] = b.max.x;
+    _bounds[o + 4] = b.max.y;
+    _bounds[o + 5] = b.max.z;
+  }
+
+  // The bounds of [node] from its two children.
+  void _joinChildren(int node) {
+    final bounds = _bounds;
+    final o = node * 6;
+    final l = _children[node * 2] * 6, r = _children[node * 2 + 1] * 6;
+    for (var axis = 0; axis < 3; axis++) {
+      final lMin = bounds[l + axis], rMin = bounds[r + axis];
+      bounds[o + axis] = lMin < rMin ? lMin : rMin;
+      final lMax = bounds[l + 3 + axis], rMax = bounds[r + 3 + axis];
+      bounds[o + 3 + axis] = lMax > rMax ? lMax : rMax;
+    }
+  }
+
+  // Half the surface area of the box of node [o] grown to hold [b].
+  double _grownArea(int o, Aabb3 b) {
+    final bounds = _bounds;
+    final minX = math.min(bounds[o], b.min.x);
+    final minY = math.min(bounds[o + 1], b.min.y);
+    final minZ = math.min(bounds[o + 2], b.min.z);
+    final dx = math.max(bounds[o + 3], b.max.x) - minX;
+    final dy = math.max(bounds[o + 4], b.max.y) - minY;
+    final dz = math.max(bounds[o + 5], b.max.z) - minZ;
+    return dx * dy + dy * dz + dz * dx;
+  }
+
+  double _area(int o) {
+    final bounds = _bounds;
+    final dx = bounds[o + 3] - bounds[o];
+    final dy = bounds[o + 4] - bounds[o + 1];
+    final dz = bounds[o + 5] - bounds[o + 2];
+    return dx * dy + dy * dz + dz * dx;
+  }
+
+  /// Puts [item], which has a non-null [RenderItem.worldBounds] and is not
+  /// in the tree, into it: beside the leaf reached by taking, at each node,
+  /// the child whose box grows least to hold it.
+  void insert(RenderItem item) {
+    assert(item.bvhNode < 0);
+    final box = item.worldBounds!;
+    final leaf = _takeNode();
+    _items[leaf] = item;
+    item.bvhNode = leaf;
+    _children[leaf * 2] = -1;
+    _setLeafBounds(leaf, box);
+    _itemCount++;
+    if (_root < 0) {
+      _root = leaf;
+      _parents[leaf] = -1;
+      return;
+    }
+    var sibling = _root;
+    while (_children[sibling * 2] >= 0) {
+      final left = _children[sibling * 2];
+      final right = _children[sibling * 2 + 1];
+      final leftGrowth = _grownArea(left * 6, box) - _area(left * 6);
+      final rightGrowth = _grownArea(right * 6, box) - _area(right * 6);
+      sibling = leftGrowth <= rightGrowth ? left : right;
+    }
+    final parent = _parents[sibling];
+    final joined = _takeNode();
+    _items[joined] = null;
+    _parents[joined] = parent;
+    _children[joined * 2] = sibling;
+    _children[joined * 2 + 1] = leaf;
+    _parents[sibling] = joined;
+    _parents[leaf] = joined;
+    if (parent < 0) {
+      _root = joined;
+    } else if (_children[parent * 2] == sibling) {
+      _children[parent * 2] = joined;
+    } else {
+      _children[parent * 2 + 1] = joined;
+    }
+    _refitFrom(joined);
+  }
+
+  /// Takes [item] out of the tree, where its sibling takes the place of
+  /// their parent.
+  void remove(RenderItem item) {
+    final leaf = item.bvhNode;
+    if (leaf < 0) return;
+    assert(identical(_items[leaf], item));
+    item.bvhNode = -1;
+    _items[leaf] = null;
+    _freeNodes.add(leaf);
+    _itemCount--;
+    final parent = _parents[leaf];
+    if (parent < 0) {
+      _root = -1;
+      return;
+    }
+    final sibling = _children[parent * 2] == leaf
+        ? _children[parent * 2 + 1]
+        : _children[parent * 2];
+    final grandparent = _parents[parent];
+    _parents[sibling] = grandparent;
+    _freeNodes.add(parent);
+    if (grandparent < 0) {
+      _root = sibling;
+      return;
+    }
+    if (_children[grandparent * 2] == parent) {
+      _children[grandparent * 2] = sibling;
+    } else {
+      _children[grandparent * 2 + 1] = sibling;
+    }
+    _refitFrom(grandparent);
+  }
+
+  // Joins the boxes of [node] and of each node above it again, turning each
+  // where that shrinks a child, so items that arrive in order along a line
+  // leave a tree of logarithmic depth and not a chain.
+  void _refitFrom(int node) {
+    for (var at = node; at >= 0; at = _parents[at]) {
+      _rotate(at);
+      _joinChildren(at);
+    }
+  }
+
+  // Half the surface area of the box that holds nodes [a] and [b].
+  double _unionArea(int a, int b) {
+    final bounds = _bounds;
+    final p = a * 6, q = b * 6;
+    final dx =
+        math.max(bounds[p + 3], bounds[q + 3]) - math.min(bounds[p], bounds[q]);
+    final dy =
+        math.max(bounds[p + 4], bounds[q + 4]) -
+        math.min(bounds[p + 1], bounds[q + 1]);
+    final dz =
+        math.max(bounds[p + 5], bounds[q + 5]) -
+        math.min(bounds[p + 2], bounds[q + 2]);
+    return dx * dy + dy * dz + dz * dx;
+  }
+
+  // Swaps a child of [node] with a child of its other child where that
+  // makes the other child's box smaller.
+  void _rotate(int node) {
+    final children = _children;
+    final left = children[node * 2];
+    final right = children[node * 2 + 1];
+    var gain = 0.0;
+    var inner = -1;
+    var slot = 0;
+    if (children[left * 2] >= 0) {
+      final area = _area(left * 6);
+      for (var side = 0; side < 2; side++) {
+        final kept = children[left * 2 + 1 - side];
+        final change = _unionArea(right, kept) - area;
+        if (change < gain) {
+          gain = change;
+          inner = left;
+          slot = side;
+        }
+      }
+    }
+    if (children[right * 2] >= 0) {
+      final area = _area(right * 6);
+      for (var side = 0; side < 2; side++) {
+        final kept = children[right * 2 + 1 - side];
+        final change = _unionArea(left, kept) - area;
+        if (change < gain) {
+          gain = change;
+          inner = right;
+          slot = side;
+        }
+      }
+    }
+    if (inner < 0) return;
+    final outerSlot = inner == left ? 1 : 0;
+    final outer = children[node * 2 + outerSlot];
+    final raised = children[inner * 2 + slot];
+    children[inner * 2 + slot] = outer;
+    _parents[outer] = inner;
+    children[node * 2 + outerSlot] = raised;
+    _parents[raised] = node;
+    _joinChildren(inner);
+  }
+
+  /// The count of nodes on the longest path from the root to a leaf.
+  @visibleForTesting
+  int get debugDepth {
+    if (_root < 0) return 0;
+    var deepest = 0;
+    final nodes = [_root];
+    final depths = [1];
+    while (nodes.isNotEmpty) {
+      final node = nodes.removeLast();
+      final depth = depths.removeLast();
+      if (depth > deepest) deepest = depth;
+      final left = _children[node * 2];
+      if (left < 0) continue;
+      nodes
+        ..add(left)
+        ..add(_children[node * 2 + 1]);
+      depths
+        ..add(depth + 1)
+        ..add(depth + 1);
+    }
+    return deepest;
+  }
+
+  // Traversal stack. A traversal holds at most one node per level and one
+  // more, and grows the stack for a tree deeper than it. Queries are
+  // single-threaded and never nest (a visit callback must not query the
+  // same Bvh).
+  Int32List _stack = Int32List(64);
+
+  Int32List _grownStack() =>
+      _stack = Int32List(_stack.length * 2)..setRange(0, _stack.length, _stack);
 
   // Frustum planes then additional planes as (nx, ny, nz, constant) rows,
   // reloaded per query. Grows to fit the largest plane count seen.
@@ -165,7 +418,7 @@ class Bvh {
     void Function(RenderItem) visit, {
     List<Plane> additionalPlanes = const [],
   }) {
-    if (_nodeCount == 0) return 0;
+    if (_root < 0) return 0;
     final planeCount = 6 + additionalPlanes.length;
     if (_planes.length < planeCount * 4) {
       _planes = Float64List(planeCount * 4);
@@ -183,9 +436,9 @@ class Bvh {
     final children = _children;
     final planes = _planes;
     final rowsEnd = planeCount * 4;
-    final stack = _stack;
+    var stack = _stack;
     var top = 0;
-    stack[top++] = _nodeCount - 1;
+    stack[top++] = _root;
     var visited = 0;
     while (top > 0) {
       final node = stack[--top];
@@ -206,10 +459,11 @@ class Bvh {
       if (outside) continue;
       final left = children[node * 2];
       if (left < 0) {
-        visit(_items[~left]);
+        visit(_items[node]!);
         visited++;
         continue;
       }
+      if (top + 2 > stack.length) stack = _grownStack();
       stack[top++] = left;
       stack[top++] = children[node * 2 + 1];
     }
@@ -236,7 +490,7 @@ class Bvh {
     double best = double.infinity,
     double floor = double.negativeInfinity,
   }) {
-    if (_nodeCount == 0) return best;
+    if (_root < 0) return best;
     final planeCount = 6 + additionalPlanes.length;
     if (_planes.length < planeCount * 4) {
       _planes = Float64List(planeCount * 4);
@@ -254,11 +508,11 @@ class Bvh {
     final children = _children;
     final planes = _planes;
     final rowsEnd = planeCount * 4;
-    final stack = _stack;
+    var stack = _stack;
     final ex = eye.x, ey = eye.y, ez = eye.z;
     final fx = forward.x, fy = forward.y, fz = forward.z;
     var top = 0;
-    stack[top++] = _nodeCount - 1;
+    stack[top++] = _root;
     while (top > 0) {
       final node = stack[--top];
       final o = node * 6;
@@ -292,7 +546,7 @@ class Bvh {
       if (outside) continue;
       final left = children[node * 2];
       if (left < 0) {
-        final bound = leafBound(_items[~left], best);
+        final bound = leafBound(_items[node]!, best);
         if (bound < best) {
           best = bound;
           if (best <= floor) return best;
@@ -303,6 +557,7 @@ class Bvh {
       final right = children[node * 2 + 1];
       final leftNear = _nodeDistance2(left * 6, ex, ey, ez);
       final rightNear = _nodeDistance2(right * 6, ex, ey, ez);
+      if (top + 2 > stack.length) stack = _grownStack();
       if (leftNear <= rightNear) {
         stack[top++] = right;
         stack[top++] = left;
@@ -339,14 +594,14 @@ class Bvh {
   /// Used to scatter a light's influence volume onto the items it can reach,
   /// so each item collects only the lights near it.
   void queryAabb(Aabb3 box, void Function(RenderItem) visit) {
-    if (_nodeCount == 0) return;
+    if (_root < 0) return;
     final minX = box.min.x, minY = box.min.y, minZ = box.min.z;
     final maxX = box.max.x, maxY = box.max.y, maxZ = box.max.z;
     final bounds = _bounds;
     final children = _children;
-    final stack = _stack;
+    var stack = _stack;
     var top = 0;
-    stack[top++] = _nodeCount - 1;
+    stack[top++] = _root;
     while (top > 0) {
       final node = stack[--top];
       final o = node * 6;
@@ -360,9 +615,10 @@ class Bvh {
       }
       final left = children[node * 2];
       if (left < 0) {
-        visit(_items[~left]);
+        visit(_items[node]!);
         continue;
       }
+      if (top + 2 > stack.length) stack = _grownStack();
       stack[top++] = left;
       stack[top++] = children[node * 2 + 1];
     }
@@ -371,36 +627,37 @@ class Bvh {
   /// Recomputes every node's AABB from the leaves' current
   /// [RenderItem.worldBounds] without changing the tree topology.
   ///
-  /// Valid only while the item set and each leaf's item are unchanged
-  /// since the build; a moved item is fine, an added or removed one
-  /// needs a rebuild. Cheaper than a rebuild (O(n), no sort), but tree
-  /// quality degrades as items drift from their build-time grouping.
+  /// Valid while every item in the tree is bounded; a moved item is fine.
+  /// Cheaper than a build (O(n), no sort), but tree quality degrades as
+  /// items drift from the grouping they were placed in.
   void refit() {
-    final bounds = _bounds;
+    if (_root < 0) return;
+    // Parents first into the order, so its reverse joins children first.
+    var order = _refitOrder;
+    if (order.length < _nodeCount) {
+      order = _refitOrder = Int32List(math.max(_nodeCount, order.length * 2));
+    }
     final children = _children;
-    // Children precede parents, so one forward pass refreshes everything.
-    for (var node = 0; node < _nodeCount; node++) {
-      final o = node * 6;
+    var listed = 0;
+    order[listed++] = _root;
+    for (var at = 0; at < listed; at++) {
+      final node = order[at];
       final left = children[node * 2];
-      if (left < 0) {
-        final b = _items[~left].worldBounds!;
-        bounds[o] = b.min.x;
-        bounds[o + 1] = b.min.y;
-        bounds[o + 2] = b.min.z;
-        bounds[o + 3] = b.max.x;
-        bounds[o + 4] = b.max.y;
-        bounds[o + 5] = b.max.z;
-        continue;
-      }
-      final l = left * 6, r = children[node * 2 + 1] * 6;
-      for (var axis = 0; axis < 3; axis++) {
-        final lMin = bounds[l + axis], rMin = bounds[r + axis];
-        bounds[o + axis] = lMin < rMin ? lMin : rMin;
-        final lMax = bounds[l + 3 + axis], rMax = bounds[r + 3 + axis];
-        bounds[o + 3 + axis] = lMax > rMax ? lMax : rMax;
+      if (left < 0) continue;
+      order[listed++] = left;
+      order[listed++] = children[node * 2 + 1];
+    }
+    for (var at = listed - 1; at >= 0; at--) {
+      final node = order[at];
+      if (children[node * 2] < 0) {
+        _setLeafBounds(node, _items[node]!.worldBounds!);
+      } else {
+        _joinChildren(node);
       }
     }
   }
+
+  Int32List _refitOrder = Int32List(0);
 
   // Spreads the low 10 bits of [value] so consecutive bits land three
   // apart (Morton interleave).

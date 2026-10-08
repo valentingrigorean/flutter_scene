@@ -25,6 +25,7 @@ import 'package:flutter_scene/src/light.dart' show ShadowCasterFaces;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart' show ShadowCastingMode;
 import 'package:flutter_scene/src/material/material.dart';
+import 'package:flutter_scene/src/material/shadow_catcher_material.dart';
 import 'package:flutter_scene/src/render/bvh.dart';
 import 'package:flutter_scene/src/render/custom_render_pass.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart'
@@ -37,6 +38,57 @@ import 'package:flutter_scene/src/render/pre_pass.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render_view.dart';
+
+// Changes when a render item takes another material or level-of-detail
+// selection, which the material summary of a render scene is keyed on.
+int _itemMaterialRevision = 0;
+
+/// What the materials of a render scene's items ask of a frame, kept until an
+/// item joins or leaves, an item takes another material or level-of-detail
+/// selection, or a material changes its scene inputs or its
+/// display-referred state.
+final class SceneMaterialSummary {
+  SceneMaterialSummary._(
+    this.inputs,
+    this.displayReferredItems,
+    this.shadowCatcherItems,
+  );
+
+  /// The scene inputs every item's material and level materials read, visible
+  /// or not.
+  final Set<RenderInput> inputs;
+
+  /// The items whose material, or one of whose level materials, is
+  /// display-referred (see [Material.displayReferred]).
+  final List<RenderItem> displayReferredItems;
+
+  /// The items drawn with a [ShadowCatcherMaterial].
+  final List<RenderItem> shadowCatcherItems;
+}
+
+/// The items one cull of a render scene kept for a view, in the order the cull
+/// visited them, with the scene inputs their materials read. The view's color
+/// pass draws from [items], so the view culls once.
+final class ViewVisibleItems {
+  /// The items the cull kept.
+  final List<RenderItem> items = [];
+
+  /// The scene inputs the materials of the kept items that draw color in the
+  /// view's layers read.
+  final Set<RenderInput> inputs = {};
+
+  /// The bounded items the cull rejected without visiting them.
+  int rejected = 0;
+
+  int _structureRevision = -1;
+  int _spatialRevision = -1;
+
+  /// Whether [scene] still holds the items and the bounds this was culled
+  /// from.
+  bool isCurrentFor(RenderScene scene) =>
+      _structureRevision == scene._structureRevision &&
+      _spatialRevision == scene._spatialRevision;
+}
 
 /// One drawable primitive in the flat render layer.
 ///
@@ -64,6 +116,7 @@ class RenderItem {
     if (identical(_material, value)) return;
     _material = value;
     materialIdentity = identityHashCode(value);
+    _itemMaterialRevision++;
   }
 
   Material _material;
@@ -81,7 +134,14 @@ class RenderItem {
   /// (or culls) from the item's projected screen size, instead of drawing
   /// [geometry] and [material]. Those serve as the highest-detail fallback
   /// and the source of [cullBounds].
-  LodSelection? lod;
+  LodSelection? get lod => _lod;
+  set lod(LodSelection? value) {
+    if (identical(_lod, value)) return;
+    _lod = value;
+    _itemMaterialRevision++;
+  }
+
+  LodSelection? _lod;
 
   /// The `Node` that owns this item, set once when the item is registered.
   ///
@@ -251,6 +311,25 @@ class RenderItem {
   /// is not highlighted. Refreshed each frame; the selection-outline pass
   /// draws only highlighted items, using this as the mask color.
   Vector4? highlightColor;
+
+  /// The leaf of the scene's [Bvh] that holds this item, or `-1` while it is
+  /// in none. Maintained by the tree.
+  @internal
+  int bvhNode = -1;
+
+  // Where the scene holds the item while it is in no tree, or `-1`.
+  int _alwaysVisibleSlot = -1;
+
+  // Whether the scene has placed the item since it was added or its
+  // membership changed.
+  bool _placed = false;
+
+  /// Whether this item casts into the cached static shadow tiles: a visible
+  /// static caster.
+  bool get isStaticShadowCaster => shadowStatic && castsShadows && visible;
+
+  // Whether the scene counts the item among its static shadow casters.
+  bool _countedStaticCaster = false;
 
   /// Index into [RenderScene.items] while registered, or `-1`. Maintained
   /// by [RenderScene.add] and [RenderScene.remove] so unregistering is a
@@ -585,13 +664,7 @@ class RenderItem {
       if (previousData != null) invalidateRetainedInstanceData(previousData);
       invalidateRetainedInstanceData(packedData);
     } else {
-      updateRetainedInstanceRows(
-        previousData,
-        packedData,
-        count,
-        changed,
-        recordFloats,
-      );
+      updateRetainedInstanceRows(previousData, packedData, count, changed);
     }
   }
 
@@ -1301,15 +1374,54 @@ class RenderScene {
   int _structureRevision = 0;
   int _staticShadowRevision = 0;
 
+  // Changes when the spatial structure is built or refitted, or an item is
+  // placed in it or taken out of it.
+  int _spatialRevision = 0;
+
   /// Changes when render items are added or removed.
   int get structureRevision => _structureRevision;
 
   /// Changes when a retained static shadow caster changes.
   int get staticShadowRevision => _staticShadowRevision;
 
-  /// Invalidates the cached static-caster fingerprint.
-  void markStaticShadowDirty() {
+  /// Invalidates the cached static-caster fingerprint after [item] became,
+  /// stopped being or changed as a static shadow caster. Without an item
+  /// every item is read again.
+  void markStaticShadowDirty([RenderItem? item]) {
     _staticShadowRevision++;
+    if (item == null) {
+      _staticCastersUnknown = true;
+    } else {
+      _staticCasterChanges.add(item);
+    }
+  }
+
+  int _staticCasters = 0;
+  bool _staticCastersUnknown = false;
+  final List<RenderItem> _staticCasterChanges = [];
+
+  /// Whether any item is a visible static shadow caster. Kept as a count the
+  /// items named to [markStaticShadowDirty] and the removed items change, so
+  /// no frame reads every item for it.
+  bool get hasStaticShadowCasters {
+    if (_staticCastersUnknown) {
+      _staticCastersUnknown = false;
+      _staticCasters = 0;
+      for (final item in items) {
+        item._countedStaticCaster = item.isStaticShadowCaster;
+        if (item._countedStaticCaster) _staticCasters++;
+      }
+    } else {
+      for (final item in _staticCasterChanges) {
+        if (item.sceneSlot < 0) continue;
+        final casts = item.isStaticShadowCaster;
+        if (casts == item._countedStaticCaster) continue;
+        item._countedStaticCaster = casts;
+        _staticCasters += casts ? 1 : -1;
+      }
+    }
+    _staticCasterChanges.clear();
+    return _staticCasters > 0;
   }
 
   /// The spatial structure over the bounded items, current after
@@ -1319,18 +1431,21 @@ class RenderScene {
 
   final List<RenderItem> _alwaysVisible = [];
 
-  // The BVH needs a full rebuild: an item was added or removed, or an
-  // item's BVH membership changed.
-  bool _structureDirty = true;
+  // The items to place in the tree or among the always visible: those added
+  // and those whose membership changed.
+  final List<RenderItem> _unplaced = [];
 
-  // A bounded item moved; the BVH can refit instead of rebuilding.
+  // Every item is placed again: the membership of an unnamed item changed.
+  bool _structureDirty = false;
+
+  // A bounded item moved; the BVH refits.
   bool _boundsDirty = false;
 
   void add(RenderItem item) {
     item.sceneSlot = items.length;
     items.add(item);
+    _unplaced.add(item);
     _structureRevision++;
-    _structureDirty = true;
   }
 
   void remove(RenderItem item) {
@@ -1343,15 +1458,54 @@ class RenderScene {
     }
     item.sceneSlot = -1;
     item.heldInstanceRecord.release();
+    _displace(item);
+    if (item._countedStaticCaster) {
+      item._countedStaticCaster = false;
+      _staticCasters--;
+      _staticShadowRevision++;
+    } else if (item.isStaticShadowCaster) {
+      _staticShadowRevision++;
+    }
     _structureRevision++;
-    _structureDirty = true;
   }
 
-  /// Flags the BVH for a full rebuild. Called when an item's BVH
-  /// membership changed (its `frustumCulled` flag toggled, or it became
-  /// bounded or unbounded).
-  void markBvhStructureDirty() {
-    _structureDirty = true;
+  // Takes [item] out of the tree or of the always visible.
+  void _displace(RenderItem item) {
+    _spatialRevision++;
+    item._placed = false;
+    _bvh.remove(item);
+    final slot = item._alwaysVisibleSlot;
+    if (slot < 0) return;
+    final last = _alwaysVisible.removeLast();
+    if (!identical(last, item)) {
+      _alwaysVisible[slot] = last;
+      last._alwaysVisibleSlot = slot;
+    }
+    item._alwaysVisibleSlot = -1;
+  }
+
+  void _place(RenderItem item) {
+    if (item._placed || item.sceneSlot < 0) return;
+    item._placed = true;
+    _spatialRevision++;
+    if (item.frustumCulled && item.worldBounds != null) {
+      _bvh.insert(item);
+    } else {
+      item._alwaysVisibleSlot = _alwaysVisible.length;
+      _alwaysVisible.add(item);
+    }
+  }
+
+  /// States that the BVH membership of [item] changed (its `frustumCulled`
+  /// flag toggled, or it became bounded or unbounded), so it is placed
+  /// again. Without an item every item is.
+  void markBvhStructureDirty([RenderItem? item]) {
+    if (item == null) {
+      _structureDirty = true;
+    } else if (item._placed) {
+      _displace(item);
+      _unplaced.add(item);
+    }
   }
 
   /// Flags the BVH for a refit. Called when a bounded item moved but the
@@ -1362,23 +1516,41 @@ class RenderScene {
 
   /// Brings the spatial structure up to date with the current items.
   /// Call once per frame, after the pre-pass and before the render
-  /// passes. Rebuilds on a structural change, otherwise refits when an
-  /// item moved, otherwise does nothing.
+  /// passes. Places the items added since and those whose membership
+  /// changed, each by one insert, and refits when an item moved. The tree
+  /// is built in one sort only where it holds no item yet, as on the first
+  /// frame of a scene.
   void rebuildIfDirty() {
-    if (_structureDirty) {
+    if (_structureDirty || (_bvh.itemCount == 0 && _unplaced.length > 1)) {
+      _spatialRevision++;
       _structureDirty = false;
       _boundsDirty = false;
+      _unplaced.clear();
       _alwaysVisible.clear();
       final bounded = <RenderItem>[];
       for (final item in items) {
+        item
+          .._placed = true
+          ..bvhNode = -1
+          .._alwaysVisibleSlot = -1;
         if (item.frustumCulled && item.worldBounds != null) {
           bounded.add(item);
         } else {
+          item._alwaysVisibleSlot = _alwaysVisible.length;
           _alwaysVisible.add(item);
         }
       }
       _bvh = Bvh.build(bounded);
-    } else if (_boundsDirty) {
+      return;
+    }
+    if (_unplaced.isNotEmpty) {
+      for (final item in _unplaced) {
+        _place(item);
+      }
+      _unplaced.clear();
+    }
+    if (_boundsDirty) {
+      _spatialRevision++;
       _boundsDirty = false;
       _bvh.refit();
     }
@@ -1474,35 +1646,45 @@ class RenderScene {
     return (depth: best, nearest: nearest);
   }
 
-  /// Collects material inputs requested by this view's frustum candidates.
-  Set<RenderInput> collectMaterialInputs(
-    Frustum frustum, {
+  /// Culls the scene for a view into [into] and returns it: the items
+  /// [frustum] and [additionalPlanes] keep, or every item with
+  /// [includeOffscreen]. With [gatherInputs] it also gathers the scene inputs
+  /// the kept items that draw color in [layerMask] read, so the view decides
+  /// its passes from the cull its color pass draws from.
+  ViewVisibleItems collectVisible(
+    Frustum frustum,
+    ViewVisibleItems into, {
     int layerMask = kRenderLayerAll,
     List<Plane> additionalPlanes = const [],
     bool includeOffscreen = false,
+    bool gatherInputs = true,
   }) {
-    final inputs = <RenderInput>{};
-    void collect(RenderItem item) {
-      if (!item.drawsColor || (item.layers & layerMask) == 0) {
-        return;
-      }
+    final kept = into.items..clear();
+    final inputs = into.inputs..clear();
+    into
+      .._structureRevision = _structureRevision
+      .._spatialRevision = _spatialRevision;
+    if (includeOffscreen) {
+      kept.addAll(items);
+      into.rejected = 0;
+    } else {
+      into.rejected = cull(
+        frustum,
+        kept.add,
+        additionalPlanes: additionalPlanes,
+      );
+    }
+    if (!gatherInputs) return into;
+    for (final item in kept) {
+      if (!item.drawsColor || (item.layers & layerMask) == 0) continue;
       inputs.addAll(item.material.sceneInputs);
       final lod = item.lod;
-      if (lod != null) {
-        for (final level in lod.levels) {
-          inputs.addAll(level.material.sceneInputs);
-        }
+      if (lod == null) continue;
+      for (final level in lod.levels) {
+        inputs.addAll(level.material.sceneInputs);
       }
     }
-
-    if (includeOffscreen) {
-      for (final item in items) {
-        collect(item);
-      }
-    } else {
-      cull(frustum, collect, additionalPlanes: additionalPlanes);
-    }
-    return inputs;
+    return into;
   }
 
   /// Whether any registered item's material (or LOD level's) satisfies [test],
@@ -1519,19 +1701,61 @@ class RenderScene {
     return false;
   }
 
-  /// Collects material inputs without view-dependent culling.
-  Set<RenderInput> collectAllMaterialInputs() {
+  SceneMaterialSummary? _materialSummary;
+  int _summaryStructureRevision = -1;
+  int _summaryMaterialRevision = -1;
+  int _summaryItemMaterialRevision = -1;
+
+  /// What the materials of the registered items ask of a frame. It scans the
+  /// items only after a change it is keyed on, which
+  /// [RenderCounters.materialSummaryItems] counts.
+  SceneMaterialSummary get materialSummary {
+    final materialRevision = materialSceneInputsRevision;
+    final current = _materialSummary;
+    if (current != null &&
+        _summaryStructureRevision == _structureRevision &&
+        _summaryMaterialRevision == materialRevision &&
+        _summaryItemMaterialRevision == _itemMaterialRevision) {
+      return current;
+    }
     final inputs = <RenderInput>{};
+    final displayReferred = <RenderItem>[];
+    final shadowCatchers = <RenderItem>[];
     for (final item in items) {
-      inputs.addAll(item.material.sceneInputs);
+      final material = item.material;
+      inputs.addAll(material.sceneInputs);
+      // The encoder draws the selected level's material, not the item's, and
+      // which level a view selects is not known here, so any level counts:
+      // an unused layer costs less than a draw routed out of both buckets.
+      var displayReferredItem = material.displayReferred;
       final lod = item.lod;
       if (lod != null) {
         for (final level in lod.levels) {
           inputs.addAll(level.material.sceneInputs);
+          displayReferredItem |= level.material.displayReferred;
         }
       }
+      if (displayReferredItem) displayReferred.add(item);
+      if (material is ShadowCatcherMaterial) shadowCatchers.add(item);
     }
-    return inputs;
+    activeRenderCounters.materialSummaryItems += items.length;
+    _summaryStructureRevision = _structureRevision;
+    _summaryMaterialRevision = materialRevision;
+    _summaryItemMaterialRevision = _itemMaterialRevision;
+    return _materialSummary = SceneMaterialSummary._(
+      inputs,
+      displayReferred,
+      shadowCatchers,
+    );
+  }
+
+  /// Whether the scene holds a visible display-referred surface (see
+  /// [Material.displayReferred]), which the frame pays the extra layer for.
+  bool get hasVisibleDisplayReferred {
+    for (final item in materialSummary.displayReferredItems) {
+      if (item.visible) return true;
+    }
+    return false;
   }
 }
 

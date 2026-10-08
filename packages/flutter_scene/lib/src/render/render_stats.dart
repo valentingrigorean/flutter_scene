@@ -52,15 +52,27 @@ class RenderCounters {
   /// node changed. A change to some instances packs only their records.
   int instanceBytesPacked = 0;
 
-  /// Bytes of those records written to the device copies instanced items keep
-  /// while their instances rest. A change to some instances writes only their
-  /// records while no submitted GPU work is pending.
+  /// Bytes of the instance records that changed, written to the device once:
+  /// the bytes of the rows a change names, whether or not a frame is still on
+  /// the GPU.
   int instanceBytesUploaded = 0;
+
+  /// Bytes of instance records written to the device beyond
+  /// [instanceBytesUploaded]: a changed row written again into another buffer
+  /// of its ring as that buffer comes free, and the rows a new buffer of a
+  /// ring starts with.
+  int instanceBytesReplayed = 0;
 
   /// Nodes the scene pre-pass visited: one per node it ticked and one per
   /// node whose render items it refreshed. Zero on a frame that changes no
   /// node while no node ticks.
   int prePassNodes = 0;
+
+  /// Render items scanned to summarize what the scene's materials ask of a
+  /// frame: their scene inputs, the display-referred surfaces and the shadow
+  /// catchers. Zero on a frame that adds or removes no item and changes no
+  /// material.
+  int materialSummaryItems = 0;
 
   void reset() {
     draws = 0;
@@ -74,7 +86,9 @@ class RenderCounters {
     pipelineBuilds = 0;
     instanceBytesPacked = 0;
     instanceBytesUploaded = 0;
+    instanceBytesReplayed = 0;
     prePassNodes = 0;
+    materialSummaryItems = 0;
   }
 
   void copyFrom(RenderCounters other) {
@@ -89,7 +103,9 @@ class RenderCounters {
     pipelineBuilds = other.pipelineBuilds;
     instanceBytesPacked = other.instanceBytesPacked;
     instanceBytesUploaded = other.instanceBytesUploaded;
+    instanceBytesReplayed = other.instanceBytesReplayed;
     prePassNodes = other.prePassNodes;
+    materialSummaryItems = other.materialSummaryItems;
   }
 
   /// Sets this to `now - start`.
@@ -106,7 +122,11 @@ class RenderCounters {
     instanceBytesPacked = now.instanceBytesPacked - start.instanceBytesPacked;
     instanceBytesUploaded =
         now.instanceBytesUploaded - start.instanceBytesUploaded;
+    instanceBytesReplayed =
+        now.instanceBytesReplayed - start.instanceBytesReplayed;
     prePassNodes = now.prePassNodes - start.prePassNodes;
+    materialSummaryItems =
+        now.materialSummaryItems - start.materialSummaryItems;
   }
 
   Map<String, int> toJson() => {
@@ -121,7 +141,9 @@ class RenderCounters {
     'pipelineBuilds': pipelineBuilds,
     'instanceBytesPacked': instanceBytesPacked,
     'instanceBytesUploaded': instanceBytesUploaded,
+    'instanceBytesReplayed': instanceBytesReplayed,
     'prePassNodes': prePassNodes,
+    'materialSummaryItems': materialSummaryItems,
   };
 }
 
