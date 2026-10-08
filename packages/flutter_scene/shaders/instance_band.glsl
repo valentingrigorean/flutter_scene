@@ -2,8 +2,8 @@
 // the FrameInfo block, which carries the band_* members.
 
 float InstanceBandHash(vec3 translation) {
-  vec3 p = fract(translation * vec3(443.897, 441.423, 437.195));
-  float d = dot(p, p.yxz + 19.19);
+  vec3 p = fract(translation * vec3(0.1031, 0.1030, 0.0973));
+  float d = dot(p, p.yxz + 33.33);
   return fract((p.x + d + p.y + d) * (p.z + d));
 }
 
