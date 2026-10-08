@@ -146,6 +146,18 @@ void main() {
       expect(currentDrawDepthSlope, everyElement(0.0));
     });
 
+    test('a geometry bind reads the raster of the draw it binds', () {
+      const reversed = DepthRaster(reversed: true, floatDepth: true);
+      setCurrentDrawDepthOffset(reversed, 0, 0);
+      expect(currentDrawDepthRaster, reversed);
+      final out = Float32List(2);
+      currentDrawDepthRaster.writeOffset(2, out, 0);
+      expect(out[0], closeTo(2 / 8388608, 1e-12));
+      expect(out[1], 0.0);
+      clearCurrentDrawDepthOffset();
+      expect(currentDrawDepthRaster, DepthRaster.standard);
+    });
+
     test('the precision line states the storage, the fit, and the gap', () {
       final standard = depthPrecisionSummary(
         reversed: false,

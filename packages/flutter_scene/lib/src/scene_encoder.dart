@@ -429,7 +429,7 @@ List<SceneTranslucentDraw> sceneTranslucentDraws(
 }) {
   final eye = camera.position;
   final forward = camera.forward;
-  final frustum = Frustum.matrix(camera.getViewTransform(dimensions));
+  final frustum = cullingFrustumOf(camera, dimensions);
   final draws = <SceneTranslucentDraw>[];
   final world = Aabb3();
 
