@@ -12,6 +12,8 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:flutter_scene/src/importer/constants.dart';
 import 'package:flutter_scene/src/instance_band.dart';
+import 'package:flutter_scene/src/skin.dart';
+import 'package:flutter_scene/src/vertex_spin.dart';
 import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/render_view.dart';
 import 'package:flutter_scene/src/material/instance_attributes.dart';
@@ -1117,6 +1119,11 @@ abstract class Geometry with RenderSourceListeners {
   /// nodes carries the correct skeleton for every draw.
   void setJointsTexture(gpu.Texture? texture, int width) {}
 
+  /// Hook for skinned geometries to receive the palette the joints texture
+  /// set by [setJointsTexture] holds, with the world transform of its root,
+  /// or null when the texture holds one pose.
+  void setJointPalette(JointPalettePlayback? playback, vm.Matrix4 root) {}
+
   /// Binds vertex/index buffers and per-frame uniforms onto [pass] in
   /// preparation for a draw call.
   ///
@@ -1843,8 +1850,9 @@ class UnskinnedGeometry extends Geometry {
 class SkinnedGeometry extends Geometry {
   // The skinned FrameInfo, shared by every draw since emplace copies it out.
   // The leading model transform stays identity.
-  static final Float32List _skinnedFrameInfoScratch = Float32List(44)
-    ..setAll(0, vm.Matrix4.identity().storage);
+  static final Float32List _skinnedFrameInfoScratch = Float32List(56);
+
+  static final vm.Matrix4 _identity = vm.Matrix4.identity();
 
   static final gpu.SamplerOptions _jointsSampler = gpu.SamplerOptions(
     minFilter: gpu.MinMagFilter.nearest,
@@ -1856,6 +1864,8 @@ class SkinnedGeometry extends Geometry {
 
   gpu.Texture? _jointsTexture;
   int _jointsTextureWidth = 0;
+  JointPalettePlayback? _palette;
+  vm.Matrix4 _paletteRoot = _identity;
 
   /// Creates a [SkinnedGeometry] preconfigured with the `SkinnedVertex`
   /// shader from [baseShaderLibrary].
@@ -1903,6 +1913,13 @@ class SkinnedGeometry extends Geometry {
   void setJointsTexture(gpu.Texture? texture, int width) {
     _jointsTexture = texture;
     _jointsTextureWidth = width;
+    _palette = null;
+  }
+
+  @override
+  void setJointPalette(JointPalettePlayback? playback, vm.Matrix4 root) {
+    _palette = playback;
+    _paletteRoot = root;
   }
 
   @override
@@ -1937,8 +1954,11 @@ class SkinnedGeometry extends Geometry {
     // applies them directly. Passing the mesh node's own transform here
     // would double-apply it (and glTF requires a skinned mesh node's
     // transform to be ignored). `modelTransform` is unused for skinned
-    // geometry as a result.
+    // geometry as a result. A palette holds matrices relative to its root,
+    // so the root's world transform takes the model transform's place.
+    final palette = _palette;
     final frameInfo = _skinnedFrameInfoScratch
+      ..setAll(0, (palette == null ? _identity : _paletteRoot).storage)
       ..setAll(16, cameraTransform.storage)
       ..[32] = cameraPosition.x
       ..[33] = cameraPosition.y
@@ -1951,6 +1971,16 @@ class SkinnedGeometry extends Geometry {
       ..[41] = currentDrawDepthOffset[1]
       ..[42] = currentDrawDepthSlope[0]
       ..[43] = currentDrawDepthSlope[2];
+    if (palette == null) {
+      frameInfo.fillRange(44, 56, 0.0);
+    } else {
+      frameInfo
+        ..[44] = palette.palette.width.toDouble()
+        ..[45] = palette.palette.rowCount.toDouble()
+        ..[46] = palette.palette.rowsPerSecond
+        ..[47] = 1.0;
+      palette.writeTo(frameInfo, 48, currentAnimationTime);
+    }
     pass.bindUniform(
       boundShader.cachedUniformSlot('FrameInfo'),
       transientsBuffer.emplace(scratchBytesOf(frameInfo)),
@@ -2281,7 +2311,9 @@ final VertexLayoutDescriptor kUnskinnedSoADepthLayout = VertexLayoutDescriptor(
 // Reused across every call: this runs for every draw of every pass, and
 // [TransientWriter.emplace] copies the bytes out immediately, so a shared
 // scratch is safe and avoids a per-draw allocation.
-final Float32List _unskinnedFrameInfoScratch = Float32List(80);
+final Float32List _unskinnedFrameInfoScratch = Float32List(
+  80 + VertexSpin.floatCount,
+);
 
 final vm.Matrix4 _identityInstanceFrame = vm.Matrix4.identity();
 
@@ -2392,6 +2424,12 @@ void bindUnskinnedFrameInfo(
     scratch
       ..[78] = view[8]
       ..[79] = view[9];
+  }
+  final spin = currentDrawSpin;
+  if (spin == null) {
+    VertexSpin.writeNone(scratch, 80);
+  } else {
+    spin.writeTo(scratch, 80, currentAnimationTime);
   }
   pass.bindUniform(
     frameInfoSlot,

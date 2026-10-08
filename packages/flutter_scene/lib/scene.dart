@@ -421,7 +421,8 @@ export 'src/unbuilt_pipeline.dart' show ScenePipelinePass, UnbuiltPipelineDraw;
 export 'src/widget_texture.dart'
     show WidgetTexture, WidgetTextureController, WidgetUpdatePolicy;
 export 'src/shaders.dart' show baseShaderLibrary, loadBaseShaderLibrary;
-export 'src/skin.dart' show Skin;
+export 'src/skin.dart' show JointPalette, JointPalettePlayback, Skin;
+export 'src/vertex_spin.dart' show SpinTurn, VertexSpin;
 export 'src/sky_environment.dart' show SkyEnvironment, SkyEnvironmentRefresh;
 export 'src/sky_sources.dart' show GradientSkySource, PhysicalSkySource;
 export 'src/skybox.dart'

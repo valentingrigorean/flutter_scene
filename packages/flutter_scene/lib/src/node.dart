@@ -22,6 +22,7 @@ import 'package:flutter_scene/src/render/pre_pass.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/skin.dart';
+import 'package:flutter_scene/src/vertex_spin.dart';
 import 'package:vector_math/vector_math.dart';
 import 'package:vector_math/vector_math.dart' as vm;
 
@@ -135,6 +136,22 @@ base class Node implements SceneGraph, PrePassNode {
   }
 
   Vector4? _highlightColor;
+
+  /// The turns the vertex stage applies to this node's unskinned mesh from
+  /// the scene's animation time, or null for none. See [VertexSpin].
+  ///
+  /// The mesh turns with no change to a transform, so a frame that only
+  /// advances the time refreshes nothing of this node. A clone takes the same
+  /// spin. Children are not turned; state the spin on each mesh it turns.
+  /// {@category Scene graph}
+  VertexSpin? get spin => _spin;
+  set spin(VertexSpin? value) {
+    if (identical(value, _spin)) return;
+    _spin = value;
+    _markRenderChanged();
+  }
+
+  VertexSpin? _spin;
 
   /// Whether this node and its descendants should be tested against the
   /// camera frustum each frame. When `true` (the default), subtrees
@@ -1690,6 +1707,7 @@ base class Node implements SceneGraph, PrePassNode {
     );
     result.isJoint = isJoint;
     result.isImportRoot = isImportRoot;
+    result._spin = _spin;
     result._localTransformTrs = _localTransformTrs?.clone();
     result._morphWeights = _morphWeights == null
         ? null

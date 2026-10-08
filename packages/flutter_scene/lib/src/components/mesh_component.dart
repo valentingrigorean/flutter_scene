@@ -85,6 +85,7 @@ class MeshComponent extends Component {
   final List<RenderItem> _renderItems = [];
   final List<int> _boundsVersions = [];
   int _worldTransformVersion = -1;
+  int _skinPoseVersion = -1;
 
   /// The render items registered for this component's mesh primitives, empty
   /// while not mounted. Exposed so a subclass (the LOD component) can tag the
@@ -173,15 +174,18 @@ class MeshComponent extends Component {
     _renderItems.clear();
     _boundsVersions.clear();
     _worldTransformVersion = -1;
+    _skinPoseVersion = -1;
   }
 
   /// Refreshes this component's render items from the owning node's
   /// current world transform, skin, and cull state. Called once per frame
   /// by the scene pre-pass while the node is visible.
   ///
-  /// Without [uploadSkin] a skinned node keeps the joints texture its items
-  /// hold, so a refresh between frames does not advance the skin's joints
-  /// ring.
+  /// A skinned node uploads its joints only when the world transform of one
+  /// was recomputed since the last upload, and never while its skin draws
+  /// from a palette (`Skin.play`). Without [uploadSkin] it keeps the joints
+  /// texture its items hold, so a refresh between frames does not advance
+  /// the skin's joints ring.
   @internal
   void refreshRenderItems({bool uploadSkin = true}) {
     if (_renderItems.isEmpty) return;
@@ -195,8 +199,16 @@ class MeshComponent extends Component {
       item.debugView = debugView;
     }
     final worldTransformVersion = node.worldTransformVersion;
+    final skin = node.skin;
+    final playback = skin?.playback;
+    final skinPoseVersion = skin == null || playback != null
+        ? 0
+        : skin.poseVersion;
+    final skinPosed =
+        skin == null || playback != null || skinPoseVersion == _skinPoseVersion;
+    final spin = node.spin;
     var staticStateUnchanged =
-        node.skin == null &&
+        skinPosed &&
         node.internalMorphWeights == null &&
         worldTransformVersion == _worldTransformVersion;
     for (
@@ -207,7 +219,9 @@ class MeshComponent extends Component {
       final item = _renderItems[index];
       final primitive = _mesh.primitives[index];
       staticStateUnchanged =
-          item.jointsTexture == null &&
+          (item.jointsTexture == null) == (skin == null) &&
+          identical(item.jointPalette, playback) &&
+          identical(item.nodeSpin, spin) &&
           item.morphWeights == null &&
           item.visible == !item.material.drawsNothing &&
           item.primitiveVisible == primitive.visible &&
@@ -234,10 +248,13 @@ class MeshComponent extends Component {
     // rides on the render items, not the geometry, so nodes sharing one
     // skinned geometry (clones) each draw with their own skeleton; the
     // render passes apply it to the geometry per draw.
-    final skin = node.skin;
-    final uploadedSkin = uploadSkin ? skin : null;
+    final uploadedSkin = uploadSkin && playback == null && !skinPosed
+        ? skin
+        : null;
     final jointsTexture = uploadedSkin?.getJointsTexture();
     final jointsTextureWidth = uploadedSkin?.getTextureWidth() ?? 0;
+    if (uploadedSkin != null) _skinPoseVersion = skinPoseVersion;
+    if (playback != null) _skinPoseVersion = -1;
 
     final renderScene = node.internalRenderScene;
     final frustumCulled = node.frustumCulled;
@@ -264,7 +281,8 @@ class MeshComponent extends Component {
               item.primitiveCastsShadow != primitive.castsShadow ||
               item.shadowCasterFaces != shadowCasterFaces ||
               item.lightChannelMask != lightChannelMask ||
-              transformChanged) &&
+              transformChanged ||
+              !identical(item.nodeSpin, spin)) &&
           (item.shadowStatic || node.shadowStatic) &&
           (item.castsShadows || effectiveCastsShadows);
       item.visible = visible;
@@ -277,7 +295,9 @@ class MeshComponent extends Component {
       item.lightChannelMask = lightChannelMask;
       final isMoving =
           transformChanged ||
-          (skin != null && (jointsTexture != null || !uploadSkin));
+          (skin != null &&
+              playback == null &&
+              (jointsTexture != null || (!uploadSkin && !skinPosed)));
       item.isMoving = isMoving;
       if (transformChanged) {
         item.previousWorldTransform.setFrom(item.worldTransform);
@@ -295,6 +315,20 @@ class MeshComponent extends Component {
         item.jointsTexture = jointsTexture;
         item.jointsTextureWidth = jointsTextureWidth;
       }
+      if (playback != null) {
+        final palette = playback.palette;
+        item.previousJointsTexture = null;
+        item.jointsTexture = palette.texture;
+        item.jointsTextureWidth = palette.width;
+        if (transformChanged || !identical(item.jointPalette, playback)) {
+          item.paletteTransform.setFrom(playback.root.globalTransform);
+        }
+      } else if (skin == null) {
+        item.jointsTexture = null;
+      }
+      item.jointPalette = playback;
+      final spinChanged = !identical(item.nodeSpin, spin);
+      item.nodeSpin = spin;
       final morphWeights = node.internalMorphWeights;
       item.morphWeights = morphWeights;
       // Grow the bounds before this frame culls against them.
@@ -305,7 +339,8 @@ class MeshComponent extends Component {
       final geometryBoundsChanged = _boundsVersions[index] != boundsVersion;
       _boundsVersions[index] = boundsVersion;
       final wasBounded = item.worldBounds != null;
-      final boundsChanged = transformChanged || geometryBoundsChanged
+      final boundsChanged =
+          transformChanged || geometryBoundsChanged || spinChanged
           ? item.refreshWorldBounds()
           : false;
       final isBounded = item.worldBounds != null;

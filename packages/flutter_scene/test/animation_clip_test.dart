@@ -298,4 +298,23 @@ void main() {
       expect(() => clip.rebind(wrong), throwsA(isA<StateError>()));
     });
   });
+
+  group('a player poses its targets when a clip moved or left', () {
+    test('a clip that is removed leaves its node at the bind pose, and an '
+        'update that advances no clip writes no transform', () {
+      final node = Node(name: 'n');
+      final clip = _makeClip(node)..play();
+      node.debugRunPrePass(0.5);
+      expect(node.localTransform.getTranslation().x, closeTo(0.5, 1e-6));
+
+      clip.pause();
+      final held = node.localTransform;
+      node.debugRunPrePass(0.5);
+      expect(identical(node.localTransform, held), isTrue);
+
+      node.removeAnimationClip(clip);
+      node.debugRunPrePass(0.5);
+      expect(node.localTransform.getTranslation().x, closeTo(0, 1e-6));
+    });
+  });
 }

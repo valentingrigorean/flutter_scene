@@ -190,6 +190,7 @@ class VelocityPass extends RenderGraphPass {
       final isSkinned =
           item.geometry is SkinnedGeometry &&
           item.jointsTexture != null &&
+          item.jointPalette == null &&
           _skinnedMotion;
 
       final supplied = isSkinned ? null : item.geometry.velocityVertex;
