@@ -17,6 +17,16 @@ uniform FrameInfo {
   // tie-break (w) offsets; a skinned draw is never instanced, so it has no
   // instance rank. See ApplySlopedDepthOffset.
   vec4 depth_offset;
+  // The palette the joints texture holds (JointPalette): its texels across
+  // (x), its rows (y), its rows per second of clip time (z) and whether the
+  // texture is a palette (w). Without one the texture is one square pose.
+  vec4 palette;
+  // The clip the draw reads the palette at: the clip seconds at the start of
+  // the folded time (x), the clip seconds per second (y), the palette's
+  // length in seconds (z) and whether the clip wraps (w).
+  vec4 palette_clip;
+  // The folded animation time in seconds (x).
+  vec4 palette_time;
 }
 frame_info;
 
@@ -70,6 +80,25 @@ mat4 GetJoint(float joint_index) {
   return joint;
 }
 
+// The matrix of a joint in one row of a palette: four texels along the row.
+mat4 GetPaletteJoint(float joint_index, float row) {
+  float x = joint_index * kMatrixTexelStride;
+  float y = (row + 0.5) / frame_info.palette.y;
+  float texel = 1.0 / frame_info.palette.x;
+  return mat4(texture(joints_texture, vec2((x + 0.5) * texel, y)),
+              texture(joints_texture, vec2((x + 1.5) * texel, y)),
+              texture(joints_texture, vec2((x + 2.5) * texel, y)),
+              texture(joints_texture, vec2((x + 3.5) * texel, y)));
+}
+
+// The blended matrix of a vertex's four joints in one row of a palette.
+mat4 GetPaletteSkin(vec4 w, float row) {
+  return GetPaletteJoint(joints.x, row) * w.x +
+         GetPaletteJoint(joints.y, row) * w.y +
+         GetPaletteJoint(joints.z, row) * w.z +
+         GetPaletteJoint(joints.w, row) * w.w;
+}
+
 void main() {
   // Morph before skinning: targets blend the object-space position and
   // normal, then the blended skin matrix deforms the morphed result. The
@@ -90,8 +119,30 @@ void main() {
     // vertex lands 60 m short at 3 km). Normalize, first joint when all zero.
     float weight_sum = weights.x + weights.y + weights.z + weights.w;
     vec4 w = weight_sum > 0.0 ? weights / weight_sum : vec4(1.0, 0.0, 0.0, 0.0);
-    skin_matrix = GetJoint(joints.x) * w.x + GetJoint(joints.y) * w.y +
-                  GetJoint(joints.z) * w.z + GetJoint(joints.w) * w.w;
+    if (frame_info.palette.w == 1.0) {
+      // The clip time of the animation time, wrapped or held at its ends,
+      // then the two rows either side of it.
+      float length_seconds = frame_info.palette_clip.z;
+      float clip = frame_info.palette_clip.x +
+                   frame_info.palette_clip.y * frame_info.palette_time.x;
+      if (length_seconds <= 0.0) {
+        clip = 0.0;
+      } else if (frame_info.palette_clip.w == 1.0) {
+        clip = mod(clip, length_seconds);
+      } else {
+        clip = clamp(clip, 0.0, length_seconds);
+      }
+      float last_row = frame_info.palette.y - 1.0;
+      float row = min(clip * frame_info.palette.z, last_row);
+      float row_from = floor(row);
+      float row_to = min(row_from + 1.0, last_row);
+      float blend = row - row_from;
+      skin_matrix = GetPaletteSkin(w, row_from) * (1.0 - blend) +
+                    GetPaletteSkin(w, row_to) * blend;
+    } else {
+      skin_matrix = GetJoint(joints.x) * w.x + GetJoint(joints.y) * w.y +
+                    GetJoint(joints.z) * w.z + GetJoint(joints.w) * w.w;
+    }
   } else {
     skin_matrix = mat4(1); // Identity matrix.
   }

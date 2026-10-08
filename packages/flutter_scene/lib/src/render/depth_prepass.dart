@@ -85,7 +85,9 @@ class DepthPrepass extends RenderGraphPass {
     List<Plane> cullingPlanes = const [],
     Matrix4? cameraTransform,
     bool primaryView = false,
+    ViewVisibleItems? visibleItems,
   }) : _primaryView = primaryView,
+       _visibleItems = visibleItems,
        _camera = camera,
        _renderScene = renderScene,
        _dimensions = dimensions,
@@ -101,6 +103,9 @@ class DepthPrepass extends RenderGraphPass {
 
   final Matrix4? _cameraTransform;
   final bool _primaryView;
+
+  // The view's one cull, which the prepass draws from while it is current.
+  final ViewVisibleItems? _visibleItems;
 
   final Camera _camera;
   final RenderScene _renderScene;
@@ -200,11 +205,20 @@ class DepthPrepass extends RenderGraphPass {
       cameraUp: _cameraUp,
       primaryView: _primaryView,
     );
-    _renderScene.cull(
-      encoder.frustum,
-      encoder.submit,
-      additionalPlanes: _cullingPlanes,
-    );
+    final visible = _visibleItems;
+    if (visible != null &&
+        visible.cellsCulled &&
+        visible.isCurrentFor(_renderScene)) {
+      for (var i = 0; i < visible.items.length; i++) {
+        encoder.submitKept(visible, i);
+      }
+    } else {
+      _renderScene.cull(
+        encoder.frustum,
+        encoder.submit,
+        additionalPlanes: _cullingPlanes,
+      );
+    }
     encoder.flush();
     rendererSubmissions.submit(commandBuffer);
 
@@ -249,12 +263,14 @@ class TranslucentDepthPatchPass extends RenderGraphPass {
     int layerMask = kRenderLayerAll,
     List<Plane> cullingPlanes = const [],
     bool primaryView = false,
+    ViewVisibleItems? visibleItems,
   }) : _camera = camera,
        _renderScene = renderScene,
        _cameraForward = cameraForward,
        _layerMask = layerMask,
        _cullingPlanes = cullingPlanes,
-       _primaryView = primaryView;
+       _primaryView = primaryView,
+       _visibleItems = visibleItems;
 
   final Camera _camera;
   final RenderScene _renderScene;
@@ -265,11 +281,11 @@ class TranslucentDepthPatchPass extends RenderGraphPass {
   // draws what the color pass drew.
   final bool _primaryView;
 
+  // The view's one cull, which the patch draws from while it is current.
+  final ViewVisibleItems? _visibleItems;
+
   @override
   String get name => 'TranslucentDepthPatchPass';
-
-  static bool _qualifies(RenderItem item) =>
-      !item.material.isOpaque() && item.material.translucentEffectsDepth;
 
   @override
   void execute(RenderGraphContext context) {
@@ -289,13 +305,36 @@ class TranslucentDepthPatchPass extends RenderGraphPass {
     );
     final frustum = cullingFrustumOf(_camera, dimensions);
     final records = <RenderItem>[];
-    _renderScene.cull(frustum, (item) {
-      if (!item.drawsColor) return;
-      if ((item.layers & _layerMask) == 0) return;
-      if (!_qualifies(item)) return;
-      if (!item.cullVisibleCells(frustum, _cullingPlanes)) return;
-      records.add(item);
-    }, additionalPlanes: _cullingPlanes);
+    final visible = _visibleItems;
+    if (visible != null &&
+        visible.cellsCulled &&
+        visible.isCurrentFor(_renderScene)) {
+      final kept = visible.items;
+      for (var i = 0; i < kept.length; i++) {
+        final item = kept[i];
+        if (!depthPrepassDraws(
+              item,
+              layerMask: _layerMask,
+              translucentPatch: true,
+            ) ||
+            !visible.restoreCells(i)) {
+          continue;
+        }
+        records.add(item);
+      }
+    } else {
+      _renderScene.cull(frustum, (item) {
+        if (depthPrepassAccepts(
+          item,
+          frustum: frustum,
+          layerMask: _layerMask,
+          cullingPlanes: _cullingPlanes,
+          translucentPatch: true,
+        )) {
+          records.add(item);
+        }
+      }, additionalPlanes: _cullingPlanes);
+    }
     if (records.isEmpty) return;
 
     final target = gpu.RenderTarget.singleColor(
@@ -327,33 +366,43 @@ class TranslucentDepthPatchPass extends RenderGraphPass {
       translucentPatch: true,
       primaryView: _primaryView,
     );
-    for (final item in records) {
-      encoder.submit(item);
-    }
-    encoder.flush();
+    encoder
+      .._records.addAll(records)
+      ..flush();
     rendererSubmissions.submit(commandBuffer);
   }
 }
 
 /// Whether the depth prepass records [item] in a view culled by [frustum]:
-/// drawn, on a layer of [layerMask], in the pass's set (the prepass
-/// participants, or with [translucentPatch] the translucent depth writers),
-/// and with an instance inside the frustum and [cullingPlanes].
+/// one it draws (see [depthPrepassDraws]) with an instance inside the frustum
+/// and [cullingPlanes].
 bool depthPrepassAccepts(
   RenderItem item, {
   required Frustum frustum,
   required int layerMask,
   required List<Plane> cullingPlanes,
   bool translucentPatch = false,
+}) =>
+    depthPrepassDraws(
+      item,
+      layerMask: layerMask,
+      translucentPatch: translucentPatch,
+    ) &&
+    item.cullVisibleCells(frustum, cullingPlanes);
+
+/// Whether the depth prepass draws [item] wherever it is: drawn, on a layer of
+/// [layerMask], and in the pass's set (the prepass participants, or with
+/// [translucentPatch] the translucent depth writers).
+bool depthPrepassDraws(
+  RenderItem item, {
+  required int layerMask,
+  bool translucentPatch = false,
 }) {
   if (!item.drawsColor) return false;
   if ((item.layers & layerMask) == 0) return false;
-  if (translucentPatch
-      ? (item.material.isOpaque() || !item.material.translucentEffectsDepth)
-      : !item.material.depthPrepassParticipates) {
-    return false;
-  }
-  return item.cullVisibleCells(frustum, cullingPlanes);
+  return translucentPatch
+      ? !item.material.isOpaque() && item.material.translucentEffectsDepth
+      : item.material.depthPrepassParticipates;
 }
 
 /// How the depth prepass draws [geometry] with [material]: its shaders, its
@@ -618,6 +667,21 @@ class _DepthPrepassEncoder {
     _records.add(item);
   }
 
+  /// Records the item at [index] of [view], the view's one cull, with the
+  /// instance ranges that cull kept of it, unless it is outside this
+  /// encoder's set or no instance of it is in view.
+  void submitKept(ViewVisibleItems view, int index) {
+    if (!depthPrepassDraws(
+          view.items[index],
+          layerMask: _layerMask,
+          translucentPatch: _translucentPatch,
+        ) ||
+        !view.restoreCells(index)) {
+      return;
+    }
+    _records.add(view.items[index]);
+  }
+
   void flush() {
     _records.sort((a, b) {
       final byMaterial = a.materialIdentity.compareTo(b.materialIdentity);
@@ -849,9 +913,9 @@ class _DepthPrepassEncoder {
       return;
     }
 
-    item.beginInstanceDraw();
+    item.beginAnchoredDraw();
     _bindDraw(item.drawTransform);
-    RenderItem.endInstanceDraw();
+    RenderItem.endAnchoredDraw();
     // Skip the model-transform instance buffer for geometry that supplies its
     // own per-instance buffer (see the color encoder), or it clobbers the
     // stream slot.

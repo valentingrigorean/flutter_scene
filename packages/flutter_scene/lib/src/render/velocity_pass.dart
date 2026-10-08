@@ -190,6 +190,7 @@ class VelocityPass extends RenderGraphPass {
       final isSkinned =
           item.geometry is SkinnedGeometry &&
           item.jointsTexture != null &&
+          item.jointPalette == null &&
           _skinnedMotion;
 
       final supplied = isSkinned ? null : item.geometry.velocityVertex;
@@ -255,11 +256,7 @@ class VelocityPass extends RenderGraphPass {
           ..bindGeometryBuffers(renderPass);
       } else {
         unskinnedModelInfo.setRange(0, 16, item.drawTransform.storage);
-        unskinnedModelInfo.setRange(
-          16,
-          32,
-          item.previousDrawTransform.storage,
-        );
+        unskinnedModelInfo.setRange(16, 32, item.previousDrawTransform.storage);
         unskinnedModelInfo.setRange(32, 36, currentDrawDepthOffset);
         unskinnedModelInfo[36] = item.material.depthBias;
         renderPass.bindUniform(

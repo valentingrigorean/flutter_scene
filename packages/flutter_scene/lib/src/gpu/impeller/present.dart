@@ -19,10 +19,8 @@ Future<ui.Image> presentTextureAsImage(
 /// Vulkan devices do, else the context default. OpenGL ES keeps its default:
 /// it clips depth to [-1, 1] and maps it to the buffer's [0, 1] by a half
 /// scale and offset, which drops the precision float keeps near 0.
-PixelFormat get reversedDepthStencilFormat =>
-    _reversedDepthStencilFormat ??= _floatDepthOr(
-      gpuContext.defaultDepthStencilFormat,
-    );
+PixelFormat get reversedDepthStencilFormat => _reversedDepthStencilFormat ??=
+    _floatDepthOr(gpuContext.defaultDepthStencilFormat);
 
 PixelFormat? _reversedDepthStencilFormat;
 

@@ -78,9 +78,16 @@ int _lastSubmissionOf(int frame) => _frame - frame < _frameHistory
 
 const int _rangeLimit = 256;
 
-// Row ranges as pairs of a first row and an end row.
+// Row ranges as pairs of a first row and an end row. Ranges that [collapse]
+// join into one span while they number more than the limit, which names rows
+// that did not change; the others keep every range, so their rows count the
+// changed rows exactly.
 final class _Ranges {
+  _Ranges({this.collapse = true});
+
+  final bool collapse;
   final List<int> pairs = [];
+  int _normalizeAt = _rangeLimit * 2;
 
   bool get isEmpty => pairs.isEmpty;
 
@@ -94,7 +101,12 @@ final class _Ranges {
     pairs
       ..add(first)
       ..add(end);
-    if (pairs.length > _rangeLimit * 2) normalize();
+    if (pairs.length > _normalizeAt) {
+      normalize();
+      _normalizeAt = pairs.length > _rangeLimit
+          ? pairs.length * 2
+          : _rangeLimit * 2;
+    }
   }
 
   void addAll(_Ranges other) {
@@ -103,8 +115,8 @@ final class _Ranges {
     }
   }
 
-  // Sorts the ranges and joins those that touch, then joins them all into
-  // one while they still number more than the limit.
+  // Sorts the ranges and joins those that touch, then, where the ranges
+  // collapse, joins them all into one while they number more than the limit.
   void normalize() {
     if (pairs.length <= 2) return;
     final order = List<int>.generate(pairs.length >> 1, (index) => index * 2)
@@ -120,7 +132,7 @@ final class _Ranges {
           ..add(pairs[at + 1]);
       }
     }
-    if (merged.length > _rangeLimit * 2) {
+    if (collapse && merged.length > _rangeLimit * 2) {
       final end = merged.last;
       merged
         ..length = 2
@@ -149,7 +161,10 @@ final class _Ranges {
     return first;
   }
 
-  void clear() => pairs.clear();
+  void clear() {
+    pairs.clear();
+    _normalizeAt = _rangeLimit * 2;
+  }
 }
 
 final class _RingBuffer {
@@ -176,7 +191,7 @@ const int _idleFrames = 120;
 /// The device copies of one record store: see the library comment.
 final class InstanceRecordRing {
   final List<_RingBuffer> _buffers = [];
-  final _Ranges _landed = _Ranges();
+  final _Ranges _landed = _Ranges(collapse: false);
   _RingBuffer? _current;
 
   /// The buffers the ring holds on the device.

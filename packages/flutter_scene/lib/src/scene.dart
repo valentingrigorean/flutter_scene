@@ -58,6 +58,7 @@ import 'material/shader_interface.dart'
 import 'memory_pressure.dart';
 import 'mesh.dart';
 import 'node.dart';
+import 'vertex_spin.dart';
 import 'raycast.dart';
 import 'scene_tick_listener.dart';
 import 'physics/physics_world.dart';
@@ -213,12 +214,12 @@ enum AntiAliasingMode {
 /// it provides methods for adding and removing nodes from the scene graph.
 /// {@category Scene graph}
 base class Scene implements SceneGraph {
-  int _materialInputStructureRevision = -1;
-  int _materialInputMaterialRevision = -1;
   int _renderMetadataStaticShadowRevision = -1;
-  Set<RenderInput> _cachedWholeSceneMaterialInputs = const {};
   int _staticShadowContentRevision = 0;
   bool _cachedHasStaticShadowCasters = false;
+
+  // The visible-item lists no view holds, reused across frames.
+  final List<ViewVisibleItems> _visibleItemsPool = [];
 
   Scene() {
     // Kicked off, not awaited: rendering is gated on isReadyToRender, and a
@@ -2143,6 +2144,12 @@ base class Scene implements SceneGraph {
     return accumulator;
   }
 
+  /// The seconds the vertex stage animates from: the angle of a
+  /// [VertexSpin] and the row of a [JointPalette] are functions of this
+  /// alone. The application advances it, so the motion pauses when the
+  /// application stops advancing it and resumes where it stood.
+  double animationTime = 0.0;
+
   /// Advances the scene by [deltaSeconds]: ticks every node's components
   /// and animation players, and refreshes the flat render layer.
   ///
@@ -2232,6 +2239,7 @@ base class Scene implements SceneGraph {
     ui.Size? size,
   }) async {
     _checkNotDisposed('warmUp');
+    currentAnimationTime = animationTime;
     await initializeStaticResources();
     if (views.isEmpty) {
       return;
@@ -2603,11 +2611,14 @@ base class Scene implements SceneGraph {
       customInputs.addAll(_godRaysPass.inputs);
     }
     final bindSceneDepth = renderScene
-        .collectMaterialInputs(
+        .collectVisible(
           frustum,
+          ViewVisibleItems(),
           layerMask: view.layerMask,
           additionalPlanes: view.cullingPlanes,
+          cullCells: false,
         )
+        .inputs
         .contains(RenderInput.depth);
     final ssr =
         !debugActive && projectionValid && screenSpaceReflections.enabled;
@@ -2768,6 +2779,7 @@ base class Scene implements SceneGraph {
     double? pixelRatio,
   }) {
     _checkNotDisposed('renderViews');
+    currentAnimationTime = animationTime;
     renderScene.recordRenderedViews(views);
     if (!isReadyToRender) {
       debugPrint('Flutter Scene is not ready to render. Skipping frame.');
@@ -3827,6 +3839,7 @@ base class Scene implements SceneGraph {
     // its result). Never set for a linear-color capture.
     bool capturePlanarReflections = false,
   }) {
+    currentAnimationTime = animationTime;
     // A capture frame observes the pool from graph construction on, so
     // display-chain and custom-pass destinations acquired before execute are
     // attributed and identified by their descriptor debug names.
@@ -3923,35 +3936,31 @@ base class Scene implements SceneGraph {
     }
     if (wantGodRays) customInputs.addAll(_godRaysPass.inputs);
 
-    // Most scenes request no material scene inputs. Cache that whole-scene
-    // answer across movement, then cull per view only when at least one
-    // material can need an attachment. Opaque occlusion remains a GPU
+    // The view culls once, here: the kept items decide which attachments the
+    // frame produces, and the scene pass draws from the same list. Most
+    // scenes request no material scene input, which the summary answers
+    // without reading the kept items. Opaque occlusion remains a GPU
     // depth-test concern because an AABB cannot prove a mesh is hidden.
     // TODO(occlusion-culling): use a previous-frame hierarchical depth buffer
     // to reject fully hidden render items and scene-input requests.
-    final structureRevision = renderScene.structureRevision;
-    final materialRevision = materialSceneInputsRevision;
-    if (_materialInputStructureRevision != structureRevision ||
-        _materialInputMaterialRevision != materialRevision) {
-      _cachedWholeSceneMaterialInputs = renderScene.collectAllMaterialInputs();
-      _materialInputStructureRevision = structureRevision;
-      _materialInputMaterialRevision = materialRevision;
-    }
-    final wholeSceneMaterialInputs = _cachedWholeSceneMaterialInputs;
-    final materialInputs = wholeSceneMaterialInputs.isEmpty
-        ? wholeSceneMaterialInputs
-        : renderScene.collectMaterialInputs(
-            camera.getFrustum(pixelSize),
-            layerMask: view.layerMask,
-            additionalPlanes: view.cullingPlanes,
-            includeOffscreen: _warmUpIncludeOffscreen,
-          );
+    final materialSummary = renderScene.materialSummary;
+    final visibleItems = renderScene.collectVisible(
+      cullingFrustumOf(camera, pixelSize),
+      _visibleItemsPool.isEmpty
+          ? ViewVisibleItems()
+          : _visibleItemsPool.removeLast(),
+      layerMask: view.layerMask,
+      additionalPlanes: view.cullingPlanes,
+      includeOffscreen: _warmUpIncludeOffscreen,
+      gatherInputs: materialSummary.inputs.isNotEmpty,
+    );
+    final materialInputs = visibleItems.inputs;
 
     // The retained metadata below fingerprints static shadow casters.
     final hasStaticShadowCasters = _refreshStaticShadowMetadata();
     // A display-referred surface pays for an extra layer and forces the
     // scene depth to be stored, so the frame checks for one up front.
-    final displayReferredActive = sceneHasDisplayReferred(renderScene);
+    final displayReferredActive = renderScene.hasVisibleDisplayReferred;
     final captureOpaqueColor =
         materialInputs.contains(RenderInput.opaqueSceneColor) ||
         materialInputs.contains(RenderInput.filteredSceneColor);
@@ -4002,7 +4011,7 @@ base class Scene implements SceneGraph {
     // culling margin must cover.
     List<RenderItem>? catcherBakes;
     var maxReceiverSoftness = light?.shadowSoftness ?? 0.0;
-    for (final item in renderScene.items) {
+    for (final item in materialSummary.shadowCatcherItems) {
       final material = item.material;
       if (!item.visible || material is! ShadowCatcherMaterial) continue;
       if (material.needsBakedShadowRefresh) {
@@ -4266,6 +4275,7 @@ base class Scene implements SceneGraph {
             cullingPlanes: view.cullingPlanes,
             cameraTransform: currentJitteredViewProjection,
             primaryView: viewIndex >= 0,
+            visibleItems: visibleItems,
           ),
         );
       }
@@ -4413,6 +4423,7 @@ base class Scene implements SceneGraph {
         time: DateTime.now().millisecondsSinceEpoch.remainder(100000) / 1000.0,
         cullingPlanes: view.cullingPlanes,
         includeOffscreen: _warmUpIncludeOffscreen,
+        visibleItems: visibleItems,
         cameraTransform: currentJitteredViewProjection,
         debugView: debugFrame,
       ),
@@ -4434,6 +4445,7 @@ base class Scene implements SceneGraph {
         observer: capturer,
         stats: viewStats,
       );
+      _visibleItemsPool.add(visibleItems..items.clear());
       _finishViewStats(viewStats, viewWatch);
       return;
     }
@@ -4502,6 +4514,7 @@ base class Scene implements SceneGraph {
           layerMask: view.layerMask,
           cullingPlanes: view.cullingPlanes,
           primaryView: viewIndex >= 0,
+          visibleItems: visibleItems,
         ),
       );
     }
@@ -4811,6 +4824,7 @@ base class Scene implements SceneGraph {
       observer: capturer,
       stats: viewStats,
     );
+    _visibleItemsPool.add(visibleItems..items.clear());
     _finishViewStats(viewStats, viewWatch);
   }
 

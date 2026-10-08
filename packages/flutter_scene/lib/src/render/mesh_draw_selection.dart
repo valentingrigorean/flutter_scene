@@ -10,7 +10,8 @@ final MeshDrawContext _context = MeshDrawContext(
 );
 
 /// Runs [item]'s [MeshDrawSelector] for one draw and applies its index range
-/// to [geometry]. Pair with [endMeshDraw].
+/// to [geometry], and states the turns of a mesh drawn alone. Pair with
+/// [endMeshDraw].
 MeshDrawSelection beginMeshDraw(
   RenderItem item,
   Geometry geometry,
@@ -18,6 +19,7 @@ MeshDrawSelection beginMeshDraw(
   Vector3 cameraPosition,
   bool primaryView,
 ) {
+  item.beginSpinDraw();
   final selector = item.drawSource?.drawSelector;
   if (selector == null) return MeshDrawSelection.all;
   _context
@@ -31,8 +33,12 @@ MeshDrawSelection beginMeshDraw(
   return selection;
 }
 
-/// Restores [geometry] to its full range after [beginMeshDraw].
-void endMeshDraw(Geometry geometry) => geometry.clearDrawWindow();
+/// Restores [geometry] to its full range and clears the turns stated by
+/// [beginMeshDraw].
+void endMeshDraw(Geometry geometry) {
+  RenderItem.endSpinDraw();
+  geometry.clearDrawWindow();
+}
 
 /// Whether [item] has a selector, which keeps it out of cross-node batching.
 bool hasMeshDrawSelector(RenderItem item) =>

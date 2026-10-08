@@ -4,7 +4,6 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
-import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/resolve_pass.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/shaders.dart';
@@ -14,26 +13,6 @@ import 'package:flutter_scene/src/render/uniform_slots.dart';
 /// Render-graph blackboard key for the display-referred layer [ScenePass]
 /// draws, which [DisplayReferredCompositePass] blends onto the resolved image.
 const String kDisplayReferredBlackboardKey = 'display_referred_color';
-
-/// Whether the scene holds a visible display-referred surface (see
-/// [Material.displayReferred]), which the frame pays the extra layer for.
-bool sceneHasDisplayReferred(RenderScene renderScene) {
-  for (final item in renderScene.items) {
-    if (!item.visible) continue;
-    if (item.material.displayReferred) return true;
-    // The encoder draws the selected level's material, not the item's, so a
-    // level that opts in has to activate the layer even when the fallback
-    // does not. Which level the view selects is not known here, so any level
-    // counts: over-activating costs an unused layer, while under-activating
-    // would route the draw out of both scene buckets and drop it.
-    final lod = item.lod;
-    if (lod == null) continue;
-    for (final level in lod.levels) {
-      if (level.material.displayReferred) return true;
-    }
-  }
-  return false;
-}
 
 /// Blends the display-referred layer over the resolved display image.
 ///

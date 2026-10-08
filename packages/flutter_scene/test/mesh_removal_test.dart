@@ -109,11 +109,11 @@ void main() {
     root.add(Node(mesh: Mesh(_StubGeometry(), _InputMaterial())));
 
     final structureRevision = renderScene.structureRevision;
-    expect(renderScene.collectAllMaterialInputs(), {RenderInput.depth});
+    expect(renderScene.materialSummary.inputs, {RenderInput.depth});
 
     renderScene.markBvhBoundsDirty();
     expect(renderScene.structureRevision, structureRevision);
-    expect(renderScene.collectAllMaterialInputs(), {RenderInput.depth});
+    expect(renderScene.materialSummary.inputs, {RenderInput.depth});
   });
 
   test('removing a mounted mesh node drops its render items', () {

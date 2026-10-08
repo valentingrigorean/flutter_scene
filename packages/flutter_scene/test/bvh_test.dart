@@ -215,11 +215,14 @@ void main() {
       scene.add(hidden);
       scene.rebuildIfDirty();
 
-      final inputs = scene.collectMaterialInputs(
+      final kept = scene.collectVisible(
         Frustum.matrix(makeOrthographicMatrix(-5, 5, -5, 5, -5, 5)),
+        ViewVisibleItems(),
       );
 
-      expect(inputs, const {RenderInput.opaqueSceneColor});
+      expect(kept.inputs, const {RenderInput.opaqueSceneColor});
+      expect(kept.items, unorderedEquals([visible, hidden]));
+      expect(kept.rejected, 1);
     });
   });
 

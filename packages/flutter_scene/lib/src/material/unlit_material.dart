@@ -90,7 +90,16 @@ class UnlitMaterial extends Material {
   /// With this set, [baseColorFactor] multiplies in display space rather than
   /// linear space.
   @override
-  bool displayReferred = false;
+  bool get displayReferred => _displayReferred;
+  set displayReferred(bool value) {
+    if (value == _displayReferred) return;
+    _displayReferred = value;
+    // The scene summarizes its display-referred surfaces across materials and
+    // keeps the answer, so a change has to invalidate it.
+    markMaterialSceneInputsChanged();
+  }
+
+  bool _displayReferred = false;
 
   /// Linear RGBA tint multiplied with [baseColorTexture].
   Vector4 baseColorFactor = Colors.white;

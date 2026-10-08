@@ -550,9 +550,9 @@ class ShadowEncoder {
       return;
     }
 
-    item.beginInstanceDraw();
+    item.beginAnchoredDraw();
     _bindDraw(item.drawTransform);
-    RenderItem.endInstanceDraw();
+    RenderItem.endAnchoredDraw();
     // Skip the model-transform instance buffer for geometry that supplies its
     // own per-instance buffer (see the color encoder), or it clobbers the
     // stream slot.

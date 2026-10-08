@@ -115,7 +115,9 @@ void main() {
     visited();
     expect(seen(), {near, unanchored});
     final builds = Bvh.debugBuildCount;
-    final revisions = [for (final item in scene.items) item.worldTransformRevision];
+    final revisions = [
+      for (final item in scene.items) item.worldTransformRevision,
+    ];
     final transforms = [
       for (final item in scene.items) item.worldTransform.clone(),
     ];
@@ -139,9 +141,7 @@ void main() {
     expect([
       for (final item in scene.items) item.worldTransformRevision,
     ], revisions);
-    expect([
-      for (final item in scene.items) item.worldTransform,
-    ], transforms);
+    expect([for (final item in scene.items) item.worldTransform], transforms);
   });
 
   test('a node that takes another anchor moves in the tree', () {

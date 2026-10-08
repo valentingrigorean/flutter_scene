@@ -19,10 +19,13 @@ import 'package:flutter_scene/src/components/spot_light_component.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart';
 import 'package:flutter_scene/src/instance_band.dart';
 import 'package:flutter_scene/src/instanced_mesh.dart';
+import 'package:flutter_scene/src/skin.dart';
+import 'package:flutter_scene/src/vertex_spin.dart';
 import 'package:flutter_scene/src/light.dart' show ShadowCasterFaces;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart' show ShadowCastingMode;
 import 'package:flutter_scene/src/material/material.dart';
+import 'package:flutter_scene/src/material/shadow_catcher_material.dart';
 import 'package:flutter_scene/src/render/bvh.dart';
 import 'package:flutter_scene/src/render/custom_render_pass.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart'
@@ -35,6 +38,112 @@ import 'package:flutter_scene/src/render/pre_pass.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render_view.dart';
+
+// Changes when a render item takes another material or level-of-detail
+// selection, which the material summary of a render scene is keyed on.
+int _itemMaterialRevision = 0;
+
+/// What the materials of a render scene's items ask of a frame, kept until an
+/// item joins or leaves, an item takes another material or level-of-detail
+/// selection, or a material changes its scene inputs or its
+/// display-referred state.
+final class SceneMaterialSummary {
+  SceneMaterialSummary._(
+    this.inputs,
+    this.displayReferredItems,
+    this.shadowCatcherItems,
+  );
+
+  /// The scene inputs every item's material and level materials read, visible
+  /// or not.
+  final Set<RenderInput> inputs;
+
+  /// The items whose material, or one of whose level materials, is
+  /// display-referred (see [Material.displayReferred]).
+  final List<RenderItem> displayReferredItems;
+
+  /// The items drawn with a [ShadowCatcherMaterial].
+  final List<RenderItem> shadowCatcherItems;
+}
+
+/// The items one cull of a render scene kept for a view, in the order the cull
+/// visited them, with the instance ranges it kept of each and the scene inputs
+/// their materials read. The view's depth prepass, translucent depth patch and
+/// color pass draw from [items], so the view culls once.
+final class ViewVisibleItems {
+  /// The items the cull kept.
+  final List<RenderItem> items = [];
+
+  /// The scene inputs the materials of the kept items that draw color in the
+  /// view's layers read.
+  final Set<RenderInput> inputs = {};
+
+  /// The bounded items the cull rejected without visiting them.
+  int rejected = 0;
+
+  int _structureRevision = -1;
+  int _spatialRevision = -1;
+
+  // The instance ranges the cull kept of each of [items], in its order: null
+  // where every row draws, empty where no cell is in view. The lists are
+  // reused across culls.
+  final List<List<int>?> _cells = [];
+  final List<List<int>> _cellLists = [];
+  bool _cellsCulled = false;
+
+  /// Whether the cull tested the instance cells of the kept items, so a pass
+  /// takes the ranges it kept through [restoreCells]. False for a cull that
+  /// keeps every item.
+  bool get cellsCulled => _cellsCulled;
+
+  /// Whether [scene] still holds the items and the bounds this was culled
+  /// from.
+  bool isCurrentFor(RenderScene scene) =>
+      _structureRevision == scene._structureRevision &&
+      _spatialRevision == scene._spatialRevision;
+
+  /// Sets the [RenderItem.visibleInstanceRanges] of the item at [index] of
+  /// [items] to the ranges the cull kept of it, and returns whether any
+  /// remains. Valid while [cellsCulled].
+  bool restoreCells(int index) {
+    final cells = _cells[index];
+    items[index].visibleInstanceRanges = cells;
+    return cells == null || cells.isNotEmpty;
+  }
+
+  // Tests the instance cells of each kept item that draws color in
+  // [layerMask] against [frustum] and [additionalPlanes], once, and keeps
+  // the ranges in view.
+  void _cullCells(
+    Frustum frustum,
+    List<Plane> additionalPlanes,
+    int layerMask,
+  ) {
+    _cells.clear();
+    var used = 0;
+    for (final item in items) {
+      if (!item.drawsColor ||
+          (item.layers & layerMask) == 0 ||
+          !item.cullInstances) {
+        _cells.add(null);
+        continue;
+      }
+      item.cullVisibleCells(frustum, additionalPlanes);
+      final visible = item.visibleInstanceRanges;
+      if (visible == null) {
+        _cells.add(null);
+        continue;
+      }
+      if (used == _cellLists.length) _cellLists.add([]);
+      _cells.add(
+        _cellLists[used++]
+          ..clear()
+          ..addAll(visible),
+      );
+    }
+    _cellsCulled = true;
+  }
+}
 
 /// One drawable primitive in the flat render layer.
 ///
@@ -62,6 +171,7 @@ class RenderItem {
     if (identical(_material, value)) return;
     _material = value;
     materialIdentity = identityHashCode(value);
+    _itemMaterialRevision++;
   }
 
   Material _material;
@@ -79,7 +189,14 @@ class RenderItem {
   /// (or culls) from the item's projected screen size, instead of drawing
   /// [geometry] and [material]. Those serve as the highest-detail fallback
   /// and the source of [cullBounds].
-  LodSelection? lod;
+  LodSelection? get lod => _lod;
+  set lod(LodSelection? value) {
+    if (identical(_lod, value)) return;
+    _lod = value;
+    _itemMaterialRevision++;
+  }
+
+  LodSelection? _lod;
 
   /// The `Node` that owns this item, set once when the item is registered.
   ///
@@ -194,8 +311,21 @@ class RenderItem {
   void applyJointsTexture(Geometry drawnGeometry) {
     final texture = jointsTexture;
     if (texture == null) return;
-    drawnGeometry.setJointsTexture(texture, jointsTextureWidth);
+    drawnGeometry
+      ..setJointsTexture(texture, jointsTextureWidth)
+      ..setJointPalette(jointPalette, paletteTransform);
   }
+
+  /// The palette the owning node's skin draws from (`Skin.play`), or null
+  /// when [jointsTexture] holds the pose of its joints. With a palette,
+  /// [jointsTexture] is the palette's texture.
+  @internal
+  JointPalettePlayback? jointPalette;
+
+  /// The world transform of the palette's root, which the vertex stage
+  /// applies after a palette's joint matrix.
+  @internal
+  final Matrix4 paletteTransform = Matrix4.identity();
 
   /// The owning node's live morph target weights, or null for an unmorphed
   /// node. Refreshed each frame. Carried per item (like [jointsTexture]) so
@@ -425,29 +555,76 @@ class RenderItem {
 
   /// The transform a vertex takes before its row's record, or null for none.
   @internal
-  Matrix4? get instanceLocal => instanceSource?.instanceLocal;
+  Matrix4? get instanceLocal => instanceSource?.drawLocal;
 
   /// The band each row is tested against, or null for none.
   @internal
   InstanceBand? get instanceBand => instanceSource?.band;
 
-  /// States this item's instance frame, local transform and band for the
-  /// unskinned `FrameInfo` of the draws bound next. Pair with
+  /// The turns the owning node states for a mesh drawn alone (`Node.spin`),
+  /// or null for none.
+  @internal
+  VertexSpin? nodeSpin;
+
+  /// The turns the vertex stage applies to this item, or null for none: the
+  /// instanced mesh's, else the node's.
+  @internal
+  VertexSpin? get spin => instanceSource?.spin ?? nodeSpin;
+
+  /// States the turns of a mesh drawn alone for the unskinned `FrameInfo` of
+  /// the draws bound next. Pair with [endSpinDraw].
+  @internal
+  void beginSpinDraw() {
+    final spin = nodeSpin;
+    if (spin == null || instanceSource != null) return;
+    currentDrawSpin = spin;
+    currentDrawInstanceLocal = spin.space;
+  }
+
+  /// Clears what [beginSpinDraw] stated.
+  @internal
+  static void endSpinDraw() {
+    if (currentDrawSpin == null) return;
+    currentDrawSpin = null;
+    currentDrawInstanceLocal = null;
+  }
+
+  /// States the anchor of an item whose records hold [worldTransform], a
+  /// mesh drawn alone or packed instances, for the draws bound next: the
+  /// instance frame adds the anchor less the draw origin, and
+  /// [currentDrawAnchor] and [currentDrawOrigin] state the two points. Pair
+  /// with [endAnchoredDraw].
+  @internal
+  void beginAnchoredDraw() {
+    if (!anchored || drawOrigin == null) return;
+    _currentDrawAnchor = anchor;
+    _currentDrawOrigin = drawOrigin!.at;
+    currentDrawInstanceFrame = _instanceFrameScratch
+      ..setTranslationRaw(drawShift(0), drawShift(1), drawShift(2));
+  }
+
+  /// Clears what [beginAnchoredDraw] stated.
+  @internal
+  static void endAnchoredDraw() {
+    if (_currentDrawAnchor == null) return;
+    _currentDrawAnchor = null;
+    _currentDrawOrigin = null;
+    currentDrawInstanceFrame = null;
+  }
+
+  /// States this item's instance frame, local transform, band and turns for
+  /// the unskinned `FrameInfo` of the draws bound next. Pair with
   /// [endInstanceDraw].
   @internal
   void beginInstanceDraw() {
+    currentDrawSpin = instanceSource?.spin;
+    if (!nodeSpaceInstances) {
+      beginAnchoredDraw();
+      return;
+    }
     if (anchored && drawOrigin != null) {
       _currentDrawAnchor = anchor;
       _currentDrawOrigin = drawOrigin!.at;
-    }
-    if (!nodeSpaceInstances) {
-      // Packed records hold [worldTransform], so the frame adds the shift
-      // alone.
-      if (anchored && drawOrigin != null) {
-        currentDrawInstanceFrame = _instanceFrameScratch
-          ..setTranslationRaw(drawShift(0), drawShift(1), drawShift(2));
-      }
-      return;
     }
     currentDrawInstanceFrame = drawTransform;
     currentDrawInstanceLocal = instanceLocal;
@@ -462,6 +639,7 @@ class RenderItem {
     currentDrawInstanceFrame = null;
     currentDrawInstanceLocal = null;
     currentDrawInstanceBand = null;
+    currentDrawSpin = null;
   }
 
   final List<int> _visibleRangeScratch = [];
@@ -787,6 +965,9 @@ class RenderItem {
   /// Refreshes [visibleInstanceRanges] and returns whether anything remains.
   @internal
   bool cullVisibleCells(Frustum frustum, List<Plane> additionalPlanes) {
+    if (cullInstances && instanceTransforms != null) {
+      activeRenderCounters.instanceCellCulls++;
+    }
     final visible = _cellsInside(
       frustum,
       additionalPlanes,
@@ -1084,16 +1265,8 @@ class RenderItem {
       final x = anchor[0] - origin.at[0];
       final y = anchor[1] - origin.at[1];
       final z = anchor[2] - origin.at[2];
-      drawn.min.setValues(
-        placed.min.x + x,
-        placed.min.y + y,
-        placed.min.z + z,
-      );
-      drawn.max.setValues(
-        placed.max.x + x,
-        placed.max.y + y,
-        placed.max.z + z,
-      );
+      drawn.min.setValues(placed.min.x + x, placed.min.y + y, placed.min.z + z);
+      drawn.max.setValues(placed.max.x + x, placed.max.y + y, placed.max.z + z);
     }
     return drawn;
   }
@@ -1171,8 +1344,9 @@ class RenderItem {
       _placedBounds = null;
       return true;
     }
+    final turned = instanceTransforms == null ? nodeSpin : null;
     _worldBoundsScratch
-      ..copyFrom(local)
+      ..copyFrom(turned == null ? local : turned.cover(local))
       ..transform(worldTransform);
     final current = _placedBounds;
     if (current == null) {
@@ -1529,6 +1703,10 @@ class RenderScene {
   int _structureRevision = 0;
   int _staticShadowRevision = 0;
 
+  // Changes when the spatial structure is built or refitted, or an item is
+  // placed in it or taken out of it.
+  int _spatialRevision = 0;
+
   /// Changes when render items are added or removed.
   int get structureRevision => _structureRevision;
 
@@ -1631,6 +1809,7 @@ class RenderScene {
 
   // Takes [item] out of the tree or of the always visible.
   void _displace(RenderItem item) {
+    _spatialRevision++;
     item._placed = false;
     if (item.bvhNode >= 0 && !item._treeAnchored) _unanchoredInTree--;
     _bvh.remove(item);
@@ -1647,6 +1826,7 @@ class RenderScene {
   void _place(RenderItem item) {
     if (item._placed || item.sceneSlot < 0) return;
     item._placed = true;
+    _spatialRevision++;
     if (item.frustumCulled && item.worldBounds != null) {
       item._treeAnchored = item.anchored;
       if (!item.anchored) _unanchoredInTree++;
@@ -1683,6 +1863,7 @@ class RenderScene {
   /// frame of a scene.
   void rebuildIfDirty() {
     if (_structureDirty || (_bvh.itemCount == 0 && _unplaced.length > 1)) {
+      _spatialRevision++;
       _structureDirty = false;
       _boundsDirty = false;
       _unplaced.clear();
@@ -1717,9 +1898,11 @@ class RenderScene {
     // is written again once the origin moves. An anchored item's holds.
     if (_treeOrigin != drawOrigin.revision) {
       _treeOrigin = drawOrigin.revision;
+      _spatialRevision++;
       if (_unanchoredInTree > 0) _boundsDirty = true;
     }
     if (_boundsDirty) {
+      _spatialRevision++;
       _boundsDirty = false;
       _bvh.refit();
     }
@@ -1738,6 +1921,7 @@ class RenderScene {
     void Function(RenderItem) visit, {
     List<Plane> additionalPlanes = const [],
   }) {
+    activeRenderCounters.sceneCulls++;
     final visited = _bvh.query(
       frustum,
       visit,
@@ -1815,35 +1999,49 @@ class RenderScene {
     return (depth: best, nearest: nearest);
   }
 
-  /// Collects material inputs requested by this view's frustum candidates.
-  Set<RenderInput> collectMaterialInputs(
-    Frustum frustum, {
+  /// Culls the scene for a view into [into] and returns it: the items
+  /// [frustum] and [additionalPlanes] keep, with [cullCells] the instance
+  /// cells in view of each that draws color in [layerMask], or every item with
+  /// [includeOffscreen]. With [gatherInputs] it also gathers the scene inputs
+  /// the kept items that draw color in [layerMask] read, so the view decides
+  /// its passes from the cull its color pass draws from.
+  ViewVisibleItems collectVisible(
+    Frustum frustum,
+    ViewVisibleItems into, {
     int layerMask = kRenderLayerAll,
     List<Plane> additionalPlanes = const [],
     bool includeOffscreen = false,
+    bool gatherInputs = true,
+    bool cullCells = true,
   }) {
-    final inputs = <RenderInput>{};
-    void collect(RenderItem item) {
-      if (!item.drawsColor || (item.layers & layerMask) == 0) {
-        return;
-      }
+    final kept = into.items..clear();
+    final inputs = into.inputs..clear();
+    into
+      .._structureRevision = _structureRevision
+      .._spatialRevision = _spatialRevision;
+    into._cellsCulled = false;
+    if (includeOffscreen) {
+      kept.addAll(items);
+      into.rejected = 0;
+    } else {
+      into.rejected = cull(
+        frustum,
+        kept.add,
+        additionalPlanes: additionalPlanes,
+      );
+      if (cullCells) into._cullCells(frustum, additionalPlanes, layerMask);
+    }
+    if (!gatherInputs) return into;
+    for (final item in kept) {
+      if (!item.drawsColor || (item.layers & layerMask) == 0) continue;
       inputs.addAll(item.material.sceneInputs);
       final lod = item.lod;
-      if (lod != null) {
-        for (final level in lod.levels) {
-          inputs.addAll(level.material.sceneInputs);
-        }
+      if (lod == null) continue;
+      for (final level in lod.levels) {
+        inputs.addAll(level.material.sceneInputs);
       }
     }
-
-    if (includeOffscreen) {
-      for (final item in items) {
-        collect(item);
-      }
-    } else {
-      cull(frustum, collect, additionalPlanes: additionalPlanes);
-    }
-    return inputs;
+    return into;
   }
 
   /// Whether any registered item's material (or LOD level's) satisfies [test],
@@ -1860,19 +2058,61 @@ class RenderScene {
     return false;
   }
 
-  /// Collects material inputs without view-dependent culling.
-  Set<RenderInput> collectAllMaterialInputs() {
+  SceneMaterialSummary? _materialSummary;
+  int _summaryStructureRevision = -1;
+  int _summaryMaterialRevision = -1;
+  int _summaryItemMaterialRevision = -1;
+
+  /// What the materials of the registered items ask of a frame. It scans the
+  /// items only after a change it is keyed on, which
+  /// [RenderCounters.materialSummaryItems] counts.
+  SceneMaterialSummary get materialSummary {
+    final materialRevision = materialSceneInputsRevision;
+    final current = _materialSummary;
+    if (current != null &&
+        _summaryStructureRevision == _structureRevision &&
+        _summaryMaterialRevision == materialRevision &&
+        _summaryItemMaterialRevision == _itemMaterialRevision) {
+      return current;
+    }
     final inputs = <RenderInput>{};
+    final displayReferred = <RenderItem>[];
+    final shadowCatchers = <RenderItem>[];
     for (final item in items) {
-      inputs.addAll(item.material.sceneInputs);
+      final material = item.material;
+      inputs.addAll(material.sceneInputs);
+      // The encoder draws the selected level's material, not the item's, and
+      // which level a view selects is not known here, so any level counts:
+      // an unused layer costs less than a draw routed out of both buckets.
+      var displayReferredItem = material.displayReferred;
       final lod = item.lod;
       if (lod != null) {
         for (final level in lod.levels) {
           inputs.addAll(level.material.sceneInputs);
+          displayReferredItem |= level.material.displayReferred;
         }
       }
+      if (displayReferredItem) displayReferred.add(item);
+      if (material is ShadowCatcherMaterial) shadowCatchers.add(item);
     }
-    return inputs;
+    activeRenderCounters.materialSummaryItems += items.length;
+    _summaryStructureRevision = _structureRevision;
+    _summaryMaterialRevision = materialRevision;
+    _summaryItemMaterialRevision = _itemMaterialRevision;
+    return _materialSummary = SceneMaterialSummary._(
+      inputs,
+      displayReferred,
+      shadowCatchers,
+    );
+  }
+
+  /// Whether the scene holds a visible display-referred surface (see
+  /// [Material.displayReferred]), which the frame pays the extra layer for.
+  bool get hasVisibleDisplayReferred {
+    for (final item in materialSummary.displayReferredItems) {
+      if (item.visible) return true;
+    }
+    return false;
   }
 }
 

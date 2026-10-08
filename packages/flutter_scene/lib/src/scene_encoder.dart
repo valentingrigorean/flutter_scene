@@ -33,6 +33,7 @@ import 'package:flutter_scene/src/render/instance_records.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/shared_instance_rows.dart';
 import 'package:flutter_scene/src/instance_band.dart';
+import 'package:flutter_scene/src/vertex_spin.dart';
 import 'package:flutter_scene/src/render/lod.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
@@ -1211,6 +1212,7 @@ base class SceneEncoder {
   Matrix4? _boundFrameInfoFrame;
   Matrix4? _boundFrameInfoLocal;
   InstanceBand? _boundFrameInfoBand;
+  VertexSpin? _boundFrameInfoSpin;
   double _boundFrameInfoDepthBias = double.nan;
   int _boundFrameInfoDepthKey = -1;
   double _boundMaterialFade = double.nan;
@@ -1229,7 +1231,14 @@ base class SceneEncoder {
   /// Both opaque and translucent draws are deferred; [flush] sorts and
   /// emits them. A translucent instanced item is queued as one draw per
   /// instance so each can be depth-sorted independently.
-  void submit(RenderItem item) {
+  void submit(RenderItem item) => _submit(item, null, 0);
+
+  /// Queues the item at [index] of [view], the view's one cull, as [submit]
+  /// does, with the instance ranges that cull kept of it.
+  void submitKept(ViewVisibleItems view, int index) =>
+      _submit(view.items[index], view, index);
+
+  void _submit(RenderItem item, ViewVisibleItems? view, int index) {
     activeRenderCounters.submitted++;
     if (!item.drawsColor) return;
     if ((item.layers & _layerMask) == 0) {
@@ -1238,7 +1247,9 @@ base class SceneEncoder {
       return;
     }
     if (_cullInstances) {
-      if (!item.cullVisibleCells(frustum, _cullingPlanes)) {
+      if (!(view != null && view.cellsCulled
+          ? view.restoreCells(index)
+          : item.cullVisibleCells(frustum, _cullingPlanes))) {
         activeRenderCounters.culled++;
         activeDrawRecorder?.onSkip(item, DrawSkipReason.frustumCulled);
         return;
@@ -1853,6 +1864,7 @@ base class SceneEncoder {
           !identical(_boundFrameInfoFrame, frame) ||
           !identical(_boundFrameInfoLocal, local) ||
           !identical(_boundFrameInfoBand, band) ||
+          !identical(_boundFrameInfoSpin, currentDrawSpin) ||
           _boundFrameInfoDepthBias != depthBias ||
           _boundFrameInfoDepthKey != depthKey) {
         bindUnskinnedFrameInfo(
@@ -1867,6 +1879,7 @@ base class SceneEncoder {
         _boundFrameInfoFrame = frame;
         _boundFrameInfoLocal = local;
         _boundFrameInfoBand = band;
+        _boundFrameInfoSpin = currentDrawSpin;
         _boundFrameInfoDepthBias = depthBias;
         _boundFrameInfoDepthKey = depthKey;
       }
@@ -1980,7 +1993,7 @@ base class SceneEncoder {
       if (selection.instanceCount == 0) return;
       // The record an item holds leaves its anchor out, so the instance
       // frame adds the anchor minus the draw origin.
-      item.beginInstanceDraw();
+      item.beginAnchoredDraw();
       try {
         _encodeSingle(
           pipeline,
@@ -1992,7 +2005,7 @@ base class SceneEncoder {
           item: item,
         );
       } finally {
-        RenderItem.endInstanceDraw();
+        RenderItem.endAnchoredDraw();
       }
     } finally {
       endMeshDraw(geometry);
@@ -2721,10 +2734,7 @@ base class SceneEncoder {
       record.material.lightListCount = record.lightListCount;
       record.material.lightChannelMask = record.item.lightChannelMask;
       record.material.setModelScaleFromTransform(record.item.worldTransform);
-      final joints = record.jointsTexture;
-      if (joints != null) {
-        record.geometry.setJointsTexture(joints, record.jointsTextureWidth);
-      }
+      record.item.applyJointsTexture(record.geometry);
       record.item.applyMorphWeights(record.geometry);
       final instances = record.item.instanceTransforms;
       if (instances != null) {
@@ -2828,10 +2838,7 @@ base class SceneEncoder {
       record.material.lightListCount = record.lightListCount;
       record.material.lightChannelMask = record.item.lightChannelMask;
       record.material.setModelScaleFromTransform(record.item.worldTransform);
-      final joints = record.jointsTexture;
-      if (joints != null) {
-        record.geometry.setJointsTexture(joints, record.jointsTextureWidth);
-      }
+      record.item.applyJointsTexture(record.geometry);
       record.item.applyMorphWeights(record.geometry);
       final instances = record.item.instanceTransforms;
       if (instances != null) {
