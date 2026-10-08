@@ -19,6 +19,8 @@ import 'package:flutter_scene/src/components/spot_light_component.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart';
 import 'package:flutter_scene/src/instance_band.dart';
 import 'package:flutter_scene/src/instanced_mesh.dart';
+import 'package:flutter_scene/src/skin.dart';
+import 'package:flutter_scene/src/vertex_spin.dart';
 import 'package:flutter_scene/src/light.dart' show ShadowCasterFaces;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart' show ShadowCastingMode;
@@ -194,8 +196,21 @@ class RenderItem {
   void applyJointsTexture(Geometry drawnGeometry) {
     final texture = jointsTexture;
     if (texture == null) return;
-    drawnGeometry.setJointsTexture(texture, jointsTextureWidth);
+    drawnGeometry
+      ..setJointsTexture(texture, jointsTextureWidth)
+      ..setJointPalette(jointPalette, paletteTransform);
   }
+
+  /// The palette the owning node's skin draws from (`Skin.play`), or null
+  /// when [jointsTexture] holds the pose of its joints. With a palette,
+  /// [jointsTexture] is the palette's texture.
+  @internal
+  JointPalettePlayback? jointPalette;
+
+  /// The world transform of the palette's root, which the vertex stage
+  /// applies after a palette's joint matrix.
+  @internal
+  final Matrix4 paletteTransform = Matrix4.identity();
 
   /// The owning node's live morph target weights, or null for an unmorphed
   /// node. Refreshed each frame. Carried per item (like [jointsTexture]) so
@@ -310,17 +325,46 @@ class RenderItem {
 
   /// The transform a vertex takes before its row's record, or null for none.
   @internal
-  Matrix4? get instanceLocal => instanceSource?.instanceLocal;
+  Matrix4? get instanceLocal => instanceSource?.drawLocal;
 
   /// The band each row is tested against, or null for none.
   @internal
   InstanceBand? get instanceBand => instanceSource?.band;
 
-  /// States this item's instance frame, local transform and band for the
-  /// unskinned `FrameInfo` of the draws bound next. Pair with
+  /// The turns the owning node states for a mesh drawn alone (`Node.spin`),
+  /// or null for none.
+  @internal
+  VertexSpin? nodeSpin;
+
+  /// The turns the vertex stage applies to this item, or null for none: the
+  /// instanced mesh's, else the node's.
+  @internal
+  VertexSpin? get spin => instanceSource?.spin ?? nodeSpin;
+
+  /// States the turns of a mesh drawn alone for the unskinned `FrameInfo` of
+  /// the draws bound next. Pair with [endSpinDraw].
+  @internal
+  void beginSpinDraw() {
+    final spin = nodeSpin;
+    if (spin == null || instanceSource != null) return;
+    currentDrawSpin = spin;
+    currentDrawInstanceLocal = spin.space;
+  }
+
+  /// Clears what [beginSpinDraw] stated.
+  @internal
+  static void endSpinDraw() {
+    if (currentDrawSpin == null) return;
+    currentDrawSpin = null;
+    currentDrawInstanceLocal = null;
+  }
+
+  /// States this item's instance frame, local transform, band and turns for
+  /// the unskinned `FrameInfo` of the draws bound next. Pair with
   /// [endInstanceDraw].
   @internal
   void beginInstanceDraw() {
+    currentDrawSpin = instanceSource?.spin;
     if (!nodeSpaceInstances) return;
     currentDrawInstanceFrame = worldTransform;
     currentDrawInstanceLocal = instanceLocal;
@@ -333,6 +377,7 @@ class RenderItem {
     currentDrawInstanceFrame = null;
     currentDrawInstanceLocal = null;
     currentDrawInstanceBand = null;
+    currentDrawSpin = null;
   }
 
   final List<int> _visibleRangeScratch = [];
@@ -947,8 +992,9 @@ class RenderItem {
       worldBounds = null;
       return true;
     }
+    final turned = instanceTransforms == null ? nodeSpin : null;
     _worldBoundsScratch
-      ..copyFrom(local)
+      ..copyFrom(turned == null ? local : turned.cover(local))
       ..transform(worldTransform);
     final current = worldBounds;
     if (current == null) {

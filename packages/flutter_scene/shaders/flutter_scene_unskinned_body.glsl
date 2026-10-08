@@ -32,10 +32,20 @@ uniform FrameInfo {
   vec4 band_sphere;
   vec4 band_reach;
   vec4 band_edge;
+  // The turns of vertex_spin.glsl (VertexSpin): the transform out of the
+  // space the lines are stated in, each turn's axis and rate and its pivot
+  // and phase, and the folded time (x) with the number of turns (y).
+  mat4 spin_frame;
+  vec4 spin_axis_0;
+  vec4 spin_pivot_0;
+  vec4 spin_axis_1;
+  vec4 spin_pivot_1;
+  vec4 spin_time;
 }
 frame_info;
 
 #include <instance_band.glsl>
+#include <vertex_spin.glsl>
 
 #include <depth_bias.glsl>
 #include <normal_transform.glsl>
@@ -85,7 +95,8 @@ void main() {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
-  mat4 model_transform = node_record * frame_info.instance_local;
+  mat4 model_transform =
+      node_record * SpinLocal(frame_info.instance_local);
   vec4 model_position = model_transform * vec4(in_position, 1.0);
 
   VertexInputs vertex;

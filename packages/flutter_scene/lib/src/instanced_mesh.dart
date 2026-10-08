@@ -10,6 +10,7 @@ import 'package:flutter_scene/src/geometry/geometry.dart';
 import 'package:flutter_scene/src/material/instance_attributes.dart';
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/mesh_draw.dart';
+import 'package:flutter_scene/src/vertex_spin.dart';
 import 'package:vector_math/vector_math.dart';
 
 /// Many copies of one [Geometry] / [Material] pair, each placed by its
@@ -95,6 +96,33 @@ class InstancedMesh implements MeshDrawSource {
   Matrix4? _instanceLocal;
   set instanceLocal(Matrix4? value) {
     _instanceLocal = value;
+    _spunLocal = _spunLocalOf(value, _spin);
+    _boundsRevision = -1;
+    _drawStateChanged();
+  }
+
+  /// The transform the vertex stage applies before a row's record and the
+  /// turns of [spin]: [instanceLocal], taken into the spin's space when it
+  /// states one.
+  @internal
+  Matrix4? get drawLocal => _spunLocal ?? _instanceLocal;
+  Matrix4? _spunLocal;
+
+  static Matrix4? _spunLocalOf(Matrix4? local, VertexSpin? spin) {
+    final space = spin?.space;
+    if (space == null) return null;
+    return local == null ? space : space.multiplied(local);
+  }
+
+  /// The turns every row takes from the scene's animation time, between
+  /// [instanceLocal] and the row's record, or null for none. See
+  /// [VertexSpin], whose `space` here is the transform from the record's
+  /// space to the one the lines are stated in.
+  VertexSpin? get spin => _spin;
+  VertexSpin? _spin;
+  set spin(VertexSpin? value) {
+    _spin = value;
+    _spunLocal = _spunLocalOf(_instanceLocal, value);
     _boundsRevision = -1;
     _drawStateChanged();
   }
@@ -510,6 +538,8 @@ class InstancedMesh implements MeshDrawSource {
     if (base == null || count == 0) return null;
     final local = _instanceLocal;
     if (local != null) base = Aabb3.copy(base)..transform(local);
+    final spin = _spin;
+    if (spin != null) base = spin.cover(base);
     if (_rowBounds.length < count * 6) {
       final grown = Float32List(math.max(count, _rowBounds.length ~/ 3) * 6);
       if (rows != null) grown.setRange(0, _rowBounds.length, _rowBounds);

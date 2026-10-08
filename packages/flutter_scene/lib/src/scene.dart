@@ -57,6 +57,7 @@ import 'material/shader_interface.dart'
 import 'memory_pressure.dart';
 import 'mesh.dart';
 import 'node.dart';
+import 'vertex_spin.dart';
 import 'raycast.dart';
 import 'scene_tick_listener.dart';
 import 'physics/physics_world.dart';
@@ -2125,6 +2126,12 @@ base class Scene implements SceneGraph {
     return accumulator;
   }
 
+  /// The seconds the vertex stage animates from: the angle of a
+  /// [VertexSpin] and the row of a [JointPalette] are functions of this
+  /// alone. The application advances it, so the motion pauses when the
+  /// application stops advancing it and resumes where it stood.
+  double animationTime = 0.0;
+
   /// Advances the scene by [deltaSeconds]: ticks every node's components
   /// and animation players, and refreshes the flat render layer.
   ///
@@ -2214,6 +2221,7 @@ base class Scene implements SceneGraph {
     ui.Size? size,
   }) async {
     _checkNotDisposed('warmUp');
+    currentAnimationTime = animationTime;
     await initializeStaticResources();
     if (views.isEmpty) {
       return;
@@ -2752,6 +2760,7 @@ base class Scene implements SceneGraph {
     double? pixelRatio,
   }) {
     _checkNotDisposed('renderViews');
+    currentAnimationTime = animationTime;
     renderScene.recordRenderedViews(views);
     if (!isReadyToRender) {
       debugPrint('Flutter Scene is not ready to render. Skipping frame.');
@@ -3810,6 +3819,7 @@ base class Scene implements SceneGraph {
     // its result). Never set for a linear-color capture.
     bool capturePlanarReflections = false,
   }) {
+    currentAnimationTime = animationTime;
     // A capture frame observes the pool from graph construction on, so
     // display-chain and custom-pass destinations acquired before execute are
     // attributed and identified by their descriptor debug names.

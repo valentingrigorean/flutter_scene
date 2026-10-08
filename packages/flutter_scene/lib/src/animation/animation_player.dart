@@ -38,6 +38,7 @@ class AnimationPlayer {
     }
 
     _clips[animation.name] = clip;
+    _reposes = true;
     return clip;
   }
 
@@ -66,6 +67,7 @@ class AnimationPlayer {
   /// them). No-op when [clip] is not registered.
   void removeClip(AnimationClip clip) {
     _clips.removeWhere((_, registered) => identical(registered, clip));
+    _reposes = true;
   }
 
   /// Returns the registered clip whose [Animation.name] equals [name],
@@ -84,6 +86,7 @@ class AnimationPlayer {
   /// replaced in place.
   void rebind(Node newRoot, {List<Animation> animations = const []}) {
     final byName = <String, Animation>{for (final a in animations) a.name: a};
+    _reposes = true;
     _targetTransforms.clear();
     for (final clip in _clips.values) {
       clip.rebind(newRoot, animation: byName[clip._animation.name]);
@@ -112,7 +115,47 @@ class AnimationPlayer {
   /// the delta, normalizes weights when their sum exceeds `1`, and then
   /// writes the resulting `(translation, rotation, scale)` decomposition
   /// back to [Node.localTransform].
+  // The clips, times and weights the targets were last posed from, so an
+  // update that advances no clip writes no transform.
+  final List<Object> _posedFrom = [];
+
+  // A clip joined or left, or the targets changed, since the last pose.
+  bool _reposes = true;
+
+  bool _posesAnew() {
+    var index = 0;
+    var same = !_reposes && _posedFrom.length == _clips.length * 3;
+    _reposes = false;
+    for (final clip in _clips.values) {
+      if (same &&
+          identical(_posedFrom[index], clip) &&
+          _posedFrom[index + 1] == clip._playbackTime &&
+          _posedFrom[index + 2] == clip._weight) {
+        index += 3;
+        continue;
+      }
+      same = false;
+      break;
+    }
+    if (same) return false;
+    _posedFrom.clear();
+    for (final clip in _clips.values) {
+      _posedFrom
+        ..add(clip)
+        ..add(clip._playbackTime)
+        ..add(clip._weight);
+    }
+    return true;
+  }
+
+  /// Advances every clip by [deltaSeconds] and poses the targets, unless no
+  /// clip moved and none changed its weight since the last pose.
   void update(double deltaSeconds) {
+    for (final clip in _clips.values) {
+      clip.advance(deltaSeconds);
+    }
+    if (!_posesAnew()) return;
+
     // Reset the animated pose state.
     for (final transforms in _targetTransforms.values) {
       transforms.animatedPose = transforms.bindPose.clone();
@@ -131,7 +174,6 @@ class AnimationPlayer {
 
     // Update and apply all clips to the animation pose state.
     for (final clip in _clips.values) {
-      clip.advance(deltaSeconds);
       clip.applyToBindings(_targetTransforms, weightMultiplier);
     }
 

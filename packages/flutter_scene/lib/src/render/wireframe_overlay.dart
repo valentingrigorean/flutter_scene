@@ -234,7 +234,9 @@ class _WireframeEncoder {
       return;
     }
 
+    item.beginSpinDraw();
     bindDraw(item.worldTransform);
+    RenderItem.endSpinDraw();
     if (geometry.instancedVertexLayout != null &&
         geometry.bindsModelTransformInstance) {
       bindSingleInstanceTransform(_pass, item.worldTransform);
