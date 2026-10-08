@@ -41,23 +41,6 @@ class InstancePackingScratch {
     InstanceDataBatch.pooled(),
   ];
 
-  /// A one-element batch list filled from world data a mesh already packed.
-  /// Valid until the next call to either single-batch method.
-  List<InstanceDataBatch> singleCachedBatch({
-    required Float32List packedWorldData,
-    required Uint8List packedWindingFlipped,
-    List<int>? indices,
-    int attributeFloats = 0,
-  }) {
-    _singleBatch[0].setCached(
-      packedWorldData: packedWorldData,
-      packedWindingFlipped: packedWindingFlipped,
-      indices: indices,
-      attributeFloats: attributeFloats,
-    );
-    return _singleBatch;
-  }
-
   /// A one-element batch list filled from a mesh's own transform and color
   /// lists. Valid until the next call to either single-batch method.
   List<InstanceDataBatch> singleInstanceBatch({
@@ -524,105 +507,6 @@ PackedInstanceData packInstanceDataBatches(
   return PackedInstanceData(ccw, cw, attributeFloats: attributeFloats);
 }
 
-/// Packs retained groups as transform-only records for depth-style passes.
-PackedInstanceTransforms packInstanceTransformBatches(
-  List<InstanceDataBatch> batches, {
-  InstancePackingScratch? scratch,
-}) {
-  var count = 0;
-  for (final batch in batches) {
-    count += batch.length;
-  }
-  final flipped = scratch?.flipped(count) ?? Uint8List(count);
-  var cwCount = 0;
-  var flatIndex = 0;
-  for (final batch in batches) {
-    final packedWinding = batch.packedWindingFlipped;
-    if (packedWinding != null) {
-      final indices = batch.indices;
-      for (var slot = 0; slot < batch.length; slot++) {
-        final i = indices?[slot] ?? slot;
-        if (packedWinding[i] != 0) {
-          flipped[flatIndex] = 1;
-          cwCount++;
-        }
-        flatIndex++;
-      }
-      continue;
-    }
-    final instances = batch.instances;
-    if (instances == null) {
-      if (batch.nodeWindingFlipped) {
-        flipped[flatIndex] = 1;
-        cwCount++;
-      }
-      flatIndex++;
-      continue;
-    }
-    final retainedParity = batch.instanceWindingFlipped;
-    final indices = batch.indices;
-    for (var slot = 0; slot < batch.length; slot++) {
-      final i = indices?[slot] ?? slot;
-      final instanceFlipped =
-          retainedParity?[i] ?? (instances[i].determinant() < 0);
-      if (batch.nodeWindingFlipped != instanceFlipped) {
-        flipped[flatIndex] = 1;
-        cwCount++;
-      }
-      flatIndex++;
-    }
-  }
-
-  final ccwLength = (count - cwCount) * 16;
-  final cwLength = cwCount * 16;
-  final ccw = scratch?.ccw(ccwLength) ?? Float32List(ccwLength);
-  final cw = scratch?.cw(cwLength) ?? Float32List(cwLength);
-  final world = scratch?.world ?? Matrix4.zero();
-  var ccwIndex = 0, cwIndex = 0;
-  flatIndex = 0;
-  for (final batch in batches) {
-    final packedData = batch.packedWorldData;
-    if (packedData != null) {
-      final indices = batch.indices;
-      final sourceFloats = batch.sourceRecordFloats;
-      for (var slot = 0; slot < batch.length; slot++) {
-        final source = indices?[slot] ?? slot;
-        final isFlipped = flipped[flatIndex++] != 0;
-        final target = isFlipped ? cw : ccw;
-        final targetIndex = isFlipped ? cwIndex++ : ccwIndex++;
-        final offset = targetIndex * kInstanceTransformFloats;
-        target.setRange(
-          offset,
-          offset + kInstanceTransformFloats,
-          packedData,
-          source * sourceFloats,
-        );
-      }
-      continue;
-    }
-    final instances = batch.instances;
-    if (instances == null) {
-      final isFlipped = flipped[flatIndex++] != 0;
-      final target = isFlipped ? cw : ccw;
-      final targetIndex = isFlipped ? cwIndex++ : ccwIndex++;
-      target.setAll(targetIndex * 16, batch.nodeTransform.storage);
-      continue;
-    }
-    final indices = batch.indices;
-    for (var slot = 0; slot < batch.length; slot++) {
-      final i = indices?[slot] ?? slot;
-      world
-        ..setFrom(batch.nodeTransform)
-        ..multiply(instances[i]);
-      final isFlipped = flipped[flatIndex++] != 0;
-      final target = isFlipped ? cw : ccw;
-      final targetIndex = isFlipped ? cwIndex++ : ccwIndex++;
-      target.setAll(targetIndex * 16, world.storage);
-    }
-  }
-  return PackedInstanceTransforms(ccw, cw);
-}
-
 const List<double> _whiteColor = [1, 1, 1, 1];
 
 /// Packs world transforms followed by linear RGBA color multipliers, then the
@@ -944,9 +828,10 @@ ByteData? _lastPackedBytes;
 
 // Device-resident copies of cached instance records, keyed by the cached
 // list. An entry uploads only once the data has gone a frame unrefreshed, so
-// instancing refreshed every frame keeps using the transient arena. The device
-// copy spans the whole store behind the list, so records appended within the
-// store's capacity are written in place.
+// instancing refreshed every frame keeps using the transient arena, which
+// takes one copy of the store per frame. The device copy spans the whole
+// store behind the list, so records appended within the store's capacity are
+// written in place.
 final Expando<_RetainedInstances> _retainedInstances = Expando();
 int _retainedInstanceFrame = 0;
 
@@ -955,8 +840,8 @@ class _RetainedInstances {
   final int seenFrame;
   gpu.DeviceBuffer? buffer;
   gpu.BufferView? view;
-  bool flipped = false;
-  bool mixed = false;
+  gpu.BufferView? transient;
+  int transientFrame = -1;
 }
 
 /// Advances the frame that decides when cached instance data counts as static.
@@ -968,37 +853,29 @@ void invalidateRetainedInstanceData(Float32List packedWorldData) {
 }
 
 /// Carries the device copy of [previous] over to [packedWorldData], the list
-/// over the same store after [rows] changed, and writes the records of those
-/// rows into it, [recordFloats] floats each.
+/// over the same store after [rows] of its [count] changed, and writes the
+/// records of those rows into it, [recordFloats] floats each.
 ///
 /// While no submitted GPU work is pending the copy is written in place, the
 /// changed records only; otherwise in-flight frames may read it, so the whole
 /// store is copied to a new device buffer. A copy that no longer fits the
-/// records, or whose rows no longer share one winding, is dropped.
+/// records is dropped.
 void updateRetainedInstanceRows(
   Float32List? previous,
   Float32List packedWorldData,
-  Uint8List packedWindingFlipped,
+  int count,
   List<int> rows,
   int recordFloats,
 ) {
   final entry = previous == null ? null : _retainedInstances[previous];
   if (previous != null) _retainedInstances[previous] = null;
   final buffer = entry?.buffer;
-  final count = packedWindingFlipped.length;
   if (entry == null ||
       buffer == null ||
       packedWorldData.offsetInBytes != 0 ||
       packedWorldData.lengthInBytes > buffer.sizeInBytes) {
     _retainedInstances[packedWorldData] = null;
     return;
-  }
-  final winding = entry.flipped ? 1 : 0;
-  for (final row in rows) {
-    if (row < count && packedWindingFlipped[row] != winding) {
-      _retainedInstances[packedWorldData] = null;
-      return;
-    }
   }
   final recordBytes = recordFloats * Float32List.bytesPerElement;
   if (rendererSubmissions.completedThrough <
@@ -1026,46 +903,34 @@ void updateRetainedInstanceRows(
   _retainedInstances[packedWorldData] = entry;
 }
 
-/// Binds every record of [packedWorldData] from a retained device buffer.
-///
-/// Returns the winding the records share (true when flipped), or null when
-/// the data is not retained yet or mixes windings, in which case the caller
-/// packs into transients as usual.
-bool? bindRetainedInstanceData(
-  gpu.RenderPass pass,
-  Float32List packedWorldData,
-  Uint8List packedWindingFlipped, {
-  required int slot,
-}) {
-  if (packedWorldData.isEmpty) return null;
-  final entry = _retainedInstances[packedWorldData];
-  if (entry == null) {
-    _retainedInstances[packedWorldData] = _RetainedInstances(
-      _retainedInstanceFrame,
-    );
-    return null;
-  }
+/// Where the records of [packedWorldData] sit for the draws of this frame,
+/// as a view of all of them: the device copy kept while the records rest, or
+/// one copy in the transient arena on a frame that follows a change.
+gpu.BufferView instanceRecordBase(Float32List packedWorldData) {
+  final entry = _retainedInstances[packedWorldData] ??= _RetainedInstances(
+    _retainedInstanceFrame,
+  );
   var buffer = entry.buffer;
-  if (buffer == null) {
-    if (entry.mixed || entry.seenFrame == _retainedInstanceFrame) return null;
-    final first = packedWindingFlipped.isEmpty ? 0 : packedWindingFlipped[0];
-    for (final flipped in packedWindingFlipped) {
-      if (flipped == first) continue;
-      entry.mixed = true;
-      return null;
-    }
+  if (buffer == null && entry.seenFrame != _retainedInstanceFrame) {
     final store = packedWorldData.offsetInBytes == 0
         ? packedWorldData.buffer.asByteData()
         : ByteData.sublistView(packedWorldData);
     buffer = entry.buffer = gpu.gpuContext.createDeviceBufferWithCopy(store);
     activeRenderCounters.instanceBytesUploaded += store.lengthInBytes;
-    entry.flipped = first != 0;
   }
-  final view = entry.view ??= gpu.BufferView(
-    buffer,
-    offsetInBytes: 0,
-    lengthInBytes: packedWorldData.lengthInBytes,
-  );
-  pass.bindVertexBuffer(view, slot: slot);
-  return entry.flipped;
+  if (buffer != null) {
+    return entry.view ??= gpu.BufferView(
+      buffer,
+      offsetInBytes: 0,
+      lengthInBytes: packedWorldData.lengthInBytes,
+    );
+  }
+  if (entry.transientFrame != _retainedInstanceFrame) {
+    entry
+      ..transient = instanceTransients.emplace(
+        ByteData.sublistView(packedWorldData),
+      )
+      ..transientFrame = _retainedInstanceFrame;
+  }
+  return entry.transient!;
 }

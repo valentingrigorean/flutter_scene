@@ -10,6 +10,9 @@ import 'package:flutter_scene/src/node.dart';
 /// local +Z; the node's world transform positions and aims it.
 /// {@category Scene graph}
 class RectAreaLightComponent extends Component {
+  @override
+  bool get ticks => false;
+
   /// Creates a component that lights the scene with [light].
   RectAreaLightComponent(this.light);
 

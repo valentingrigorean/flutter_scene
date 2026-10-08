@@ -11,6 +11,8 @@ import 'package:flutter_scene/scene.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
 
+import 'support/pre_pass.dart';
+
 class _StubGeometry extends Geometry {
   _StubGeometry(Aabb3 aabb) {
     setLocalBounds(
@@ -85,7 +87,7 @@ RenderScene _sceneWith(Node node) {
   final renderScene = RenderScene();
   final root = Node()..debugMountInto(renderScene);
   root.add(node);
-  root.scenePrePass(0);
+  runPrePass(root, 0);
   renderScene.rebuildIfDirty();
   return renderScene;
 }

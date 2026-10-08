@@ -29,6 +29,7 @@ import 'package:flutter_scene/src/render/debug_view.dart';
 import 'package:flutter_scene/src/render/draw_recorder.dart';
 import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
+import 'package:flutter_scene/src/render/instance_records.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/shared_instance_rows.dart';
 import 'package:flutter_scene/src/instance_band.dart';
@@ -39,14 +40,13 @@ import 'package:flutter_scene/src/render/render_profile.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
-import 'package:flutter_scene/src/render/instance_batching.dart';
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/render/uniform_slots.dart';
 
 /// A deferred opaque draw. Holds the [RenderItem] (instanced or not), its
 /// resolved pipeline, a per-pipeline grouping key, and the camera
 /// distance, all captured when [SceneEncoder.submit] is called.
-base class _OpaqueRecord implements OpaqueBatchRecord {
+base class _OpaqueRecord {
   _OpaqueRecord(
     RenderItem item,
     Geometry geometry,
@@ -64,25 +64,16 @@ base class _OpaqueRecord implements OpaqueBatchRecord {
       materialKey = identityHashCode(material);
   RenderItem? _item;
   RenderItem get item => _item!;
-  @override
-  bool get hasDrawSelector => hasMeshDrawSelector(item);
-
-  @override
-  bool get nodeSpaceInstances => item.nodeSpaceInstances;
   // The geometry and material to draw, which differ from the item's own when
   // a level of detail was selected.
   Geometry? _geometry;
-  @override
   Geometry get geometry => _geometry!;
   Material? _material;
-  @override
   Material get material => _material!;
   // LOD cross-fade coverage for this draw (1 when not fading); see
   // [Material.lodFade].
-  @override
   late double fade;
   gpu.RenderPipeline? _pipeline;
-  @override
   gpu.RenderPipeline get pipeline => _pipeline!;
   // The coverage pre-draw's pipeline for a surface that cuts itself out, or
   // null when the draw covers its whole geometry.
@@ -124,16 +115,6 @@ base class _OpaqueRecord implements OpaqueBatchRecord {
   // comparator to plain integer compares.
   late int geometryKey;
   late int materialKey;
-  @override
-  int get lightListOffset => item.lightListOffset;
-  @override
-  int get lightListCount => item.lightListCount;
-  @override
-  int get lightChannelMask => item.lightChannelMask;
-  @override
-  Object? get jointsTexture => item.jointsTexture;
-  @override
-  Object? get morphWeights => item.morphWeights;
 
   void release() {
     _item = null;
@@ -436,10 +417,10 @@ final class SceneTranslucentDraw {
 /// instances. A level-of-detail node sorts by its base level.
 ///
 /// It leaves out the encoder's level-of-detail selection and its
-/// per-instance cull, so it may list more draws than the encoder makes: a
+/// cull by cell, so it may list more draws than the encoder makes: a
 /// level-of-detail node is listed by its base level even when the encoder
 /// draws another level or none, and an instanced mesh is listed even when
-/// the encoder culls every instance.
+/// the encoder culls every cell.
 List<SceneTranslucentDraw> sceneTranslucentDraws(
   Node root,
   Camera camera,
@@ -784,7 +765,7 @@ void selectColorDraws(
 }) {
   if (!item.drawsColor) return;
   if ((item.layers & layerMask) == 0) return;
-  if (!item.cullVisibleInstances(frustum, cullingPlanes)) return;
+  if (!item.cullVisibleCells(frustum, cullingPlanes)) return;
   final lod = item.lod;
   if (lod == null) {
     draw(item.geometry, item.material, 1.0);
@@ -1208,11 +1189,6 @@ base class SceneEncoder {
   final List<_TranslucentRecord> _displayReferredRecords = [];
   static final List<_OpaqueRecord> _opaqueRecordPool = [];
   static final List<_TranslucentRecord> _translucentRecordPool = [];
-  // Refilled per batch group and consumed synchronously by
-  // packInstanceDataBatches, which only reads it. The pool reuses both the
-  // list and the batch objects in it, so a scene with many batched groups
-  // allocates neither per group per frame.
-  final InstanceDataBatchPool _batchPool = InstanceDataBatchPool();
   static const int _recordPoolLimit = 8192;
 
   /// View frustum derived from the camera's view-projection matrix at
@@ -1262,13 +1238,13 @@ base class SceneEncoder {
       return;
     }
     if (_cullInstances) {
-      if (!item.cullVisibleInstances(frustum, _cullingPlanes)) {
+      if (!item.cullVisibleCells(frustum, _cullingPlanes)) {
         activeRenderCounters.culled++;
         activeDrawRecorder?.onSkip(item, DrawSkipReason.frustumCulled);
         return;
       }
     } else {
-      item.visibleInstanceIndices = null;
+      item.visibleInstanceRanges = null;
     }
 
     // The render scene already rejected this item through its BVH. Reuse its
@@ -1954,10 +1930,8 @@ base class SceneEncoder {
     Geometry geometry,
     Material material,
     gpu.Shader? materialVertex,
-    gpu.RenderPipeline pipeline, {
-    int batchedItems = 1,
-    BatchBreakReason batchBreak = BatchBreakReason.none,
-  }) {
+    gpu.RenderPipeline pipeline,
+  ) {
     final recorder = activeDrawRecorder;
     if (recorder == null) return;
     recorder.setContext(
@@ -1971,8 +1945,6 @@ base class SceneEncoder {
             ? coverageShaderFor(material)
             : material.fragmentShaderForLighting(_lighting),
         pipeline: pipeline,
-        batchedItems: batchedItems,
-        batchBreak: batchBreak,
       ),
     );
   }
@@ -1985,7 +1957,6 @@ base class SceneEncoder {
     bool windingFlipped,
     double fade, {
     RenderItem? item,
-    BatchBreakReason batchBreak = BatchBreakReason.none,
   }) {
     if (item == null) {
       _encodeSingle(
@@ -1995,7 +1966,6 @@ base class SceneEncoder {
         material,
         windingFlipped,
         fade,
-        batchBreak: batchBreak,
       );
       return;
     }
@@ -2016,7 +1986,6 @@ base class SceneEncoder {
         windingFlipped,
         fade,
         item: item,
-        batchBreak: batchBreak,
       );
     } finally {
       endMeshDraw(geometry);
@@ -2031,7 +2000,6 @@ base class SceneEncoder {
     bool windingFlipped,
     double fade, {
     RenderItem? item,
-    BatchBreakReason batchBreak = BatchBreakReason.none,
     bool? debugFallback,
   }) {
     final viewSide = debugFallback == null
@@ -2051,7 +2019,6 @@ base class SceneEncoder {
           windingFlipped,
           fade,
           item: item,
-          batchBreak: batchBreak,
           debugFallback: side,
         );
       }
@@ -2078,27 +2045,30 @@ base class SceneEncoder {
     // against it, since its uniform slots can differ from the engine default.
     final materialVertex = material.vertexShaderForGeometry(geometry);
     if (item != null) {
-      _describeDraw(
-        item,
-        geometry,
-        material,
-        materialVertex,
-        pipeline,
-        batchBreak: batchBreak,
-      );
+      _describeDraw(item, geometry, material, materialVertex, pipeline);
     }
     _bindGeometry(geometry, worldTransform, material, materialVertex);
     if (geometry.bindsModelTransformInstance) {
       // The model matrix arrives through the instance-rate vertex buffer,
       // bound to the slot after the geometry's vertex streams.
-      bindSingleInstanceData(
-        _renderPass,
-        worldTransform,
-        slot: geometry.vertexStreamCount,
-        // A single draw has no per-instance source, so declared attributes
-        // read zero.
-        attributeFloats: material.instanceAttributes?.floatCount ?? 0,
-      );
+      // A single draw has no per-instance source, so declared attributes
+      // read zero.
+      final attributeFloats = material.instanceAttributes?.floatCount ?? 0;
+      if (item == null) {
+        bindSingleInstanceData(
+          _renderPass,
+          worldTransform,
+          slot: geometry.vertexStreamCount,
+          attributeFloats: attributeFloats,
+        );
+      } else {
+        bindHeldInstanceRecord(
+          _renderPass,
+          item,
+          slot: geometry.vertexStreamCount,
+          attributeFloats: attributeFloats,
+        );
+      }
     }
     _bindMaterial(material, materialVertex, fade, fallback: fallback);
     _bindDebugView(material, item, fallback);
@@ -2113,32 +2083,22 @@ base class SceneEncoder {
     _drawGeometry(geometry, material);
   }
 
-  /// Draws an opaque instanced item with hardware instancing: the instance
-  /// world transforms are packed into an instance-rate vertex buffer and the
-  /// whole set draws with one call per winding-parity group (mirrored
-  /// instances reverse triangle winding, so they draw as a second group
-  /// under the flipped winding order).
+  /// Draws an instanced item with hardware instancing: one call per row
+  /// range of the records the item keeps (see [bindInstanceRows]), so a
+  /// frame packs nothing. A range holds rows of one winding parity, and
+  /// mirrored rows draw under the flipped winding order.
   ///
-  /// Geometry without an instanced vertex layout (skinned) falls back to a
-  /// per-instance loop through the per-draw uniform path.
+  /// With [sortBackToFrontFrom] the rows are packed back to front for this
+  /// draw. Geometry without an instanced vertex layout (skinned) falls back
+  /// to a per-instance loop through the per-draw uniform path.
   void _encodeInstanced(
     gpu.RenderPipeline pipeline,
-    Matrix4 nodeTransform,
     Geometry geometry,
     Material material,
-    List<Matrix4> instances,
-    List<Vector4> colors,
+    RenderItem item,
     bool windingFlipped,
     double fade, {
-    List<bool>? instanceWindingFlipped,
-    List<int>? instanceIndices,
     Vector3? sortBackToFrontFrom,
-    Float32List? packedWorldData,
-    Uint8List? packedWorldWindingFlipped,
-    Float32List? attributeData,
-    int attributeFloats = 0,
-    RenderItem? item,
-    BatchBreakReason batchBreak = BatchBreakReason.none,
     bool? debugFallback,
   }) {
     final viewSide = debugFallback == null
@@ -2152,221 +2112,116 @@ base class SceneEncoder {
         side ? _scissorViewSide() : _scissorLitSide();
         _encodeInstanced(
           sidePipeline,
-          nodeTransform,
           geometry,
           material,
-          instances,
-          colors,
+          item,
           windingFlipped,
           fade,
-          instanceWindingFlipped: instanceWindingFlipped,
-          instanceIndices: instanceIndices,
           sortBackToFrontFrom: sortBackToFrontFrom,
-          packedWorldData: packedWorldData,
-          packedWorldWindingFlipped: packedWorldWindingFlipped,
-          attributeData: attributeData,
-          attributeFloats: attributeFloats,
-          item: item,
-          batchBreak: batchBreak,
           debugFallback: side,
         );
       }
       _scissorFullTarget();
       return;
     }
-    final selection = item == null
-        ? MeshDrawSelection.all
-        : beginMeshDraw(
-            item,
-            geometry,
-            MeshDrawPass.color,
-            _cameraPosition,
-            _primaryView,
-          );
+    final selection = beginMeshDraw(
+      item,
+      geometry,
+      MeshDrawPass.color,
+      _cameraPosition,
+      _primaryView,
+    );
     try {
       if (selection.instanceCount == 0) return;
-      _encodeInstancedBody(
-        pipeline,
-        nodeTransform,
-        geometry,
-        material,
-        instances,
-        colors,
-        windingFlipped,
-        fade,
-        instanceWindingFlipped: instanceWindingFlipped,
-        instanceIndices: instanceIndices,
-        sortBackToFrontFrom: sortBackToFrontFrom,
-        packedWorldData: packedWorldData,
-        packedWorldWindingFlipped: packedWorldWindingFlipped,
-        attributeData: attributeData,
-        attributeFloats: attributeFloats,
-        item: item,
-        batchBreak: batchBreak,
-        instanceLimit: selection.instanceCount,
-        debugFallback: debugFallback,
-      );
+      // Node-space records draw under the node's transform as the instance
+      // frame, and a back-to-front sort reads the eye in the node's space.
+      final nodeSpace = item.nodeSpaceInstances;
+      item.beginInstanceDraw();
+      try {
+        _encodeInstancedRecords(
+          pipeline,
+          geometry,
+          material,
+          item,
+          windingFlipped,
+          fade,
+          sortBackToFrontFrom: sortBackToFrontFrom == null || !nodeSpace
+              ? sortBackToFrontFrom
+              : Matrix4.inverted(
+                  item.worldTransform,
+                ).transformed3(sortBackToFrontFrom),
+          instanceLimit: selection.instanceCount,
+          fallback:
+              debugFallback ?? _usesDebugFallback(item, material, geometry),
+        );
+      } finally {
+        RenderItem.endInstanceDraw();
+      }
     } finally {
       endMeshDraw(geometry);
     }
   }
 
-  void _encodeInstancedBody(
-    gpu.RenderPipeline pipeline,
-    Matrix4 nodeTransform,
-    Geometry geometry,
-    Material material,
-    List<Matrix4> instances,
-    List<Vector4> colors,
-    bool windingFlipped,
-    double fade, {
-    List<bool>? instanceWindingFlipped,
-    List<int>? instanceIndices,
-    Vector3? sortBackToFrontFrom,
-    Float32List? packedWorldData,
-    Uint8List? packedWorldWindingFlipped,
-    Float32List? attributeData,
-    int attributeFloats = 0,
-    RenderItem? item,
-    BatchBreakReason batchBreak = BatchBreakReason.none,
-    int? instanceLimit,
-    bool? debugFallback,
-  }) {
-    if (item == null || !item.nodeSpaceInstances) {
-      _encodeInstancedRecords(
-        pipeline,
-        nodeTransform,
-        geometry,
-        material,
-        instances,
-        colors,
-        windingFlipped,
-        fade,
-        instanceWindingFlipped: instanceWindingFlipped,
-        instanceIndices: instanceIndices,
-        sortBackToFrontFrom: sortBackToFrontFrom,
-        packedWorldData: packedWorldData,
-        packedWorldWindingFlipped: packedWorldWindingFlipped,
-        attributeData: attributeData,
-        attributeFloats: attributeFloats,
-        item: item,
-        batchBreak: batchBreak,
-        instanceLimit: instanceLimit,
-        debugFallback: debugFallback,
-      );
-      return;
-    }
-    // Node-space records draw under the node's transform as the instance
-    // frame, so the records pack under the identity and a back-to-front sort
-    // reads the eye in the node's space.
-    currentDrawInstanceFrame = nodeTransform;
-    currentDrawInstanceLocal = item.instanceLocal;
-    currentDrawInstanceBand = item.instanceBand;
-    try {
-      _encodeInstancedRecords(
-        pipeline,
-        _identityInstanceTransform,
-        geometry,
-        material,
-        instances,
-        colors,
-        windingFlipped,
-        fade,
-        instanceWindingFlipped: instanceWindingFlipped,
-        instanceIndices: instanceIndices,
-        sortBackToFrontFrom: sortBackToFrontFrom == null
-            ? null
-            : Matrix4.inverted(nodeTransform).transformed3(sortBackToFrontFrom),
-        packedWorldData: packedWorldData,
-        packedWorldWindingFlipped: packedWorldWindingFlipped,
-        attributeData: attributeData,
-        attributeFloats: attributeFloats,
-        item: item,
-        batchBreak: batchBreak,
-        instanceLimit: instanceLimit,
-        debugFallback: debugFallback,
-      );
-    } finally {
-      currentDrawInstanceFrame = null;
-      currentDrawInstanceLocal = null;
-      currentDrawInstanceBand = null;
-    }
-  }
-
-  static final Matrix4 _identityInstanceTransform = Matrix4.identity();
-
   void _encodeInstancedRecords(
     gpu.RenderPipeline pipeline,
-    Matrix4 nodeTransform,
     Geometry geometry,
     Material material,
-    List<Matrix4> instances,
-    List<Vector4> colors,
+    RenderItem item,
     bool windingFlipped,
     double fade, {
-    List<bool>? instanceWindingFlipped,
-    List<int>? instanceIndices,
-    Vector3? sortBackToFrontFrom,
-    Float32List? packedWorldData,
-    Uint8List? packedWorldWindingFlipped,
-    Float32List? attributeData,
-    int attributeFloats = 0,
-    RenderItem? item,
-    BatchBreakReason batchBreak = BatchBreakReason.none,
-    int? instanceLimit,
-    bool? debugFallback,
+    required Vector3? sortBackToFrontFrom,
+    required int? instanceLimit,
+    required bool fallback,
   }) {
+    final instances = item.instanceTransforms!;
+    final attributeFloats = item.instanceAttributeFloats;
     checkInstanceRecordWidth(material.instanceAttributes, attributeFloats);
     if (!identical(_boundPipeline, pipeline)) {
       _clearBindings();
     }
     _bindPipeline(pipeline);
     final materialVertex = material.vertexShaderForGeometry(geometry);
-    if (item != null) {
-      _describeDraw(
-        item,
-        geometry,
-        material,
-        materialVertex,
-        pipeline,
-        batchBreak: batchBreak,
-      );
-    }
-    final fallback =
-        debugFallback ?? _usesDebugFallback(item, material, geometry);
+    _describeDraw(item, geometry, material, materialVertex, pipeline);
     _bindMaterial(material, materialVertex, fade, fallback: fallback);
     _bindDebugView(material, item, fallback);
     _setPrimitiveType(geometry.primitiveType);
 
-    final allInstances = instanceIndices == null;
-    instanceIndices = limitInstanceIndices(
-      instanceIndices,
-      instances.length,
-      instanceLimit,
-    );
+    final nodeTransform = item.instancePackTransform;
+    final ranges = item.visibleInstanceRanges ?? item.instanceRowRanges;
+    final limit = instanceLimit == null || instanceLimit >= instances.length
+        ? null
+        : instanceLimit;
+    // A selected level of detail can read the other winding than the base
+    // geometry the ranges were stated for.
+    final reversed = windingFlipped != item.windingFlipped;
     if (geometry.instancedVertexLayout == null) {
-      final count = instanceIndices?.length ?? instances.length;
-      for (var slot = 0; slot < count; slot++) {
-        final instanceIndex = instanceIndices?[slot] ?? slot;
-        final instanceTransform = instances[instanceIndex];
-        _bindGeometry(
-          geometry,
-          nodeTransform * instanceTransform,
-          material,
-          materialVertex,
-        );
-        // Each instance can itself mirror; combine with the node's parity.
-        final flip = windingFlipped != (instanceTransform.determinant() < 0);
-        _setWindingOrder(
-          flip ? gpu.WindingOrder.counterClockwise : gpu.WindingOrder.clockwise,
-        );
-        _drawGeometry(geometry, material);
+      for (var range = 0; range < ranges.length; range += 3) {
+        var end = ranges[range] + ranges[range + 1];
+        if (limit != null && end > limit) end = limit;
+        for (var row = ranges[range]; row < end; row++) {
+          final instanceTransform = instances[row];
+          _bindGeometry(
+            geometry,
+            item.worldTransform * instanceTransform,
+            material,
+            materialVertex,
+          );
+          // Each instance can itself mirror; combine with the node's parity.
+          final flip = windingFlipped != (instanceTransform.determinant() < 0);
+          _setWindingOrder(
+            flip
+                ? gpu.WindingOrder.counterClockwise
+                : gpu.WindingOrder.clockwise,
+          );
+          _drawGeometry(geometry, material);
+        }
       }
       return;
     }
 
     _bindGeometry(geometry, nodeTransform, material, materialVertex);
-    final shared = item?.sharedRows;
+    final instanceSlot = geometry.vertexStreamCount;
+    final shared = item.sharedRows;
     if (shared != null) {
       final rows = sharedInstanceRowsOf(shared);
       _setWindingOrder(
@@ -2374,156 +2229,50 @@ base class SceneEncoder {
             ? gpu.WindingOrder.counterClockwise
             : gpu.WindingOrder.clockwise,
       );
-      final ranges = item!.instanceRanges;
-      final draws = rows.drawCountOf(ranges);
-      final slot = geometry.vertexStreamCount;
+      final sharedRanges = item.instanceRanges;
+      final draws = rows.drawCountOf(sharedRanges);
       for (var draw = 0; draw < draws; draw++) {
-        final count = rows.bind(_renderPass, ranges, draw, slot);
+        final count = rows.bind(_renderPass, sharedRanges, draw, instanceSlot);
         if (count > 0) _drawGeometry(geometry, material, instanceCount: count);
       }
       return;
     }
-    if (sortBackToFrontFrom == null &&
-        allInstances &&
-        packedWorldData != null &&
-        packedWorldWindingFlipped != null) {
-      final flipped = bindRetainedInstanceData(
-        _renderPass,
-        packedWorldData,
-        packedWorldWindingFlipped,
-        slot: geometry.vertexStreamCount,
-      );
-      if (flipped != null) {
+    if (sortBackToFrontFrom == null && item.instanceWorldData != null) {
+      for (var range = 0; range < ranges.length; range += 3) {
+        final first = ranges[range];
+        var count = ranges[range + 1];
+        if (limit != null) {
+          if (first >= limit) break;
+          if (first + count > limit) count = limit - first;
+        }
+        bindInstanceRows(_renderPass, item, first, count, slot: instanceSlot);
         _setWindingOrder(
-          flipped
+          (ranges[range + 2] != 0) != reversed
               ? gpu.WindingOrder.counterClockwise
               : gpu.WindingOrder.clockwise,
         );
-        _drawGeometry(
-          geometry,
-          material,
-          instanceCount: instanceIndices?.length ?? instances.length,
-        );
-        return;
+        _drawGeometry(geometry, material, instanceCount: count);
       }
-    }
-    final packWatch = profileRendering ? (Stopwatch()..start()) : null;
-    final packed =
-        sortBackToFrontFrom == null &&
-            packedWorldData != null &&
-            packedWorldWindingFlipped != null
-        ? packInstanceDataBatches(
-            transientInstancePackingScratch.singleCachedBatch(
-              packedWorldData: packedWorldData,
-              packedWindingFlipped: packedWorldWindingFlipped,
-              indices: instanceIndices,
-              attributeFloats: attributeFloats,
-            ),
-            attributeFloats: attributeFloats,
-            scratch: transientInstancePackingScratch,
-          )
-        : packInstanceData(
-            nodeTransform,
-            instances,
-            colors,
-            nodeWindingFlipped: windingFlipped,
-            instanceWindingFlipped: instanceWindingFlipped,
-            indices: instanceIndices,
-            sortBackToFrontFrom: sortBackToFrontFrom,
-            attributeData: attributeData,
-            attributeFloats: attributeFloats,
-            scratch: transientInstancePackingScratch,
-          );
-    if (profileRendering) {
-      packWatch!.stop();
-      _instancePackMicros += packWatch.elapsedMicroseconds;
-    }
-    transientInstancePackingScratch.releaseSingleBatch();
-    final instanceSlot = geometry.vertexStreamCount;
-    if (packed.ccwCount > 0) {
-      _bindPackedInstances(packed.ccw, instanceSlot);
-      _setWindingOrder(gpu.WindingOrder.clockwise);
-      _drawGeometry(geometry, material, instanceCount: packed.ccwCount);
-    }
-    if (packed.cwCount > 0) {
-      _bindPackedInstances(packed.cw, instanceSlot);
-      _setWindingOrder(gpu.WindingOrder.counterClockwise);
-      _drawGeometry(geometry, material, instanceCount: packed.cwCount);
-    }
-  }
-
-  void _encodeInstancedBatches(
-    gpu.RenderPipeline pipeline,
-    Geometry geometry,
-    Material material,
-    List<InstanceDataBatch> batches,
-    double fade, {
-    RenderItem? item,
-    int batchedItems = 1,
-    BatchBreakReason batchBreak = BatchBreakReason.none,
-    bool? debugFallback,
-  }) {
-    // Cross-node batching synthesizes instances, so a material declaring
-    // per-instance attributes is kept out of it (see opaqueBatchEnd).
-    assert(material.instanceAttributes == null);
-    final viewSide = debugFallback == null
-        ? _litSplitViewPipeline(item, material, geometry)
-        : null;
-    if (viewSide != null) {
-      for (final (side, sidePipeline) in [
-        (false, pipeline),
-        (true, viewSide),
-      ]) {
-        side ? _scissorViewSide() : _scissorLitSide();
-        _encodeInstancedBatches(
-          sidePipeline,
-          geometry,
-          material,
-          batches,
-          fade,
-          item: item,
-          batchedItems: batchedItems,
-          batchBreak: batchBreak,
-          debugFallback: side,
-        );
-      }
-      _scissorFullTarget();
       return;
     }
-    if (!identical(_boundPipeline, pipeline)) {
-      _clearBindings();
-    }
-    _bindPipeline(pipeline);
-    final materialVertex = material.vertexShaderForGeometry(geometry);
-    if (item != null) {
-      _describeDraw(
-        item,
-        geometry,
-        material,
-        materialVertex,
-        pipeline,
-        batchedItems: batchedItems,
-        batchBreak: batchBreak,
-      );
-    }
-    final fallback =
-        debugFallback ?? _usesDebugFallback(item, material, geometry);
-    _bindMaterial(material, materialVertex, fade, fallback: fallback);
-    // TODO(debug-views): a cross-node batch carries the first item's object
-    // seed, so its members share one object color.
-    _bindDebugView(material, item, fallback);
-    _setPrimitiveType(geometry.primitiveType);
-    _bindGeometry(geometry, _identityTransform, material, materialVertex);
     final packWatch = profileRendering ? (Stopwatch()..start()) : null;
-    final packed = packInstanceDataBatches(
-      batches,
+    final packed = packInstanceData(
+      nodeTransform,
+      instances,
+      item.instanceColors!,
+      nodeWindingFlipped: windingFlipped,
+      instanceWindingFlipped: item.instanceWindingFlipped,
+      indices: instanceRowsOf(ranges, limit),
+      sortBackToFrontFrom: sortBackToFrontFrom,
+      attributeData: item.instanceAttributeData,
+      attributeFloats: attributeFloats,
       scratch: transientInstancePackingScratch,
     );
     if (profileRendering) {
       packWatch!.stop();
       _instancePackMicros += packWatch.elapsedMicroseconds;
     }
-    final instanceSlot = geometry.vertexStreamCount;
+    transientInstancePackingScratch.releaseSingleBatch();
     if (packed.ccwCount > 0) {
       _bindPackedInstances(packed.ccw, instanceSlot);
       _setWindingOrder(gpu.WindingOrder.clockwise);
@@ -2535,8 +2284,6 @@ base class SceneEncoder {
       _drawGeometry(geometry, material, instanceCount: packed.cwCount);
     }
   }
-
-  static final Matrix4 _identityTransform = Matrix4.identity();
 
   /// Sorts and emits every deferred draw, then finishes recording.
   ///
@@ -2594,27 +2341,7 @@ base class SceneEncoder {
       item.applyJointsTexture(record.geometry);
       item.applyMorphWeights(record.geometry);
 
-      final end = opaqueBatchEnd(_opaqueRecords, index);
-      // Only a capture asks why a run ended; steady state skips the walk.
-      final batchBreak = activeDrawRecorder == null
-          ? BatchBreakReason.none
-          : opaqueBatchBreakReason(
-              _opaqueRecords[end - 1],
-              end < _opaqueRecords.length ? _opaqueRecords[end] : null,
-            );
-      if (end > index + 1) {
-        activeRenderCounters.batches++;
-        activeRenderCounters.batchedItems += end - index;
-        _batchPool.reset();
-        for (var batchIndex = index; batchIndex < end; batchIndex++) {
-          final item = _opaqueRecords[batchIndex].item;
-          _batchPool.addFor(
-            item,
-            indices: item.visibleInstanceIndices,
-            windingFlipped: _opaqueRecords[batchIndex].windingFlipped,
-          );
-        }
-      }
+      final end = index + 1;
       // A surface that cuts itself out first draws its coverage, writing
       // depth and a stencil mark only where it is kept, then shades exactly
       // the marked pixels (clearing the mark) with an equal depth test. The
@@ -2629,12 +2356,12 @@ base class SceneEncoder {
         _coveragePass = true;
         _renderPass.setStencilReference(1);
         _renderPass.setStencilConfig(_markCoverage);
-        _encodeOpaqueRun(index, end, coverage, record.fade, batchBreak);
+        _encodeOpaqueRun(index, end, coverage, record.fade);
         _coveragePass = false;
         _renderPass.setStencilConfig(_testCoverage);
         _renderPass.setDepthCompareOperation(gpu.CompareFunction.equal);
         _renderPass.setDepthWriteEnable(false);
-        _encodeOpaqueRun(index, end, record.pipeline, 1.0, batchBreak);
+        _encodeOpaqueRun(index, end, record.pipeline, 1.0);
         _renderPass.setStencilConfig(_noStencil);
         _renderPass.setDepthCompareOperation(_raster.nearerOrEqual);
         _renderPass.setDepthWriteEnable(true);
@@ -2642,11 +2369,11 @@ base class SceneEncoder {
         _renderPass.setDepthWriteEnable(false);
         _renderPass.setColorBlendEnable(true);
         _renderPass.setColorBlendEquation(_premultipliedOver);
-        _encodeOpaqueRun(index, end, record.pipeline, record.fade, batchBreak);
+        _encodeOpaqueRun(index, end, record.pipeline, record.fade);
         _renderPass.setColorBlendEnable(false);
         _renderPass.setDepthWriteEnable(true);
       } else {
-        _encodeOpaqueRun(index, end, record.pipeline, 1.0, batchBreak);
+        _encodeOpaqueRun(index, end, record.pipeline, 1.0);
       }
       index = end;
     }
@@ -2663,53 +2390,24 @@ base class SceneEncoder {
     _opaqueRecords.clear();
   }
 
-  // Encodes the opaque records [index, end) (one batchable run) with
-  // [pipeline] at cross-fade coverage [fade].
+  // Encodes the opaque record at [index] with [pipeline] at cross-fade
+  // coverage [fade].
   void _encodeOpaqueRun(
     int index,
     int end,
     gpu.RenderPipeline pipeline,
     double fade,
-    BatchBreakReason batchBreak,
   ) {
     final record = _opaqueRecords[index];
     final item = record.item;
-    if (end > index + 1) {
-      _encodeInstancedBatches(
-        pipeline,
-        record.geometry,
-        record.material,
-        _batchPool.batches,
-        fade,
-        item: item,
-        batchedItems: end - index,
-        batchBreak: batchBreak,
-      );
-      return;
-    }
-    final instances = item.instanceTransforms;
-    if (instances != null) {
+    if (item.instanceTransforms != null) {
       _encodeInstanced(
         pipeline,
-        item.worldTransform,
         record.geometry,
         record.material,
-        instances,
-        item.instanceColors!,
+        item,
         record.windingFlipped,
         fade,
-        instanceWindingFlipped: item.instanceWindingFlipped,
-        instanceIndices: item.visibleInstanceIndices,
-        packedWorldData: record.windingFlipped == item.windingFlipped
-            ? item.instanceWorldData
-            : null,
-        packedWorldWindingFlipped: record.windingFlipped == item.windingFlipped
-            ? item.instanceWorldWindingFlipped
-            : null,
-        attributeData: item.instanceAttributeData,
-        attributeFloats: item.instanceAttributeFloats,
-        item: item,
-        batchBreak: batchBreak,
       );
       return;
     }
@@ -2721,7 +2419,6 @@ base class SceneEncoder {
       record.windingFlipped,
       fade,
       item: item,
-      batchBreak: batchBreak,
     );
   }
 
@@ -3026,28 +2723,14 @@ base class SceneEncoder {
       if (instances != null) {
         _encodeInstanced(
           record.pipeline,
-          record.worldTransform,
           record.geometry,
           record.material,
-          instances,
-          record.item.instanceColors!,
+          record.item,
           record.windingFlipped,
           record.fade,
-          instanceWindingFlipped: record.item.instanceWindingFlipped,
-          instanceIndices: record.item.visibleInstanceIndices,
           sortBackToFrontFrom: record.item.sortTransparentInstances
               ? _cameraPosition
               : null,
-          packedWorldData: record.windingFlipped == record.item.windingFlipped
-              ? record.item.instanceWorldData
-              : null,
-          packedWorldWindingFlipped:
-              record.windingFlipped == record.item.windingFlipped
-              ? record.item.instanceWorldWindingFlipped
-              : null,
-          attributeData: record.item.instanceAttributeData,
-          attributeFloats: record.item.instanceAttributeFloats,
-          item: record.item,
         );
       } else {
         _encode(
@@ -3147,28 +2830,14 @@ base class SceneEncoder {
       if (instances != null) {
         _encodeInstanced(
           record.pipeline,
-          record.worldTransform,
           record.geometry,
           record.material,
-          instances,
-          record.item.instanceColors!,
+          record.item,
           record.windingFlipped,
           record.fade,
-          instanceWindingFlipped: record.item.instanceWindingFlipped,
-          instanceIndices: record.item.visibleInstanceIndices,
           sortBackToFrontFrom: record.item.sortTransparentInstances
               ? _cameraPosition
               : null,
-          packedWorldData: record.windingFlipped == record.item.windingFlipped
-              ? record.item.instanceWorldData
-              : null,
-          packedWorldWindingFlipped:
-              record.windingFlipped == record.item.windingFlipped
-              ? record.item.instanceWorldWindingFlipped
-              : null,
-          attributeData: record.item.instanceAttributeData,
-          attributeFloats: record.item.instanceAttributeFloats,
-          item: record.item,
         );
       } else {
         _encode(

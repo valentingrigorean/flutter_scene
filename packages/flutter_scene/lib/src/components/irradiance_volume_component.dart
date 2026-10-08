@@ -16,6 +16,9 @@ import 'package:flutter_scene/src/render/irradiance_bake.dart';
 /// of a receiver that stays at eight probe taps instead of sixteen.
 /// {@category Lighting and environment}
 class IrradianceVolumeComponent extends Component {
+  @override
+  bool get ticks => false;
+
   IrradianceVolumeComponent({
     Vector3? extents,
     Vector3? resolution,

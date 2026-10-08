@@ -1,6 +1,8 @@
 import 'package:flutter_scene/scene.dart';
 import 'package:test/test.dart';
 
+import 'support/pre_pass.dart';
+
 /// Records the order of lifecycle hook calls for assertions.
 class RecordingComponent extends Component {
   final List<String> log = [];
@@ -196,7 +198,7 @@ void main() {
     });
   });
 
-  group('Node.scenePrePass mutation', () {
+  group('pre-pass mutation', () {
     test(
       'does not retick after a child is inserted before the cursor',
       () async {
@@ -214,7 +216,7 @@ void main() {
         last.mount();
         await Future<void>.delayed(Duration.zero);
 
-        root.scenePrePass(0.016);
+        runPrePass(root, 0.016);
 
         expect(first.updateCalls, 1);
         expect(last.updateCalls, 1);
@@ -238,7 +240,7 @@ void main() {
         last.mount();
         await Future<void>.delayed(Duration.zero);
 
-        node.scenePrePass(0.016);
+        runPrePass(node, 0.016);
 
         expect(last.updateCalls, 1);
       },
@@ -256,9 +258,9 @@ void main() {
       mutator.mount();
       await Future<void>.delayed(Duration.zero);
 
-      root.scenePrePass(0.016);
+      runPrePass(root, 0.016);
       await Future<void>.delayed(Duration.zero);
-      root.scenePrePass(0.016);
+      runPrePass(root, 0.016);
 
       expect(inserted.updateCalls, 1);
     });
@@ -273,7 +275,7 @@ void main() {
       sibling.mount();
       await Future<void>.delayed(Duration.zero);
 
-      root.scenePrePass(0.016);
+      runPrePass(root, 0.016);
 
       expect(sibling.updateCalls, 1);
     });

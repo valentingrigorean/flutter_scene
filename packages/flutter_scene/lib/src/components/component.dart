@@ -90,6 +90,13 @@ abstract class Component {
   /// rebinding instead (see `MaterialsVariantsComponent`).
   Component? cloneFor(Node cloneOwner) => null;
 
+  /// Whether the scene calls [update] on this component every frame.
+  ///
+  /// A node whose components all answer false, and that carries no animation
+  /// player, skin or morph targets, costs nothing on a frame that leaves it
+  /// unchanged. A component that overrides [update] keeps the default.
+  bool get ticks => true;
+
   @internal
   void attachTo(Node node) {
     _node = node;

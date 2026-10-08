@@ -122,6 +122,7 @@ class InstancedMesh implements MeshDrawSource {
 
   void _drawStateChanged() {
     _drawStateRevision++;
+    _tellRowListeners();
     markSceneDrawChanged();
   }
 
@@ -134,10 +135,14 @@ class InstancedMesh implements MeshDrawSource {
   /// The material every instance is shaded with.
   final Material material;
 
-  /// Whether the renderer culls each instance after the aggregate bounds pass.
+  /// Whether the renderer culls the instances by cell after the aggregate
+  /// bounds pass: runs of consecutive instances, each tested by one box and
+  /// drawn as a range of the instance buffer the mesh keeps on the device. No
+  /// frame tests or packs an instance.
   ///
-  /// Enable this for large spatial groups whose individual instances can enter
-  /// the view at different times. Small compact groups are usually cheaper to
+  /// Enable this for large spatial groups whose instances can enter the view
+  /// at different times, and order the instances so neighbours in the list
+  /// are neighbours in space. Small compact groups are usually cheaper to
   /// draw after the single aggregate cull.
   final bool cullInstances;
 
@@ -153,9 +158,8 @@ class InstancedMesh implements MeshDrawSource {
   ///
   /// Moving the node then rewrites no instance record, so the retained
   /// instance buffer of a large spatial cell survives a move of the whole
-  /// cell. Such a mesh draws alone from its own buffer in every pass: it joins
-  /// no cross-node batch, and the renderer culls it by its aggregate bounds
-  /// only, whatever [cullInstances] states. The geometry needs an instanced
+  /// cell. The renderer culls such a mesh by its aggregate bounds only,
+  /// whatever [cullInstances] states. The geometry needs an instanced
   /// vertex layout; other geometry draws as if this were false.
   final bool nodeSpaceInstances;
 
@@ -183,8 +187,28 @@ class InstancedMesh implements MeshDrawSource {
   final List<int> _changedRows = [];
   int _changedFrom = 0;
 
+  final List<void Function()> _rowListeners = [];
+
+  /// Calls [listener] after each change to the rows and to [instanceRanges],
+  /// [instanceLocal] and [band], so the node that draws them refreshes its
+  /// render item and no other node does.
+  @internal
+  void addRowListener(void Function() listener) => _rowListeners.add(listener);
+
+  /// Removes a listener [addRowListener] added.
+  @internal
+  void removeRowListener(void Function() listener) =>
+      _rowListeners.remove(listener);
+
+  void _tellRowListeners() {
+    for (var index = 0; index < _rowListeners.length; index++) {
+      _rowListeners[index]();
+    }
+  }
+
   void _rowChanged(int index) {
     _revision++;
+    _tellRowListeners();
     if (_changedRows.length < _instances.length + 64) {
       _changedRows.add(index);
     } else {
@@ -195,6 +219,7 @@ class InstancedMesh implements MeshDrawSource {
 
   void _rowsMoved() {
     _revision++;
+    _tellRowListeners();
     _changedRows.clear();
     _changedFrom = _revision;
   }

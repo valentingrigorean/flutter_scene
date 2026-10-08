@@ -18,6 +18,7 @@ import 'package:flutter_scene/src/scene.dart';
 import 'package:flutter_scene/src/animation.dart';
 import 'package:flutter_scene/src/mesh.dart';
 import 'package:flutter_scene/src/render/debug_view.dart';
+import 'package:flutter_scene/src/render/pre_pass.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/skin.dart';
@@ -93,7 +94,7 @@ void _visitMutable<T extends Object>(
 /// and child nodes. Nodes are used to build complex scenes by establishing relationships
 /// between different elements, allowing for transformations to propagate down the hierarchy.
 /// {@category Scene graph}
-base class Node implements SceneGraph {
+base class Node implements SceneGraph, PrePassNode {
   /// Creates a node with an optional [name], [localTransform], and [mesh].
   ///
   /// When omitted, [localTransform] defaults to the identity matrix and the
@@ -115,6 +116,7 @@ base class Node implements SceneGraph {
     if (value == _visible) return;
     _visible = value;
     markSceneDrawChanged();
+    _markSubtreeRenderChanged();
   }
 
   bool _visible = true;
@@ -126,7 +128,13 @@ base class Node implements SceneGraph {
   /// per-node property, so different nodes can use different colors. Setting it
   /// does not affect the node's normal rendering.
   /// {@category Rendering}
-  Vector4? highlightColor;
+  Vector4? get highlightColor => _highlightColor;
+  set highlightColor(Vector4? value) {
+    _highlightColor = value;
+    _markRenderChanged();
+  }
+
+  Vector4? _highlightColor;
 
   /// Whether this node and its descendants should be tested against the
   /// camera frustum each frame. When `true` (the default), subtrees
@@ -138,7 +146,14 @@ base class Node implements SceneGraph {
   /// Subtrees that report no bound (skinned content, geometry without
   /// computable bounds) are treated as always visible regardless of
   /// this flag.
-  bool frustumCulled = true;
+  bool get frustumCulled => _frustumCulled;
+  set frustumCulled(bool value) {
+    if (value == _frustumCulled) return;
+    _frustumCulled = value;
+    _markRenderChanged();
+  }
+
+  bool _frustumCulled = true;
 
   /// The render layers this node occupies, a 32-bit bitmask. A
   /// [RenderView] renders this node's mesh only when its
@@ -151,6 +166,7 @@ base class Node implements SceneGraph {
     if (value == _layers) return;
     _layers = value;
     markSceneDrawChanged();
+    _markRenderChanged();
   }
 
   int _layers = kRenderLayerDefault;
@@ -163,7 +179,14 @@ base class Node implements SceneGraph {
   /// default 0 leaves ordering to the renderer. Not inherited by children.
   // TODO(render-order-fscene): carry it in the .fscene document so authored
   // scenes and the editor can set it.
-  double renderOrder = 0.0;
+  double get renderOrder => _renderOrder;
+  set renderOrder(double value) {
+    if (value == _renderOrder) return;
+    _renderOrder = value;
+    _markRenderChanged();
+  }
+
+  double _renderOrder = 0.0;
 
   // TODO(fscene): serialize this mask (NodeSpec field + json + diff).
   /// The light channels this node's meshes occupy, an 8-bit bitmask. A light
@@ -183,6 +206,7 @@ base class Node implements SceneGraph {
     if (value == _lightChannelMask) return;
     _lightChannelMask = value;
     markSceneDrawChanged();
+    _markRenderChanged();
   }
 
   int _lightChannelMask = 0xFF;
@@ -199,6 +223,7 @@ base class Node implements SceneGraph {
       _debugViewOverrideCount += value == null ? -1 : 1;
     }
     _debugView = value;
+    markRenderSourcesChanged();
   }
 
   DebugView? _debugView;
@@ -227,7 +252,14 @@ base class Node implements SceneGraph {
   /// The node keeps its own bounds for the frustum cull and raycasts. Not
   /// inherited by children; set it on each mesh-bearing node.
   /// {@category Rendering}
-  double sortDepthBias = 0.0;
+  double get sortDepthBias => _sortDepthBias;
+  set sortDepthBias(double value) {
+    if (value == _sortDepthBias) return;
+    _sortDepthBias = value;
+    _markRenderChanged();
+  }
+
+  double _sortDepthBias = 0.0;
 
   /// Marks this node's meshes as static shadow casters: their geometry,
   /// material coverage, and world transform are promised not to change while
@@ -241,7 +273,14 @@ base class Node implements SceneGraph {
   /// mesh-bearing node. Materials with a `vertex { }` displacement stage
   /// should stay dynamic, since their cached shadows would not follow a
   /// camera-dependent displacement.
-  bool shadowStatic = false;
+  bool get shadowStatic => _shadowStatic;
+  set shadowStatic(bool value) {
+    if (value == _shadowStatic) return;
+    _shadowStatic = value;
+    _markRenderChanged();
+  }
+
+  bool _shadowStatic = false;
 
   /// How this node's meshes cast shadows. Defaults to [ShadowCastingMode.on].
   ///
@@ -256,6 +295,7 @@ base class Node implements SceneGraph {
     if (value == _shadowCastingMode) return;
     _shadowCastingMode = value;
     markSceneDrawChanged();
+    _markRenderChanged();
   }
 
   ShadowCastingMode _shadowCastingMode = ShadowCastingMode.on;
@@ -282,7 +322,14 @@ base class Node implements SceneGraph {
   /// alpha-masked material casts with its own culling either way. Not
   /// inherited by children; set it on each mesh-bearing node.
   /// {@category Lighting and environment}
-  ShadowCasterFaces? shadowCasterFaces;
+  ShadowCasterFaces? get shadowCasterFaces => _shadowCasterFaces;
+  set shadowCasterFaces(ShadowCasterFaces? value) {
+    if (value == _shadowCasterFaces) return;
+    _shadowCasterFaces = value;
+    _markRenderChanged();
+  }
+
+  ShadowCasterFaces? _shadowCasterFaces;
 
   /// Whether scene raycasts (`Scene.raycast`) test this node's meshes.
   ///
@@ -453,7 +500,15 @@ base class Node implements SceneGraph {
 
   /// The skin attached to this node, used for skeletal animation. Set by
   /// importers (both the scene importer and the runtime glTF/GLB loader).
-  Skin? skin;
+  Skin? get skin => _skin;
+  set skin(Skin? value) {
+    if (identical(value, _skin)) return;
+    _skin = value;
+    _syncFrameNode();
+    _markRenderChanged();
+  }
+
+  Skin? _skin;
 
   // This node instance's morph target weights, lazily seeded from the mesh's
   // defaults on first access. Per instance so clones sharing one morphed
@@ -785,9 +840,61 @@ base class Node implements SceneGraph {
   @internal
   RenderScene? get internalRenderScene => _renderScene;
 
-  // Whether this node and every ancestor is visible, recomputed each
-  // frame by [scenePrePass].
-  bool _effectiveVisible = false;
+  @internal
+  @override
+  int prePassFrameIndex = -1;
+
+  @internal
+  @override
+  bool prePassChanged = false;
+
+  // Queues this node for the pre-pass refresh of its render items.
+  void _markRenderChanged() {
+    final renderScene = _renderScene;
+    if (renderScene == null || prePassChanged) return;
+    if (_meshComponents.isEmpty && _instancedMeshComponents.isEmpty) return;
+    renderScene.prePass.markChanged(this);
+  }
+
+  // Queues this node and its descendants: a change every node below
+  // inherits, such as a visibility.
+  void _markSubtreeRenderChanged() {
+    if (_renderScene == null) return;
+    _markRenderChanged();
+    for (final child in children) {
+      child._markSubtreeRenderChanged();
+    }
+  }
+
+  // Whether the pre-pass visits this node on every frame.
+  bool get _needsEveryFrame {
+    if (_animationPlayer != null || _skin != null) return true;
+    for (final component in _components) {
+      if (component.ticks) return true;
+    }
+    for (final meshComponent in _meshComponents) {
+      if (meshComponent.mesh.morphTargets != null) return true;
+    }
+    return false;
+  }
+
+  void _syncFrameNode() {
+    final renderScene = _renderScene;
+    if (renderScene == null) return;
+    if (_needsEveryFrame) {
+      renderScene.prePass.addFrameNode(this);
+    } else {
+      renderScene.prePass.removeFrameNode(this);
+    }
+  }
+
+  /// Tells the pre-pass that this node's components or mesh changed what it
+  /// needs on a frame. Called by a component that swaps its mesh.
+  @internal
+  void internalRenderSourcesChanged() {
+    _syncFrameNode();
+    _markRenderChanged();
+  }
 
   /// Whether this node and every ancestor is visible right now. Light
   /// collection reads it so a hidden node's lights stop contributing the
@@ -830,6 +937,7 @@ base class Node implements SceneGraph {
     if (_renderScene != null) {
       component.mount();
     }
+    internalRenderSourcesChanged();
   }
 
   /// Detaches [component] from this node.
@@ -851,6 +959,7 @@ base class Node implements SceneGraph {
     } else if (component is InstancedMeshComponent) {
       _instancedMeshComponents.remove(component);
     }
+    _syncFrameNode();
   }
 
   /// Returns the first attached component of type [T], or `null`.
@@ -866,6 +975,8 @@ base class Node implements SceneGraph {
 
   void _mount(RenderScene renderScene) {
     _renderScene = renderScene;
+    _syncFrameNode();
+    _markRenderChanged();
     _visitMutable(_components, (component) => component.mount());
     _visitMutable(children, (child) => child._mount(renderScene));
   }
@@ -873,6 +984,7 @@ base class Node implements SceneGraph {
   void _unmount() {
     _visitMutable(children, (child) => child._unmount());
     _visitMutable(_components, (component) => component.unmount());
+    _renderScene?.prePass.forget(this);
     _renderScene = null;
   }
 
@@ -1148,6 +1260,7 @@ base class Node implements SceneGraph {
     // An already-dirty node has an already-dirty subtree, so stop.
     if (_worldTransformDirty) return;
     _worldTransformDirty = true;
+    _markRenderChanged();
     for (final child in children) {
       child._markWorldTransformDirty();
     }
@@ -1217,6 +1330,7 @@ base class Node implements SceneGraph {
   /// [findAnimationByName].
   AnimationClip createAnimationClip(Animation animation) {
     _animationPlayer ??= AnimationPlayer();
+    _syncFrameNode();
     return _animationPlayer!.createAnimationClip(animation, this);
   }
 
@@ -1334,6 +1448,20 @@ base class Node implements SceneGraph {
   /// drives) against a bare [RenderScene].
   @visibleForTesting
   void debugMountInto(RenderScene renderScene) => _mount(renderScene);
+
+  /// Runs the pre-pass of the render scene this node's tree is mounted in,
+  /// mounting the tree into a bare one first when it is in none, and returns
+  /// how many nodes the pre-pass visited.
+  @visibleForTesting
+  int debugRunPrePass(double deltaSeconds) {
+    var top = this;
+    while (top._parent != null) {
+      top = top._parent!;
+    }
+    final mounted = top._renderScene ?? RenderScene();
+    if (top._renderScene == null) top._mount(mounted);
+    return mounted.runPrePass(deltaSeconds);
+  }
 
   @override
   void add(Node child) {
@@ -1631,20 +1759,14 @@ base class Node implements SceneGraph {
     }
   }
 
-  /// Walks this node's subtree once per frame to prepare it for
-  /// rendering: ticks components and animation players and refreshes the
-  /// [RenderItem]s the render passes iterate.
-  ///
-  /// Called by [Scene.update] and [Scene.render]; not normally called
-  /// directly. [deltaSeconds] is the elapsed time since the previous
-  /// tick. [ancestorsVisible] is whether every ancestor of this node is
-  /// visible, and defaults to `true` for the root.
-  void scenePrePass(double deltaSeconds, [bool ancestorsVisible = true]) {
-    _effectiveVisible = ancestorsVisible && visible;
-
+  /// Ticks this node's components and its animation player. Called by the
+  /// pre-pass of the render scene for a node in its per-frame list.
+  @internal
+  @override
+  void prePassTick(double deltaSeconds) {
     // Components tick whenever the node is mounted, independent of visibility.
-    // These loops stay closure-free while nothing mutates the lists; a
-    // mutation hands the rest of the walk to [_visitMutable].
+    // The loop stays closure-free while nothing mutates the list; a mutation
+    // hands the rest of the walk to [_visitMutable].
     for (var i = 0; i < _components.length; i++) {
       final component = _components[i];
       component.tick(deltaSeconds);
@@ -1654,34 +1776,19 @@ base class Node implements SceneGraph {
       _tickComponentsFrom(i, component, deltaSeconds);
       break;
     }
-
-    if (_effectiveVisible) _animationPlayer?.update(deltaSeconds);
-    _refreshOwnRenderItems(uploadSkin: true);
-    for (var i = 0; i < children.length; i++) {
-      final child = children[i];
-      child.scenePrePass(deltaSeconds, _effectiveVisible);
-      if (i < children.length && identical(children[i], child)) continue;
-      _prePassChildrenFrom(i, child, deltaSeconds);
-      break;
-    }
+    final player = _animationPlayer;
+    if (player != null && internalEffectiveVisible) player.update(deltaSeconds);
+    if (_skin != null || internalMorphWeights != null) _markRenderChanged();
   }
 
-  /// Refreshes the [RenderItem]s of this node's subtree from its current
-  /// state as [scenePrePass] does, without ticking components or animation
-  /// players, so a query between frames culls the items the next frame
-  /// draws. A skinned mesh keeps the joints its last frame uploaded, so the
-  /// skin's joints ring advances once per frame.
+  /// Refreshes this node's [RenderItem]s from its current state. Called by
+  /// the pre-pass of the render scene for a node that changed. Without
+  /// [uploadSkin] a skinned mesh keeps the joints its last frame uploaded, so
+  /// the skin's joints ring advances once per frame.
   @internal
-  void internalRefreshRenderItems([bool ancestorsVisible = true]) {
-    _effectiveVisible = ancestorsVisible && visible;
-    _refreshOwnRenderItems(uploadSkin: false);
-    for (final child in children) {
-      child.internalRefreshRenderItems(_effectiveVisible);
-    }
-  }
-
-  void _refreshOwnRenderItems({required bool uploadSkin}) {
-    if (_effectiveVisible) {
+  @override
+  void prePassRefresh({required bool uploadSkin}) {
+    if (internalEffectiveVisible) {
       for (final meshComponent in _meshComponents) {
         meshComponent.refreshRenderItems(uploadSkin: uploadSkin);
       }
@@ -1699,7 +1806,7 @@ base class Node implements SceneGraph {
     }
   }
 
-  // The closures live here, off the per-node path, so [scenePrePass] does
+  // The closure lives here, off the per-node path, so [prePassTick] does
   // not allocate a capture context.
   void _tickComponentsFrom(int index, Component visited, double dt) {
     _visitMutable(
@@ -1710,21 +1817,12 @@ base class Node implements SceneGraph {
     );
   }
 
-  void _prePassChildrenFrom(int index, Node visited, double dt) {
-    _visitMutable(
-      children,
-      (child) => child.scenePrePass(dt, _effectiveVisible),
-      index: index,
-      justVisited: visited,
-    );
-  }
-
   /// Walks this node's subtree once per physics substep and dispatches
   /// [Component.fixedTick] to every component.
   ///
   /// Called by [Scene]'s fixed-step driver inside its substepping loop,
   /// before the physics world's step. Traversal order is parent before
-  /// children, matching [scenePrePass].
+  /// children.
   void sceneFixedPass(double fixedDt) {
     _visitMutable(_components, (component) => component.fixedTick(fixedDt));
     _visitMutable(children, (child) => child.sceneFixedPass(fixedDt));

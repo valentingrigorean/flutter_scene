@@ -23,6 +23,8 @@ import 'package:flutter_scene/src/runtime_importer/runtime_importer.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
 
+import 'support/pre_pass.dart';
+
 Matrix4 _zFlip() => Matrix4.identity()..setEntry(2, 2, -1.0);
 
 /// A 1-second translation channel on [nodeName] from the origin to (1, 2, 3).
@@ -121,7 +123,7 @@ void _expectJointAnimates(Node importRoot) {
   importRoot
       .createAnimationClip(importRoot.findAnimationByName('Move')!)
       .play();
-  importRoot.scenePrePass(0.5);
+  runPrePass(importRoot, 0.5);
 
   expect(importRoot.localTransform, importTransform);
   final translation = joint.localTransform.getTranslation();
@@ -139,7 +141,7 @@ void main() {
       ..add(Node(name: 'Armature')..add(joint));
 
     importRoot.createAnimationClip(_moveAnimation('root')).play();
-    importRoot.scenePrePass(0.5);
+    runPrePass(importRoot, 0.5);
 
     expect(importRoot.localTransform, _zFlip());
     expect(joint.globalTransform.determinant(), closeTo(-1, 1e-6));
@@ -160,7 +162,7 @@ void main() {
     joint.add(attachment);
 
     joint.createAnimationClip(importRoot.findAnimationByName('Move')!).play();
-    joint.scenePrePass(0.5);
+    runPrePass(joint, 0.5);
 
     expect(
       joint.localTransform.getTranslation(),
@@ -182,7 +184,7 @@ void main() {
   test('a channel still binds the bind root when no descendant matches', () {
     final mover = Node(name: 'mover')..add(Node(name: 'child'));
     mover.createAnimationClip(_moveAnimation('mover')).play();
-    mover.scenePrePass(0.5);
+    runPrePass(mover, 0.5);
     expect(
       mover.localTransform.getTranslation(),
       _closeToVector(Vector3(0.5, 1, 1.5)),

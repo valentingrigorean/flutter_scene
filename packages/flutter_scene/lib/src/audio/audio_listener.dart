@@ -12,6 +12,9 @@ import 'package:flutter_scene/src/components/component.dart';
 /// primary camera. When several are mounted, the first mounted wins.
 /// {@category Audio}
 class AudioListener extends Component {
+  @override
+  bool get ticks => false;
+
   AudioEngine? _engine;
 
   /// The engine this listener registered with, while mounted.

@@ -20,6 +20,9 @@ export 'package:scene/physics.dart' show CharacterMovement;
 /// {@category Physics}
 class KinematicCharacterController extends Component
     implements PendingPhysicsRegistration {
+  @override
+  bool get ticks => false;
+
   KinematicCharacterController({
     Vector3? up,
     this.offset = 0.01,

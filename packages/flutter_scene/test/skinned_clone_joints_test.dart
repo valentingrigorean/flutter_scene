@@ -17,6 +17,8 @@ import 'package:flutter_scene/src/render/render_scene.dart';
 
 import 'support/gpu_available.dart';
 
+import 'support/pre_pass.dart';
+
 /// Records every [setJointsTexture] call so the test can assert which
 /// skeleton each draw would bind.
 class _RecordingGeometry extends Geometry {
@@ -77,7 +79,7 @@ void main() {
     final b = template.clone();
     root.add(a);
     root.add(b);
-    root.scenePrePass(0.0);
+    runPrePass(root, 0.0);
 
     final itemA = itemOf(renderScene, a);
     final itemB = itemOf(renderScene, b);
@@ -105,7 +107,7 @@ void main() {
     final b = template.clone();
     root.add(a);
     root.add(b);
-    root.scenePrePass(0.0);
+    runPrePass(root, 0.0);
 
     final itemA = itemOf(renderScene, a);
     final itemB = itemOf(renderScene, b);

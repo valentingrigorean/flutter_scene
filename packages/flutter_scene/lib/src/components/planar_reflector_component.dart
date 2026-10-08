@@ -44,6 +44,9 @@ import 'package:flutter_scene/src/render/render_layers.dart';
 // TODO(planar-multiview): capture per consuming view; today secondary views
 // reuse the primary view's capture, which is approximate for their cameras.
 class PlanarReflectorComponent extends Component {
+  @override
+  bool get ticks => false;
+
   /// Creates a planar reflector for the mirror surface at the owning node.
   PlanarReflectorComponent({
     this.resolutionScale = 0.5,

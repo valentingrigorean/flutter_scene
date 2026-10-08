@@ -20,6 +20,9 @@ import 'package:flutter_scene/src/fscene/realize/component_codec.dart';
 /// Carries the spec it was realized from, untouched.
 /// {@category Assets and loading}
 class ForeignComponent extends Component {
+  @override
+  bool get ticks => false;
+
   ForeignComponent(this.spec);
 
   /// The component data, preserved verbatim for serialization.

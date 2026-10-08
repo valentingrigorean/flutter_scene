@@ -2054,7 +2054,7 @@ base class Scene implements SceneGraph {
     _lastTickMillis = DateTime.now().millisecondsSinceEpoch;
     _tickListeners.beforeTick(deltaSeconds);
     _stepPhysics(deltaSeconds);
-    root.scenePrePass(deltaSeconds);
+    renderScene.runPrePass(deltaSeconds);
     _syncAudio(deltaSeconds);
   }
 
@@ -2368,7 +2368,7 @@ base class Scene implements SceneGraph {
   }) {
     _checkNotDisposed('unbuiltPipelines');
     if (!_readyToRender || views.isEmpty || size.isEmpty) return const [];
-    root.internalRefreshRenderItems();
+    renderScene.refreshChangedNodes();
     renderScene.rebuildIfDirty();
     final lightComponent = renderScene.primaryDirectionalLight;
     final spotShadowFrame = collectSpotShadows(_visibleSpotLights());
@@ -4762,8 +4762,6 @@ base class Scene implements SceneGraph {
       total.pipelineRejected += c.pipelineRejected;
       total.pipelineBinds += c.pipelineBinds;
       total.pipelineBuilds += c.pipelineBuilds;
-      total.batches += c.batches;
-      total.batchedItems += c.batchedItems;
     }
   }
 

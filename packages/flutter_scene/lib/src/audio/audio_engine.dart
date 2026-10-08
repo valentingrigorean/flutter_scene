@@ -32,6 +32,9 @@ import 'package:vector_math/vector_math.dart';
 /// is a backend concern; see the backend package's documentation.
 /// {@category Audio}
 abstract class AudioEngine extends Component {
+  @override
+  bool get ticks => false;
+
   /// Identifier of the concrete backend, suitable for logging (for
   /// example `"soloud"`).
   String get backendName;

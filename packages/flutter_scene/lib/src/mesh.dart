@@ -46,6 +46,7 @@ base class MeshPrimitive implements MeshDrawSource {
     if (value == _visible) return;
     _visible = value;
     markSceneDrawChanged();
+    markRenderSourcesChanged();
   }
 
   bool _visible = true;
@@ -61,6 +62,7 @@ base class MeshPrimitive implements MeshDrawSource {
     if (value == _castsShadow) return;
     _castsShadow = value;
     markSceneDrawChanged();
+    markRenderSourcesChanged();
   }
 
   bool _castsShadow = true;

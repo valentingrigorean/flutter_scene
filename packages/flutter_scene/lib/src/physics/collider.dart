@@ -16,6 +16,9 @@ import 'package:vector_math/vector_math.dart';
 /// through an implicit fixed body.
 /// {@category Physics}
 class Collider extends Component implements PendingPhysicsRegistration {
+  @override
+  bool get ticks => false;
+
   Collider({
     required sim.Shape shape,
     sim.PhysicsMaterial material = sim.PhysicsMaterial.defaultMaterial,

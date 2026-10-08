@@ -12,6 +12,8 @@ import 'package:flutter_scene/src/fscene/reload/reload.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
 
+import '../support/pre_pass.dart';
+
 void main() {
   test(
     'patches added, removed, reparented, and transform-changed nodes',
@@ -152,7 +154,7 @@ void main() {
     clip.play();
     clip.advance(0.5);
     expect(clip.playbackTime, 0.5);
-    liveRoot.scenePrePass(0);
+    runPrePass(liveRoot, 0);
     expect(joint.localTransform.getTranslation().y, closeTo(0.5, 1e-6));
 
     // Double the keyframe amplitude; the clip keeps its name, head, and
@@ -162,7 +164,7 @@ void main() {
 
     expect(clip.playing, isTrue);
     expect(clip.playbackTime, 0.5);
-    liveRoot.scenePrePass(0);
+    runPrePass(liveRoot, 0);
     expect(joint.localTransform.getTranslation().y, closeTo(1.0, 1e-6));
     expect(liveRoot.findAnimationByName('move'), isNotNull);
   });

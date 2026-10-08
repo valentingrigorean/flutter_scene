@@ -321,6 +321,9 @@ final Expando<String> _splatAsset = Expando('splat component asset');
 /// real component in its place, and removes itself; until then it serializes
 /// back as its retained spec, losslessly.
 class _DeferredSplatComponent extends Component {
+  @override
+  bool get ticks => false;
+
   _DeferredSplatComponent(this.spec);
 
   /// The splat component spec, retained verbatim.

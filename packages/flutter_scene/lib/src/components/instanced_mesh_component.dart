@@ -13,6 +13,9 @@ import 'package:flutter_scene/src/render/render_scene.dart';
 /// that one item.
 /// {@category Scene graph}
 class InstancedMeshComponent extends Component {
+  @override
+  bool get ticks => false;
+
   /// Creates a component that draws [instancedMesh].
   InstancedMeshComponent(this.instancedMesh);
 
@@ -40,15 +43,20 @@ class InstancedMeshComponent extends Component {
             material: instancedMesh.material,
           )
           ..sourceNode = node
-          ..drawSource = instancedMesh;
+          ..drawSource = instancedMesh
+          ..instanceSource = instancedMesh;
     _renderItem = item;
     renderScene.add(item);
+    instancedMesh.addRowListener(node.internalRenderSourcesChanged);
+    instancedMesh.rows?.addRowListener(node.internalRenderSourcesChanged);
   }
 
   @override
   void onUnmount() {
     final item = _renderItem;
     if (item != null) {
+      instancedMesh.removeRowListener(node.internalRenderSourcesChanged);
+      instancedMesh.rows?.removeRowListener(node.internalRenderSourcesChanged);
       node.internalRenderScene?.remove(item);
       _renderItem = null;
       _worldTransformVersion = -1;
@@ -66,9 +74,6 @@ class InstancedMeshComponent extends Component {
     final item = _renderItem;
     if (item == null) return;
     item.sharedRows = instancedMesh.rows;
-    item.instanceRanges = instancedMesh.instanceRanges;
-    item.instanceLocal = instancedMesh.instanceLocal;
-    item.instanceBand = instancedMesh.band;
     item.debugView = Node.debugViewOverrideCount == 0
         ? null
         : node.effectiveDebugView;
@@ -119,6 +124,7 @@ class InstancedMeshComponent extends Component {
     item.visible = visible;
     if (worldTransformVersion != _worldTransformVersion) {
       item.worldTransform.setFrom(worldTransform);
+      item.worldTransformRevision++;
     }
     final windingWas = item.windingFlipped;
     item.refreshWinding(node.windingFlipped);

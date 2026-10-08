@@ -27,8 +27,11 @@ import 'package:flutter_scene/src/render/bvh.dart';
 import 'package:flutter_scene/src/render/custom_render_pass.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart'
     show invalidateRetainedInstanceData, updateRetainedInstanceRows;
+import 'package:flutter_scene/src/render/instance_records.dart';
 import 'package:flutter_scene/src/mesh_draw.dart';
+import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/render/lod.dart';
+import 'package:flutter_scene/src/render/pre_pass.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render_view.dart';
@@ -260,7 +263,8 @@ class RenderItem {
   /// Per-instance local winding parity matching [instanceTransforms].
   List<bool>? instanceWindingFlipped;
 
-  /// Whether each instance is culled after this item's aggregate BVH test.
+  /// Whether the cells of this item's instances are culled after its
+  /// aggregate BVH test (see [instanceCellRows]).
   bool cullInstances = false;
 
   /// Whether translucent instances are sorted back to front within this item.
@@ -284,23 +288,33 @@ class RenderItem {
   @internal
   Matrix4? get instanceFrame => nodeSpaceInstances ? worldTransform : null;
 
+  /// The row ranges the current view draws, or null when it draws every
+  /// range of [instanceRowRanges]. Three entries per range, as there.
+  List<int>? visibleInstanceRanges;
+
   /// The mesh whose rows this item draws from the records they share, or
   /// null when the item packs its own (see [InstancedMesh.sharing]).
   @internal
   InstancedMesh? sharedRows;
 
+  /// The instanced mesh this item draws, read at each draw for what a frame
+  /// may set without a change to the node: [instanceRanges], [instanceLocal]
+  /// and [instanceBand].
+  @internal
+  InstancedMesh? instanceSource;
+
   /// The rows a draw of [sharedRows] takes, as pairs of a first row and a
   /// row count, or null for every row.
   @internal
-  Uint32List? instanceRanges;
+  Uint32List? get instanceRanges => instanceSource?.instanceRanges;
 
   /// The transform a vertex takes before its row's record, or null for none.
   @internal
-  Matrix4? instanceLocal;
+  Matrix4? get instanceLocal => instanceSource?.instanceLocal;
 
   /// The band each row is tested against, or null for none.
   @internal
-  InstanceBand? instanceBand;
+  InstanceBand? get instanceBand => instanceSource?.band;
 
   /// States this item's instance frame, local transform and band for the
   /// unskinned `FrameInfo` of the draws bound next. Pair with
@@ -321,20 +335,14 @@ class RenderItem {
     currentDrawInstanceBand = null;
   }
 
-  /// Indices accepted by the current view, or null when every instance passes.
-  List<int>? visibleInstanceIndices;
+  final List<int> _visibleRangeScratch = [];
 
-  final List<int> _visibleInstanceScratch = [];
-
-  /// Indices the shadow map being drawn accepts, or null when every instance
-  /// casts into it. Valid from [cullShadowInstances] until the next call.
+  /// The row ranges the shadow map being drawn takes, or null when it takes
+  /// every range. Valid from [cullShadowInstances] until the next call.
   @internal
-  List<int>? shadowInstanceIndices;
+  List<int>? shadowInstanceRanges;
 
-  List<int>? _shadowInstanceScratch;
-
-  /// Packed world-space instance AABBs, six floats per instance.
-  Float32List? _instanceWorldBounds;
+  List<int>? _shadowRangeScratch;
 
   /// Packed world transform and color records, twenty floats per instance plus
   /// [instanceAttributeFloats] custom attribute floats.
@@ -345,17 +353,57 @@ class RenderItem {
   @internal
   Uint8List? instanceWorldWindingFlipped;
 
+  /// The floats of one record of [instanceWorldData].
+  @internal
+  int get instanceRecordFloats => _instanceRecordFloats;
+
+  /// How many consecutive rows one cell holds at most. A cell is the unit an
+  /// instanced item is culled by and the smallest range a pass draws.
+  int instanceCellRows = 64;
+
+  /// How many ranges a cull leaves an item of one winding at most. A cull that
+  /// finds more draws the one range from its first visible row to its last,
+  /// so an item whose rows follow no order in space costs a bounded number of
+  /// draws.
+  int instanceRangeLimit = 8;
+
+  /// Every row of this item as ranges a pass draws with one instanced call
+  /// each: the first row, the row count and 1 where the rows reverse the
+  /// winding, three entries per range. Rows that share a winding form one
+  /// range, so a set that mirrors no instance is one range.
+  List<int> get instanceRowRanges => _allRanges;
+
+  List<int> _allRanges = const [];
+
+  // The first row of each cell, with the row count as a last entry, the
+  // winding the rows of a cell share, and the bounds of a cell in the space
+  // the records are packed in, six floats per cell, or null where the
+  // geometry states no bounds.
+  Int32List _cellFirst = Int32List(1);
+  Uint8List _cellFlipped = Uint8List(0);
+  Float32List? _cellBounds;
+
+  // [_cellBounds] in world space for node-space records, built on demand and
+  // dropped when the node moves or the records change.
+  Float32List? _cellWorldBounds;
+
   static final Matrix4 _instanceWorldScratch = Matrix4.zero();
   static final Aabb3 _instanceAabbScratch = Aabb3();
 
-  // The stores behind [_instanceWorldBounds], [instanceWorldData] and
-  // [instanceWorldWindingFlipped], which are views of their first rows. A
-  // store grows geometrically, so rows appended one at a time pack only
-  // themselves.
-  Float32List _instanceBoundsStore = Float32List(0);
+  // The stores behind [instanceWorldData] and [instanceWorldWindingFlipped],
+  // which are views of their first rows. A store grows geometrically, so rows
+  // appended one at a time pack only themselves.
   Float32List _instanceDataStore = Float32List(0);
   Uint8List _instanceWindingStore = Uint8List(0);
   int _instanceRecordFloats = 0;
+
+  /// The record this item binds when it draws one instance.
+  @internal
+  final HeldInstanceRecord heldInstanceRecord = HeldInstanceRecord();
+
+  /// Counts the changes of [worldTransform].
+  @internal
+  int worldTransformRevision = 0;
 
   /// Rebuilds cached world-space bounds and draw data after a node, geometry,
   /// or instance change. Static groups pay this once during setup.
@@ -373,21 +421,22 @@ class RenderItem {
   /// Drops what was derived from [worldTransform] after the node of
   /// node-space records moved, which leaves every record as packed.
   @internal
-  void instanceFrameMoved() => _depthFitInstanceBounds = null;
+  void instanceFrameMoved() => _cellWorldBounds = null;
 
   void _packInstances(List<int>? rows) {
-    _depthFitInstanceBounds = null;
+    _cellWorldBounds = null;
     final instances = sharedRows == null ? instanceTransforms : null;
-    final bounds = geometry.localBounds;
     final colors = instanceColors;
     if (instances == null) {
-      _instanceWorldBounds = null;
       instanceWorldData = null;
       instanceWorldWindingFlipped = null;
+      _allRanges = const [];
+      _cellFirst = Int32List(1);
+      _cellFlipped = Uint8List(0);
+      _cellBounds = null;
       return;
     }
     final count = instances.length;
-    final packsBounds = bounds != null && cullInstances;
     final attributes = instanceAttributeData;
     final attributeFloats = attributes == null ? 0 : instanceAttributeFloats;
     final recordFloats = 20 + attributeFloats;
@@ -395,7 +444,6 @@ class RenderItem {
     var changed = rows;
     if (changed != null &&
         (instanceWorldWindingFlipped == null ||
-            (_instanceWorldBounds != null) != packsBounds ||
             (instanceWorldData != null) != packsData ||
             _instanceRecordFloats != recordFloats)) {
       changed = null;
@@ -404,18 +452,9 @@ class RenderItem {
       changed = changed.toSet().toList();
     }
     final keep = changed != null;
+    final countMoved = instanceWorldWindingFlipped?.length != count;
     final previousData = instanceWorldData;
     _instanceRecordFloats = recordFloats;
-    if (packsBounds) {
-      final store = _grownStore(_instanceBoundsStore, count * 6, keep);
-      if (!identical(store, _instanceBoundsStore) ||
-          _instanceWorldBounds?.length != count * 6) {
-        _instanceBoundsStore = store;
-        _instanceWorldBounds = Float32List.sublistView(store, 0, count * 6);
-      }
-    } else {
-      _instanceWorldBounds = null;
-    }
     if (packsData) {
       final floats = count * recordFloats;
       final store = _grownStore(_instanceDataStore, floats, keep);
@@ -447,29 +486,17 @@ class RenderItem {
         count,
       );
     }
-    final packedBounds = _instanceWorldBounds;
     final packedData = instanceWorldData;
     final packedWinding = instanceWorldWindingFlipped!;
     final retainedWinding = instanceWindingFlipped;
     final packTransform = instancePackTransform;
     var packedRows = 0;
+    var windingMoved = false;
     void packRow(int i) {
-      _instanceWorldScratch
-        ..setFrom(packTransform)
-        ..multiply(instances[i]);
-      if (packedBounds != null) {
-        _instanceAabbScratch
-          ..copyFrom(bounds!)
-          ..transform(_instanceWorldScratch);
-        final offset = i * 6;
-        packedBounds[offset] = _instanceAabbScratch.min.x;
-        packedBounds[offset + 1] = _instanceAabbScratch.min.y;
-        packedBounds[offset + 2] = _instanceAabbScratch.min.z;
-        packedBounds[offset + 3] = _instanceAabbScratch.max.x;
-        packedBounds[offset + 4] = _instanceAabbScratch.max.y;
-        packedBounds[offset + 5] = _instanceAabbScratch.max.z;
-      }
       if (packedData != null) {
+        _instanceWorldScratch
+          ..setFrom(packTransform)
+          ..multiply(instances[i]);
         final offset = i * recordFloats;
         packedData.setAll(offset, _instanceWorldScratch.storage);
         packedData.setAll(offset + 16, colors![i].storage);
@@ -485,16 +512,24 @@ class RenderItem {
       }
       final instanceFlipped =
           retainedWinding?[i] ?? (instances[i].determinant() < 0);
-      packedWinding[i] = windingFlipped != instanceFlipped ? 1 : 0;
+      final flipped = windingFlipped != instanceFlipped ? 1 : 0;
+      if (packedWinding[i] != flipped) windingMoved = true;
+      packedWinding[i] = flipped;
     }
 
     if (changed == null) {
       for (var i = 0; i < count; i++) {
         packRow(i);
       }
+      _buildCells(instances, packedWinding);
     } else {
       for (final i in changed) {
         if (i < count) packRow(i);
+      }
+      if (windingMoved || countMoved) {
+        _buildCells(instances, packedWinding);
+      } else {
+        _refreshCellsOf(changed, instances);
       }
     }
     activeRenderCounters.instanceBytesPacked +=
@@ -508,7 +543,7 @@ class RenderItem {
       updateRetainedInstanceRows(
         previousData,
         packedData,
-        packedWinding,
+        count,
         changed,
         recordFloats,
       );
@@ -522,45 +557,150 @@ class RenderItem {
     return grown;
   }
 
-  /// Refreshes [visibleInstanceIndices] and returns whether anything remains.
+  // Cuts the rows into cells of at most [instanceCellRows] consecutive rows
+  // of one winding, and states the ranges that draw every row.
+  void _buildCells(List<Matrix4> instances, Uint8List winding) {
+    final count = instances.length;
+    final cellRows = math.max(1, instanceCellRows);
+    final first = <int>[];
+    final flipped = <int>[];
+    final ranges = <int>[];
+    for (var row = 0; row < count; row++) {
+      final rowFlipped = winding[row];
+      if (first.isEmpty ||
+          flipped.last != rowFlipped ||
+          row - first.last == cellRows) {
+        if (ranges.isNotEmpty && ranges.last == rowFlipped) {
+          ranges[ranges.length - 2]++;
+        } else {
+          ranges
+            ..add(row)
+            ..add(1)
+            ..add(rowFlipped);
+        }
+        first.add(row);
+        flipped.add(rowFlipped);
+      } else {
+        ranges[ranges.length - 2]++;
+      }
+    }
+    first.add(count);
+    _cellFirst = Int32List.fromList(first);
+    _cellFlipped = Uint8List.fromList(flipped);
+    _allRanges = ranges;
+    final cells = flipped.length;
+    if (geometry.localBounds == null) {
+      _cellBounds = null;
+      return;
+    }
+    final bounds = _cellBounds?.length == cells * 6
+        ? _cellBounds!
+        : Float32List(cells * 6);
+    _cellBounds = bounds;
+    for (var cell = 0; cell < cells; cell++) {
+      _boundCell(cell, instances, bounds);
+    }
+  }
+
+  // Bounds again the cells that hold [rows], whose winding did not change.
+  void _refreshCellsOf(List<int> rows, List<Matrix4> instances) {
+    final bounds = _cellBounds;
+    if (bounds == null) return;
+    final cellFirst = _cellFirst;
+    var bounded = -1;
+    for (final row in rows) {
+      if (row >= instances.length) continue;
+      var low = 0;
+      var high = cellFirst.length - 2;
+      while (low < high) {
+        final middle = (low + high + 1) >> 1;
+        if (cellFirst[middle] <= row) {
+          low = middle;
+        } else {
+          high = middle - 1;
+        }
+      }
+      if (low == bounded) continue;
+      bounded = low;
+      _boundCell(low, instances, bounds);
+    }
+  }
+
+  void _boundCell(int cell, List<Matrix4> instances, Float32List into) {
+    final local = geometry.localBounds!;
+    final packTransform = instancePackTransform;
+    var minX = double.infinity;
+    var minY = double.infinity;
+    var minZ = double.infinity;
+    var maxX = double.negativeInfinity;
+    var maxY = double.negativeInfinity;
+    var maxZ = double.negativeInfinity;
+    final end = _cellFirst[cell + 1];
+    for (var row = _cellFirst[cell]; row < end; row++) {
+      _instanceWorldScratch
+        ..setFrom(packTransform)
+        ..multiply(instances[row]);
+      _instanceAabbScratch
+        ..copyFrom(local)
+        ..transform(_instanceWorldScratch);
+      final min = _instanceAabbScratch.min;
+      final max = _instanceAabbScratch.max;
+      if (min.x < minX) minX = min.x;
+      if (min.y < minY) minY = min.y;
+      if (min.z < minZ) minZ = min.z;
+      if (max.x > maxX) maxX = max.x;
+      if (max.y > maxY) maxY = max.y;
+      if (max.z > maxZ) maxZ = max.z;
+    }
+    final offset = cell * 6;
+    into[offset] = minX;
+    into[offset + 1] = minY;
+    into[offset + 2] = minZ;
+    into[offset + 3] = maxX;
+    into[offset + 4] = maxY;
+    into[offset + 5] = maxZ;
+  }
+
+  /// Refreshes [visibleInstanceRanges] and returns whether anything remains.
   @internal
-  bool cullVisibleInstances(Frustum frustum, List<Plane> additionalPlanes) {
-    final visible = _instancesInside(
+  bool cullVisibleCells(Frustum frustum, List<Plane> additionalPlanes) {
+    final visible = _cellsInside(
       frustum,
       additionalPlanes,
-      _visibleInstanceScratch,
+      _visibleRangeScratch,
     );
-    visibleInstanceIndices = visible;
+    visibleInstanceRanges = visible;
     return visible == null || visible.isNotEmpty;
   }
 
-  /// Refreshes [shadowInstanceIndices] for a shadow map drawn through
+  /// Refreshes [shadowInstanceRanges] for a shadow map drawn through
   /// [frustum] and [additionalPlanes], and returns whether anything remains.
   ///
-  /// Kept apart from [cullVisibleInstances], whose result the color pass
-  /// reads after the shadow maps of the frame are drawn.
+  /// Kept apart from [cullVisibleCells], whose result the color pass reads
+  /// after the shadow maps of the frame are drawn.
   @internal
   bool cullShadowInstances(Frustum frustum, List<Plane> additionalPlanes) {
-    final visible = _instancesInside(
+    final visible = _cellsInside(
       frustum,
       additionalPlanes,
-      _shadowInstanceScratch ??= [],
+      _shadowRangeScratch ??= [],
     );
-    shadowInstanceIndices = visible;
+    shadowInstanceRanges = visible;
     return visible == null || visible.isNotEmpty;
   }
 
-  // The instances whose bounds meet [frustum] and [additionalPlanes],
-  // ascending in [scratch], or null when every instance does or the item does
-  // not cull its instances.
-  List<int>? _instancesInside(
+  // The ranges of the cells whose bounds meet [frustum] and
+  // [additionalPlanes], ascending in [scratch] with neighbouring cells of one
+  // winding joined, or null when every cell does or the item does not cull
+  // its instances. The test runs once per cell, never per instance.
+  List<int>? _cellsInside(
     Frustum frustum,
     List<Plane> additionalPlanes,
     List<int> scratch,
   ) {
-    final instances = instanceTransforms;
-    final bounds = geometry.localBounds;
-    if (!cullInstances || instances == null || bounds == null) return null;
+    if (!cullInstances || instanceTransforms == null) return null;
+    final cellBounds = _worldCellBounds();
+    if (cellBounds == null) return null;
 
     final aggregate = worldBounds;
     if (aggregate != null &&
@@ -580,52 +720,89 @@ class RenderItem {
       if (insideAdditionalPlanes) return null;
     }
 
-    if (_instanceWorldBounds?.length != instances.length * 6) {
-      refreshInstanceData();
-    }
-    final instanceWorldBounds = _instanceWorldBounds!;
-
+    final cellFirst = _cellFirst;
+    final cellFlipped = _cellFlipped;
+    final cells = cellFlipped.length;
     final visible = scratch..clear();
-    for (var i = 0; i < instances.length; i++) {
-      final offset = i * 6;
-      if (_outsidePlane(instanceWorldBounds, offset, frustum.plane0) ||
-          _outsidePlane(instanceWorldBounds, offset, frustum.plane1) ||
-          _outsidePlane(instanceWorldBounds, offset, frustum.plane2) ||
-          _outsidePlane(instanceWorldBounds, offset, frustum.plane3) ||
-          _outsidePlane(instanceWorldBounds, offset, frustum.plane4) ||
-          _outsidePlane(instanceWorldBounds, offset, frustum.plane5)) {
+    var kept = 0;
+    for (var cell = 0; cell < cells; cell++) {
+      final offset = cell * 6;
+      if (_outsidePlane(cellBounds, offset, frustum.plane0) ||
+          _outsidePlane(cellBounds, offset, frustum.plane1) ||
+          _outsidePlane(cellBounds, offset, frustum.plane2) ||
+          _outsidePlane(cellBounds, offset, frustum.plane3) ||
+          _outsidePlane(cellBounds, offset, frustum.plane4) ||
+          _outsidePlane(cellBounds, offset, frustum.plane5)) {
         continue;
       }
       var outside = false;
       for (final plane in additionalPlanes) {
-        if (_outsidePlane(instanceWorldBounds, offset, plane)) {
+        if (_outsidePlane(cellBounds, offset, plane)) {
           outside = true;
           break;
         }
       }
-      if (!outside) visible.add(i);
+      if (outside) continue;
+      kept++;
+      final first = cellFirst[cell];
+      final rows = cellFirst[cell + 1] - first;
+      final last = visible.length - 3;
+      if (last >= 0 &&
+          visible[last + 2] == cellFlipped[cell] &&
+          visible[last] + visible[last + 1] == first) {
+        visible[last + 1] += rows;
+      } else {
+        visible
+          ..add(first)
+          ..add(rows)
+          ..add(cellFlipped[cell]);
+      }
     }
-    return visible.length == instances.length ? null : visible;
+    if (kept == cells) return null;
+    final ranges = visible.length ~/ 3;
+    if (ranges > instanceRangeLimit && _allRanges.length == 3) {
+      final first = visible[0];
+      final end = visible[visible.length - 3] + visible[visible.length - 2];
+      visible
+        ..length = 3
+        ..[1] = end - first;
+    }
+    return visible;
   }
 
-  // World-space instance AABBs for the near-plane fit when instance culling
-  // keeps none, built on demand and dropped by [refreshInstanceData].
-  Float32List? _depthFitInstanceBounds;
-
-  // Instanced items with more instances than this and no culling cache fall
-  // back to their aggregate bounds in the near-plane fit, bounding its
-  // per-frame cost. Dense sets (grass, debris) hug the ground, where the
-  // aggregate bound is already close to the per-instance one. An item that
-  // culls per instance already scans its cached bounds each frame, so the fit
-  // reads them at any count.
-  static const int _maxDepthFitInstances = 2048;
+  // The world-space bounds of the cells, six floats each, or null where the
+  // geometry states none.
+  Float32List? _worldCellBounds() {
+    final packed = _cellBounds;
+    if (packed == null || !nodeSpaceInstances) return packed;
+    final cached = _cellWorldBounds;
+    if (cached != null && cached.length == packed.length) return cached;
+    final world = Float32List(packed.length);
+    for (var offset = 0; offset < packed.length; offset += 6) {
+      _instanceAabbScratch
+        ..min.setValues(packed[offset], packed[offset + 1], packed[offset + 2])
+        ..max.setValues(
+          packed[offset + 3],
+          packed[offset + 4],
+          packed[offset + 5],
+        )
+        ..transform(worldTransform);
+      world[offset] = _instanceAabbScratch.min.x;
+      world[offset + 1] = _instanceAabbScratch.min.y;
+      world[offset + 2] = _instanceAabbScratch.min.z;
+      world[offset + 3] = _instanceAabbScratch.max.x;
+      world[offset + 4] = _instanceAabbScratch.max.y;
+      world[offset + 5] = _instanceAabbScratch.max.z;
+    }
+    return _cellWorldBounds = world;
+  }
 
   /// A lower bound on the planar view depth of any of this item's visible
   /// points (see [aabbDepthLowerBound]). An instanced item whose aggregate
-  /// bounds could set a new [best] is refined per instance, since a spread
-  /// set (a skyline ring around the camera) has aggregate bounds far nearer
-  /// than any instance. Infinity when the item draws nothing in [frustum];
-  /// the search stops early once a bound reaches [floor].
+  /// bounds could set a new [best] is refined per cell, since a spread set
+  /// (a skyline ring around the camera) has aggregate bounds far nearer than
+  /// any instance. Infinity when the item draws nothing in [frustum]; the
+  /// search stops early once a bound reaches [floor].
   @internal
   double depthLowerBound(
     Frustum frustum,
@@ -638,19 +815,11 @@ class RenderItem {
     final aggregate = worldBounds;
     if (aggregate == null) return 0.0;
     final whole = aggregate.depthLowerBound(eye, forward, cosHalfAngle);
-    final instances = instanceTransforms;
-    final localBounds = geometry.localBounds;
-    if (whole >= best ||
-        instances == null ||
-        localBounds == null ||
-        (instances.length > _maxDepthFitInstances &&
-            _instanceWorldBounds?.length != instances.length * 6)) {
-      return whole;
-    }
-    final packed = _packedInstanceBounds(instances, localBounds);
+    if (whole >= best || instanceTransforms == null) return whole;
+    final packed = _worldCellBounds();
+    if (packed == null) return whole;
     var nearest = double.infinity;
-    for (var i = 0; i < instances.length; i++) {
-      final offset = i * 6;
+    for (var offset = 0; offset < packed.length; offset += 6) {
       if (_outsidePlane(packed, offset, frustum.plane0) ||
           _outsidePlane(packed, offset, frustum.plane1) ||
           _outsidePlane(packed, offset, frustum.plane2) ||
@@ -682,60 +851,25 @@ class RenderItem {
     return nearest;
   }
 
-  // World-space AABBs of [instances], six floats each: the culling cache
-  // when instance culling keeps one, else built on demand and kept until
-  // [refreshInstanceData].
-  Float32List _packedInstanceBounds(
-    List<Matrix4> instances,
-    Aabb3 localBounds,
-  ) {
-    final culled = _instanceWorldBounds;
-    if (culled != null && culled.length == instances.length * 6) {
-      return culled;
-    }
-    final cached = _depthFitInstanceBounds;
-    if (cached != null && cached.length == instances.length * 6) {
-      return cached;
-    }
-    final packed = Float32List(instances.length * 6);
-    for (var i = 0; i < instances.length; i++) {
-      _instanceWorldScratch
-        ..setFrom(worldTransform)
-        ..multiply(instances[i]);
-      _instanceAabbScratch
-        ..copyFrom(localBounds)
-        ..transform(_instanceWorldScratch);
-      final offset = i * 6;
-      packed[offset] = _instanceAabbScratch.min.x;
-      packed[offset + 1] = _instanceAabbScratch.min.y;
-      packed[offset + 2] = _instanceAabbScratch.min.z;
-      packed[offset + 3] = _instanceAabbScratch.max.x;
-      packed[offset + 4] = _instanceAabbScratch.max.y;
-      packed[offset + 5] = _instanceAabbScratch.max.z;
-    }
-    return _depthFitInstanceBounds = packed;
-  }
-
   /// How far along the ray from [origin] in unit [direction] this item's
-  /// bounds start (each instance's for an instanced item), zero from inside,
-  /// or null when the ray misses them. For diagnostics that name where on
+  /// bounds start (each cell's for an instanced item), zero from inside, or
+  /// null when the ray misses them. For diagnostics that name where on
   /// screen something happens.
   @internal
   double? rayBoundsDistance(Vector3 origin, Vector3 direction) {
     final aggregate = worldBounds;
     if (aggregate == null) return null;
-    final instances = instanceTransforms;
-    final localBounds = geometry.localBounds;
-    final packed = instances == null || localBounds == null
-        ? Float32List.fromList([
-            aggregate.min.x,
-            aggregate.min.y,
-            aggregate.min.z,
-            aggregate.max.x,
-            aggregate.max.y,
-            aggregate.max.z,
-          ])
-        : _packedInstanceBounds(instances, localBounds);
+    final cells = instanceTransforms == null ? null : _worldCellBounds();
+    final packed =
+        cells ??
+        Float32List.fromList([
+          aggregate.min.x,
+          aggregate.min.y,
+          aggregate.min.z,
+          aggregate.max.x,
+          aggregate.max.y,
+          aggregate.max.z,
+        ]);
     var nearest = double.infinity;
     for (var offset = 0; offset < packed.length; offset += 6) {
       var near = 0.0;
@@ -840,6 +974,34 @@ class RenderItem {
 class RenderScene {
   /// Every registered render item, in no particular order.
   final List<RenderItem> items = [];
+
+  /// The nodes this scene ticks and refreshes before a frame.
+  @internal
+  final ScenePrePass prePass = ScenePrePass();
+
+  int _renderSourceRevision = renderSourceRevision;
+
+  /// Ticks the nodes that need every frame, then refreshes the render items
+  /// of the nodes that changed, and returns how many nodes it visited. Called
+  /// by the scene once per frame; it walks no node tree.
+  int runPrePass(double deltaSeconds) =>
+      prePass.tick(deltaSeconds) + refreshChangedNodes(uploadSkin: true);
+
+  /// Refreshes the render items of the nodes that changed without ticking
+  /// any, so a query between frames reads the items the next frame draws.
+  /// Without [uploadSkin] a skinned node keeps the joints its last frame
+  /// uploaded. Returns how many nodes it refreshed.
+  int refreshChangedNodes({bool uploadSkin = false}) {
+    final revision = renderSourceRevision;
+    if (revision != _renderSourceRevision) {
+      _renderSourceRevision = revision;
+      for (final item in items) {
+        final node = item.sourceNode;
+        if (node is PrePassNode) prePass.markChanged(node);
+      }
+    }
+    return prePass.refresh(uploadSkin: uploadSkin);
+  }
 
   /// The directional lights contributed by mounted
   /// [DirectionalLightComponent]s, in registration order.
@@ -1134,6 +1296,7 @@ class RenderScene {
       last.sceneSlot = slot;
     }
     item.sceneSlot = -1;
+    item.heldInstanceRecord.release();
     _structureRevision++;
     _structureDirty = true;
   }

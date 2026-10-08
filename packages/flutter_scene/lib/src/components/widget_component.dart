@@ -10,6 +10,7 @@ import 'package:flutter_scene/src/material/physically_based_material.dart';
 import 'package:flutter_scene/src/material/unlit_material.dart';
 import 'package:flutter_scene/src/mesh.dart';
 import 'package:flutter_scene/src/widget_texture.dart';
+
 import 'dart:typed_data';
 
 /// How a [WidgetComponent] receives pointer input.
@@ -53,6 +54,9 @@ enum WidgetInput {
 // TODO(fscene): serialize the component spec (size, policy, geometry) with a
 // named slot the app binds the widget tree to at runtime.
 class WidgetComponent extends Component {
+  @override
+  bool get ticks => false;
+
   /// Creates a widget surface. With no [geometry] an aspect-correct quad is
   /// created; with no [material] and no [bind], an unlit alpha-blended
   /// material bound to the capture is created.

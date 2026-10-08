@@ -17,6 +17,9 @@ import 'package:flutter_scene/src/node.dart';
 /// component is created. Later mutations of that field remain ignored.
 /// {@category Scene graph}
 class DirectionalLightComponent extends Component {
+  @override
+  bool get ticks => false;
+
   /// Creates a component that lights the scene with [light].
   DirectionalLightComponent(this.light)
     : assert(

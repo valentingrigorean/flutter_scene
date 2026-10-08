@@ -2,6 +2,7 @@ import 'dart:collection';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_scene/src/geometry/interleaved_layout.dart';
 import 'package:flutter_scene/src/geometry/mesh_data.dart';
@@ -221,6 +222,7 @@ abstract class Geometry {
     _localBounds = aabb;
     _localBoundingSphere = sphere;
     _localBoundsVersion++;
+    markRenderSourcesChanged();
   }
 
   /// The vertex shader used when rendering this geometry.

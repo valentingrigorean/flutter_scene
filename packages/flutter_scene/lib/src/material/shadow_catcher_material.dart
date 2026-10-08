@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' show Color;
 
+import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter/foundation.dart' show internal, visibleForTesting;
 import 'package:vector_math/vector_math.dart';
 
@@ -158,6 +159,7 @@ class ShadowCatcherMaterial extends Material {
   /// Exactly `0` disables the catcher entirely: no render passes draw it.
   double get shadowIntensity => _shadowIntensity;
   set shadowIntensity(double value) {
+    if ((value == 0) != (_shadowIntensity == 0)) markRenderSourcesChanged();
     _shadowIntensity = value;
     _paramsDirty = true;
   }

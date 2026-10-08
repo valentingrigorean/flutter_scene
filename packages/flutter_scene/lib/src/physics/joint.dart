@@ -15,6 +15,9 @@ import 'package:vector_math/vector_math.dart';
 /// reconfigure the live joint.
 /// {@category Physics}
 abstract class Joint extends Component implements PendingPhysicsRegistration {
+  @override
+  bool get ticks => false;
+
   Joint({this.otherNode, bool collisionsEnabled = false})
     : _collisionsEnabled = collisionsEnabled;
 

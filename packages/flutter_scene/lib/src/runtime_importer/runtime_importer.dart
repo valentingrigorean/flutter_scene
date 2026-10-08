@@ -29,6 +29,7 @@ import 'texture_builder.dart';
 
 export 'package:flutter_scene/src/importer/gltf.dart'
     show GltfImportWarning, GltfWarningCallback;
+
 export 'gltf_resources.dart' show GltfResourceResolver;
 
 /// Parse a GLB byte stream into a [Node] tree.

@@ -136,13 +136,12 @@ base class DecalNode extends Node {
   }
 
   @override
-  void scenePrePass(double deltaSeconds, [bool ancestorsVisible = true]) {
-    // Components and the animation player tick in super, so the inverse is
-    // written after it: a decal driven by its own component would otherwise
-    // paint from last frame's transform while its box drew at this frame's.
-    super.scenePrePass(deltaSeconds, ancestorsVisible);
+  void prePassRefresh({required bool uploadSkin}) {
+    super.prePassRefresh(uploadSkin: uploadSkin);
     // The world transform can change without project() running (the node or an
-    // ancestor moved), so the inverse is refreshed from it each frame.
+    // ancestor moved), and the pre-pass refreshes a node after the components
+    // of the frame ticked, so the inverse is written from the transform the
+    // box draws at.
     if (worldTransformVersion != _writtenTransformVersion) _writeParameters();
   }
 

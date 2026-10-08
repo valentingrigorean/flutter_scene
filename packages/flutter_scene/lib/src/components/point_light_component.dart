@@ -14,6 +14,9 @@ import 'package:flutter_scene/src/node.dart';
 /// so moving the node moves the light.
 /// {@category Scene graph}
 class PointLightComponent extends Component {
+  @override
+  bool get ticks => false;
+
   /// Creates a component that lights the scene with [light].
   PointLightComponent(this.light);
 

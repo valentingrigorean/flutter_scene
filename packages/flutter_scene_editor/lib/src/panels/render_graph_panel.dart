@@ -12,11 +12,7 @@ import 'dart:ui' as ui;
 import 'package:file_selector/file_selector.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_scene/scene.dart'
-    show
-        BatchBreakReason,
-        RenderFrameStats,
-        RenderViewStats,
-        ShaderUniformValue;
+    show RenderFrameStats, RenderViewStats, ShaderUniformValue;
 // ignore: implementation_imports
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 // ignore: implementation_imports
@@ -429,8 +425,7 @@ class _RenderGraphPanelState extends State<RenderGraphPanel> {
                 ),
                 Text(
                   '${_count(draw.vertexCount)} v'
-                  '${draw.instanceCount > 1 ? '  x${draw.instanceCount}' : ''}'
-                  '${draw.batchedItems > 1 ? '  ${draw.batchedItems} batched' : ''}',
+                  '${draw.instanceCount > 1 ? '  x${draw.instanceCount}' : ''}',
                   style: editorDetailText,
                 ),
               ],
@@ -439,8 +434,7 @@ class _RenderGraphPanelState extends State<RenderGraphPanel> {
               padding: const EdgeInsets.only(left: 28),
               child: Text(
                 '${draw.materialType ?? draw.materialSource ?? 'unknown material'}'
-                '  $vertex/$fragment'
-                '${draw.batchBreak == BatchBreakReason.none ? '' : '  break ${draw.batchBreak.name}'}',
+                '  $vertex/$fragment',
                 style: editorDetailText,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -549,11 +543,6 @@ class _RenderGraphPanelState extends State<RenderGraphPanel> {
               _stat('instances', _count(counters.instances)),
               _stat('vertices', _count(counters.vertices)),
               _stat('culled', _count(counters.culled)),
-              _stat(
-                'batches',
-                '${_count(counters.batches)} '
-                    '(${_count(counters.batchedItems)} items)',
-              ),
               _stat('binds', _count(counters.pipelineBinds)),
               _stat('builds', _count(counters.pipelineBuilds)),
             ],

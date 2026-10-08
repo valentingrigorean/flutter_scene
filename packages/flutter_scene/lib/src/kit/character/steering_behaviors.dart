@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+
 import 'package:vector_math/vector_math.dart' as vm;
 
 /// Mathematical steering force algorithms for autonomous NPCs, wildlife, and flocking.

@@ -5,6 +5,8 @@ import 'package:flutter_scene/scene.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
 
+import 'support/pre_pass.dart';
+
 class _StubGeometry extends Geometry {
   @override
   void bind(
@@ -37,7 +39,7 @@ void main() {
     final root = Node()..debugMountInto(renderScene);
     root.add(Node(mesh: Mesh(_StubGeometry(), _StubMaterial())));
 
-    root.scenePrePass(0);
+    runPrePass(root, 0);
 
     expect(renderScene.items.single.castsShadows, isTrue);
   });
@@ -71,7 +73,7 @@ void main() {
       ..add(doubleSided)
       ..add(shadowsOnly);
 
-    root.scenePrePass(0);
+    runPrePass(root, 0);
 
     RenderItem itemOf(Node node) => renderScene.items.firstWhere(
       (item) => identical(item.sourceNode, node),
@@ -90,7 +92,7 @@ void main() {
     // A hidden node draws nothing whatever its mode says.
     shadowsOnly.visible = false;
     on.visible = false;
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     expect(itemOf(on).drawsColor, isFalse);
     expect(itemOf(shadowsOnly).castsShadows, isTrue);
   });
@@ -104,7 +106,7 @@ void main() {
       Node(mesh: mesh)..shadowCastingMode = ShadowCastingMode.shadowsOnly,
     );
 
-    root.scenePrePass(0);
+    runPrePass(root, 0);
 
     final item = renderScene.items.single;
     // The primitive's opt-out only ever subtracts casting. Folding it into the
@@ -122,7 +124,7 @@ void main() {
     mesh.primitives.single.castsShadow = false;
     root.add(Node(mesh: mesh));
 
-    root.scenePrePass(0);
+    runPrePass(root, 0);
 
     final item = renderScene.items.single;
     expect(item.castsShadows, isFalse);
@@ -145,7 +147,7 @@ void main() {
       ..add(meshNode)
       ..add(instancedNode);
 
-    root.scenePrePass(0);
+    runPrePass(root, 0);
 
     expect(renderScene.items, hasLength(2));
     expect(renderScene.items.where((item) => !item.castsShadows), hasLength(2));
@@ -158,18 +160,18 @@ void main() {
       ..shadowStatic = true;
     root.add(caster);
 
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     final initial = renderScene.staticShadowRevision;
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     expect(renderScene.staticShadowRevision, initial);
 
     caster.localTransform = Matrix4.translationValues(1, 0, 0);
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     expect(renderScene.staticShadowRevision, greaterThan(initial));
     final moved = renderScene.staticShadowRevision;
 
     caster.visible = false;
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     expect(renderScene.staticShadowRevision, greaterThan(moved));
   });
 
@@ -179,14 +181,14 @@ void main() {
     final caster = Node(mesh: Mesh(_StubGeometry(), _StubMaterial()))
       ..shadowStatic = true;
     root.add(caster);
-    root.scenePrePass(0);
+    runPrePass(root, 0);
 
     caster
       ..shadowCastingMode = ShadowCastingMode.off
       ..frustumCulled = false
       ..layers = 4
       ..highlightColor = Vector4(1, 0, 1, 1);
-    root.scenePrePass(0);
+    runPrePass(root, 0);
 
     final item = renderScene.items.single;
     expect(item.castsShadows, isFalse);
@@ -212,7 +214,7 @@ void main() {
       ..add(meshNode)
       ..add(instancedNode);
 
-    root.scenePrePass(0);
+    runPrePass(root, 0);
 
     expect(
       renderScene.items.map((item) => item.shadowCasterFaces),
@@ -239,14 +241,14 @@ void main() {
     root
       ..add(caster)
       ..add(instanced);
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     final initial = renderScene.staticShadowRevision;
 
     caster.shadowCasterFaces = ShadowCasterFaces.back;
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     final meshChanged = renderScene.staticShadowRevision;
     instanced.shadowCasterFaces = ShadowCasterFaces.back;
-    root.scenePrePass(0);
+    runPrePass(root, 0);
 
     expect(meshChanged, greaterThan(initial));
     expect(renderScene.staticShadowRevision, greaterThan(meshChanged));
@@ -286,31 +288,5 @@ void main() {
       ),
       gpu.CullMode.none,
     );
-  });
-
-  test('one shadow draw holds casters of one cull mode', () {
-    final geometry = UnskinnedGeometry();
-    final material = _StubMaterial();
-    RenderItem caster([ShadowCasterFaces? faces]) =>
-        RenderItem(geometry: geometry, material: material)
-          ..shadowCasterFaces = faces;
-    final records = [
-      caster(),
-      caster(ShadowCasterFaces.front),
-      caster(ShadowCasterFaces.back),
-      caster(ShadowCasterFaces.back),
-      caster(),
-    ];
-
-    final starts = <int>[];
-    for (
-      var start = 0;
-      start < records.length;
-      start = shadowBatchEnd(records, start, ShadowCasterFaces.front)
-    ) {
-      starts.add(start);
-    }
-
-    expect(starts, [0, 2, 4]);
   });
 }

@@ -31,6 +31,9 @@ import 'package:vector_math/vector_math.dart';
 /// level, which needs an upload path that stitches them).
 /// {@category Lighting and environment}
 class ImageBasedLightComponent extends Component {
+  @override
+  bool get ticks => false;
+
   /// Used by the importer; not for application construction.
   @internal
   ImageBasedLightComponent.internal({

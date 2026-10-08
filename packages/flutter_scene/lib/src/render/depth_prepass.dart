@@ -5,6 +5,7 @@ import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/fmat/fmat_ast.dart' show DepthSurfaceKind;
 import 'package:flutter_scene/src/mesh_draw.dart';
+import 'package:flutter_scene/src/render/instance_records.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/shared_instance_rows.dart';
 import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
@@ -37,7 +38,6 @@ import 'package:flutter_scene/src/scene_encoder.dart'
         tryResolvePipeline;
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
-import 'package:flutter_scene/src/render/instance_batching.dart';
 import 'package:flutter_scene/src/render/linear_depth_probe.dart';
 import 'package:flutter_scene/src/material/instance_attributes.dart'
     show InstanceAttributeSchema;
@@ -293,7 +293,7 @@ class TranslucentDepthPatchPass extends RenderGraphPass {
       if (!item.drawsColor) return;
       if ((item.layers & _layerMask) == 0) return;
       if (!_qualifies(item)) return;
-      if (!item.cullVisibleInstances(frustum, _cullingPlanes)) return;
+      if (!item.cullVisibleCells(frustum, _cullingPlanes)) return;
       records.add(item);
     }, additionalPlanes: _cullingPlanes);
     if (records.isEmpty) return;
@@ -353,7 +353,7 @@ bool depthPrepassAccepts(
       : !item.material.depthPrepassParticipates) {
     return false;
   }
-  return item.cullVisibleInstances(frustum, cullingPlanes);
+  return item.cullVisibleCells(frustum, cullingPlanes);
 }
 
 /// How the depth prepass draws [geometry] with [material]: its shaders, its
@@ -480,7 +480,7 @@ final class DepthPrepassDraw {
   /// records the color pass retains, which a position-only draw of
   /// node-space records does.
   bool retainsRecordsOf(RenderItem item) =>
-      positionOnly && vertexLayout != null && item.nodeSpaceInstances;
+      positionOnly && vertexLayout != null;
 
   /// The pipeline inputs of the draw of [item].
   PipelineInputs pipelineInputsFor(RenderItem item) => (
@@ -600,8 +600,6 @@ class _DepthPrepassEncoder {
   /// consecutive objects that share one only bind it once.
   gpu.RenderPipeline? _boundPipeline;
   final List<RenderItem> _records = [];
-  // See SceneEncoder._batchPool: refilled per group, read-only downstream.
-  final InstanceDataBatchPool _batchPool = InstanceDataBatchPool();
 
   /// Records [item]'s depth, unless it is hidden, rejected by its layer
   /// mask, or outside this encoder's set (prepass-participating items
@@ -626,32 +624,13 @@ class _DepthPrepassEncoder {
       if (byMaterial != 0) return byMaterial;
       return a.geometryIdentity.compareTo(b.geometryIdentity);
     });
-    var index = 0;
-    while (index < _records.length) {
-      final first = _records[index];
-      final end = depthBatchEnd(_records, index);
-      if (end > index + 1) {
-        _batchPool.reset();
-        for (var batchIndex = index; batchIndex < end; batchIndex++) {
-          final item = _records[batchIndex];
-          _batchPool.addFor(item, indices: item.visibleInstanceIndices);
-        }
-        final batches = _batchPool.batches;
-        _encode(first, batches: batches);
-        index = end;
-        continue;
-      }
-      _encode(first);
-      index++;
+    for (final item in _records) {
+      _encode(item);
     }
     _records.clear();
   }
 
-  void _encode(RenderItem item, {List<InstanceDataBatch>? batches}) {
-    if (batches != null) {
-      _encodeBody(item, batches: batches);
-      return;
-    }
+  void _encode(RenderItem item) {
     final geometry = item.geometry;
     final selection = beginMeshDraw(
       item,
@@ -668,11 +647,7 @@ class _DepthPrepassEncoder {
     }
   }
 
-  void _encodeBody(
-    RenderItem item, {
-    List<InstanceDataBatch>? batches,
-    int? instanceLimit,
-  }) {
+  void _encodeBody(RenderItem item, {int? instanceLimit}) {
     // Cull the same faces as the color pass; a double-sided (culling: none)
     // material must stay double-sided here, or its camera-facing back faces are
     // absent from the prepass and SSAO/SSR read the farther surface behind them.
@@ -693,7 +668,7 @@ class _DepthPrepassEncoder {
     final instanceSchema = draw.instanceSchema;
     final attributeFloats = instanceSchema?.floatCount ?? 0;
     geometry.useVertexAttributes(draw.attributes);
-    final retainsRecords = batches == null && draw.retainsRecordsOf(item);
+    final retainsRecords = draw.retainsRecordsOf(item);
     final vertexLayout = retainsRecords
         ? draw.pipelineInputsFor(item).vertexLayout
         : draw.vertexLayout;
@@ -719,7 +694,6 @@ class _DepthPrepassEncoder {
         vertexShader: activeVertex,
         fragmentShader: fragmentShader,
         pipeline: pipeline,
-        batchedItems: batches?.length ?? 1,
       ),
     );
     if (_writeNormals) {
@@ -793,44 +767,29 @@ class _DepthPrepassEncoder {
     // [vertexStreamCount]), matching the color encoder.
     final instanceSlot = positionOnly ? 1 : geometry.vertexStreamCount;
 
-    if (batches != null) {
-      _bindDraw(_identityTransform);
-      final PackedInstances packed = !positionOnly
-          ? packInstanceDataBatches(
-              batches,
-              attributeFloats: attributeFloats,
-              scratch: transientInstancePackingScratch,
-            )
-          : packInstanceTransformBatches(
-              batches,
-              scratch: transientInstancePackingScratch,
-            );
-      _drawPacked(geometry, packed, !positionOnly, instanceSlot);
-      return;
-    }
-
     final instances = item.instanceTransforms;
     if (instances != null) {
-      final visible = limitInstanceIndices(
-        item.visibleInstanceIndices,
-        instances.length,
-        instanceLimit,
-      );
+      final ranges = item.visibleInstanceRanges ?? item.instanceRowRanges;
+      final limit = instanceLimit == null || instanceLimit >= instances.length
+          ? null
+          : instanceLimit;
       if (geometry.instancedVertexLayout == null) {
         // Skinned geometry has no instance-attribute path; loop.
-        final count = visible?.length ?? instances.length;
-        for (var slot = 0; slot < count; slot++) {
-          final instanceIndex = visible?[slot] ?? slot;
-          final instanceTransform = instances[instanceIndex];
-          _bindDraw(item.worldTransform * instanceTransform);
-          final flip =
-              item.windingFlipped != (instanceTransform.determinant() < 0);
-          _renderPass.setWindingOrder(
-            flip
-                ? gpu.WindingOrder.counterClockwise
-                : gpu.WindingOrder.clockwise,
-          );
-          drawOrRejectPipeline(_renderPass, geometry, _boundPipeline);
+        for (var range = 0; range < ranges.length; range += 3) {
+          var end = ranges[range] + ranges[range + 1];
+          if (limit != null && end > limit) end = limit;
+          for (var row = ranges[range]; row < end; row++) {
+            final instanceTransform = instances[row];
+            _bindDraw(item.worldTransform * instanceTransform);
+            final flip =
+                item.windingFlipped != (instanceTransform.determinant() < 0);
+            _renderPass.setWindingOrder(
+              flip
+                  ? gpu.WindingOrder.counterClockwise
+                  : gpu.WindingOrder.clockwise,
+            );
+            drawOrRejectPipeline(_renderPass, geometry, _boundPipeline);
+          }
         }
         return;
       }
@@ -845,10 +804,15 @@ class _DepthPrepassEncoder {
               ? gpu.WindingOrder.counterClockwise
               : gpu.WindingOrder.clockwise,
         );
-        final ranges = item.instanceRanges;
-        final draws = rows.drawCountOf(ranges);
+        final sharedRanges = item.instanceRanges;
+        final draws = rows.drawCountOf(sharedRanges);
         for (var draw = 0; draw < draws; draw++) {
-          final count = rows.bind(_renderPass, ranges, draw, instanceSlot);
+          final count = rows.bind(
+            _renderPass,
+            sharedRanges,
+            draw,
+            instanceSlot,
+          );
           if (count == 0) continue;
           drawOrRejectPipeline(
             _renderPass,
@@ -859,85 +823,29 @@ class _DepthPrepassEncoder {
         }
         return;
       }
-      final packedWorldData = item.instanceWorldData;
-      final packedWinding = item.instanceWorldWindingFlipped;
-      if ((retainsRecords ||
-              (!positionOnly &&
-                  item.instanceAttributeFloats == attributeFloats)) &&
-          item.visibleInstanceIndices == null &&
-          packedWorldData != null &&
-          packedWinding != null) {
-        final flipped = bindRetainedInstanceData(
-          _renderPass,
-          packedWorldData,
-          packedWinding,
-          slot: instanceSlot,
-        );
-        if (flipped != null) {
-          _renderPass.setWindingOrder(
-            flipped
-                ? gpu.WindingOrder.counterClockwise
-                : gpu.WindingOrder.clockwise,
-          );
-          drawOrRejectPipeline(
-            _renderPass,
-            geometry,
-            _boundPipeline,
-            instanceCount: visible?.length ?? instances.length,
-          );
-          return;
+      if (item.instanceWorldData == null) return;
+      // One instanced draw per range of the records the item keeps; a frame
+      // packs none.
+      for (var range = 0; range < ranges.length; range += 3) {
+        final first = ranges[range];
+        var count = ranges[range + 1];
+        if (limit != null) {
+          if (first >= limit) break;
+          if (first + count > limit) count = limit - first;
         }
+        bindInstanceRows(_renderPass, item, first, count, slot: instanceSlot);
+        _renderPass.setWindingOrder(
+          ranges[range + 2] != 0
+              ? gpu.WindingOrder.counterClockwise
+              : gpu.WindingOrder.clockwise,
+        );
+        drawOrRejectPipeline(
+          _renderPass,
+          geometry,
+          _boundPipeline,
+          instanceCount: count,
+        );
       }
-      final cached = packedWorldData == null || packedWinding == null
-          ? null
-          : transientInstancePackingScratch.singleCachedBatch(
-              packedWorldData: packedWorldData,
-              packedWindingFlipped: packedWinding,
-              indices: visible,
-              attributeFloats: item.instanceAttributeFloats,
-            );
-      final PackedInstances packed = !positionOnly || retainsRecords
-          ? (cached == null
-                ? packInstanceData(
-                    item.instancePackTransform,
-                    instances,
-                    item.instanceColors!,
-                    nodeWindingFlipped: item.windingFlipped,
-                    instanceWindingFlipped: item.instanceWindingFlipped,
-                    indices: visible,
-                    attributeData: item.instanceAttributeData,
-                    attributeFloats: retainsRecords
-                        ? item.instanceAttributeFloats
-                        : attributeFloats,
-                    scratch: transientInstancePackingScratch,
-                  )
-                : packInstanceDataBatches(
-                    cached,
-                    attributeFloats: retainsRecords
-                        ? item.instanceAttributeFloats
-                        : attributeFloats,
-                    scratch: transientInstancePackingScratch,
-                  ))
-          : (cached == null
-                ? packInstanceTransforms(
-                    item.instancePackTransform,
-                    instances,
-                    nodeWindingFlipped: item.windingFlipped,
-                    instanceWindingFlipped: item.instanceWindingFlipped,
-                    indices: visible,
-                    scratch: transientInstancePackingScratch,
-                  )
-                : packInstanceTransformBatches(
-                    cached,
-                    scratch: transientInstancePackingScratch,
-                  ));
-      _drawPacked(
-        geometry,
-        packed,
-        !positionOnly || retainsRecords,
-        instanceSlot,
-      );
-      transientInstancePackingScratch.releaseSingleBatch();
       return;
     }
 
@@ -947,20 +855,12 @@ class _DepthPrepassEncoder {
     // stream slot.
     if (geometry.instancedVertexLayout != null &&
         geometry.bindsModelTransformInstance) {
-      if (!positionOnly) {
-        bindSingleInstanceData(
-          _renderPass,
-          item.worldTransform,
-          slot: instanceSlot,
-          attributeFloats: attributeFloats,
-        );
-      } else {
-        bindSingleInstanceTransform(
-          _renderPass,
-          item.worldTransform,
-          slot: instanceSlot,
-        );
-      }
+      bindHeldInstanceRecord(
+        _renderPass,
+        item,
+        slot: instanceSlot,
+        attributeFloats: attributeFloats,
+      );
     }
     _renderPass.setWindingOrder(
       item.windingFlipped
@@ -969,8 +869,6 @@ class _DepthPrepassEncoder {
     );
     drawOrRejectPipeline(_renderPass, geometry, _boundPipeline);
   }
-
-  static final Matrix4 _identityTransform = Matrix4.identity();
 
   // Per-draw state for [_bindDraw], set by the encode path. Fields rather
   // than a local closure, which would allocate on every draw.
@@ -1031,40 +929,4 @@ class _DepthPrepassEncoder {
     vertexLayout: vertexLayout,
     debugContext: () => 'depth prepass ${geometry.runtimeType}',
   );
-
-  void _drawPacked(
-    Geometry geometry,
-    PackedInstances packed,
-    bool withColor,
-    int instanceSlot,
-  ) {
-    if (packed.ccwCount > 0) {
-      if (withColor) {
-        bindInstanceData(_renderPass, packed.ccw, slot: instanceSlot);
-      } else {
-        bindInstanceTransforms(_renderPass, packed.ccw, slot: instanceSlot);
-      }
-      _renderPass.setWindingOrder(gpu.WindingOrder.clockwise);
-      drawOrRejectPipeline(
-        _renderPass,
-        geometry,
-        _boundPipeline,
-        instanceCount: packed.ccwCount,
-      );
-    }
-    if (packed.cwCount > 0) {
-      if (withColor) {
-        bindInstanceData(_renderPass, packed.cw, slot: instanceSlot);
-      } else {
-        bindInstanceTransforms(_renderPass, packed.cw, slot: instanceSlot);
-      }
-      _renderPass.setWindingOrder(gpu.WindingOrder.counterClockwise);
-      drawOrRejectPipeline(
-        _renderPass,
-        geometry,
-        _boundPipeline,
-        instanceCount: packed.cwCount,
-      );
-    }
-  }
 }

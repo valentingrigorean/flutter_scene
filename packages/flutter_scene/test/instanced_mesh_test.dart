@@ -236,12 +236,13 @@ void main() {
   });
 
   group('InstancedMesh culling', () {
-    test('selects individual instances through frustum and custom planes', () {
+    test('selects one-row cells through frustum and custom planes', () {
       final geometry = _StubGeometry(
         aabb: Aabb3.minMax(Vector3.all(-0.5), Vector3.all(0.5)),
       );
       final item = RenderItem(geometry: geometry, material: _StubMaterial())
         ..cullInstances = true
+        ..instanceCellRows = 1
         ..instanceTransforms = [
           Matrix4.translation(Vector3(0, 0, 0)),
           Matrix4.translation(Vector3(4, 0, 0)),
@@ -250,35 +251,90 @@ void main() {
         ..worldBounds = Aabb3.minMax(
           Vector3(-0.5, -0.5, -0.5),
           Vector3(8.5, 0.5, 0.5),
-        );
+        )
+        ..refreshInstanceData();
       final frustum = Frustum.matrix(
         makeOrthographicMatrix(-5, 5, -5, 5, -5, 5),
       );
 
       expect(
-        item.cullVisibleInstances(frustum, [Plane.components(1, 0, 0, -2)]),
+        item.cullVisibleCells(frustum, [Plane.components(1, 0, 0, -2)]),
         isTrue,
       );
-      expect(item.visibleInstanceIndices, [1]);
+      expect(item.visibleInstanceRanges, [1, 1, 0]);
     });
 
-    test('uses null selection when every instance passes', () {
+    test('leaves out the rows of a cell outside the frustum, joins '
+        'neighbouring cells and starts a range at a mirrored row', () {
+      final geometry = _StubGeometry(
+        aabb: Aabb3.minMax(Vector3.all(-0.5), Vector3.all(0.5)),
+      );
+      final item = RenderItem(geometry: geometry, material: _StubMaterial())
+        ..cullInstances = true
+        ..instanceCellRows = 2
+        ..instanceTransforms = [
+          for (final x in [0.0, 1.0, 2.0, 3.0, 20.0, 21.0])
+            Matrix4.translation(Vector3(x, 0, 0)),
+          Matrix4.translation(Vector3(4, 0, 0))
+            ..scaleByVector3(Vector3(-1, 1, 1)),
+          Matrix4.translation(Vector3(4, 0, 0)),
+        ]
+        ..refreshInstanceData();
+
+      expect(item.instanceRowRanges, [0, 6, 0, 6, 1, 1, 7, 1, 0]);
+      expect(
+        item.cullVisibleCells(
+          Frustum.matrix(makeOrthographicMatrix(-5, 5, -5, 5, -5, 5)),
+          const [],
+        ),
+        isTrue,
+      );
+      expect(item.visibleInstanceRanges, [0, 4, 0, 6, 1, 1, 7, 1, 0]);
+    });
+
+    test('draws one range from the first visible row to the last where a '
+        'cull leaves more ranges than the limit', () {
+      final geometry = _StubGeometry(
+        aabb: Aabb3.minMax(Vector3.all(-0.5), Vector3.all(0.5)),
+      );
+      final item = RenderItem(geometry: geometry, material: _StubMaterial())
+        ..cullInstances = true
+        ..instanceCellRows = 1
+        ..instanceRangeLimit = 2
+        ..instanceTransforms = [
+          for (final x in [20.0, 0.0, 21.0, 1.0, 22.0, 2.0, 23.0])
+            Matrix4.translation(Vector3(x, 0, 0)),
+        ]
+        ..refreshInstanceData();
+
+      expect(
+        item.cullVisibleCells(
+          Frustum.matrix(makeOrthographicMatrix(-5, 5, -5, 5, -5, 5)),
+          const [],
+        ),
+        isTrue,
+      );
+      expect(item.visibleInstanceRanges, [1, 5, 0]);
+    });
+
+    test('uses null ranges when every cell passes', () {
       final geometry = _StubGeometry(
         aabb: Aabb3.minMax(Vector3.all(-0.5), Vector3.all(0.5)),
       );
       final item = RenderItem(geometry: geometry, material: _StubMaterial())
         ..cullInstances = true
         ..instanceTransforms = [Matrix4.identity()]
-        ..worldBounds = Aabb3.minMax(Vector3.all(-0.5), Vector3.all(0.5));
+        ..worldBounds = Aabb3.minMax(Vector3.all(-0.5), Vector3.all(0.5))
+        ..refreshInstanceData();
 
       expect(
-        item.cullVisibleInstances(
+        item.cullVisibleCells(
           Frustum.matrix(makeOrthographicMatrix(-5, 5, -5, 5, -5, 5)),
           const [],
         ),
         isTrue,
       );
-      expect(item.visibleInstanceIndices, isNull);
+      expect(item.visibleInstanceRanges, isNull);
     });
 
     test('refreshes cached world bounds after a transform change', () {
@@ -293,10 +349,10 @@ void main() {
       );
 
       item.refreshInstanceData();
-      expect(item.cullVisibleInstances(frustum, const []), isTrue);
+      expect(item.cullVisibleCells(frustum, const []), isTrue);
       item.worldTransform.setTranslationRaw(20, 0, 0);
       item.refreshInstanceData();
-      expect(item.cullVisibleInstances(frustum, const []), isFalse);
+      expect(item.cullVisibleCells(frustum, const []), isFalse);
     });
   });
 
@@ -419,11 +475,11 @@ void main() {
       );
       item
         ..worldBounds = Aabb3.minMax(Vector3.all(-1e6), Vector3.all(1e6))
-        ..cullVisibleInstances(frustum, const []);
+        ..cullVisibleCells(frustum, const []);
       fresh
         ..worldBounds = Aabb3.minMax(Vector3.all(-1e6), Vector3.all(1e6))
-        ..cullVisibleInstances(frustum, const []);
-      expect(item.visibleInstanceIndices, fresh.visibleInstanceIndices);
+        ..cullVisibleCells(frustum, const []);
+      expect(item.visibleInstanceRanges, fresh.visibleInstanceRanges);
     }
 
     test('a change of one row of $rows packs only that row\'s record, '
