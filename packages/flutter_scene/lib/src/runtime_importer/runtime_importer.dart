@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:vector_math/vector_math.dart';
@@ -22,6 +21,7 @@ import '../skin.dart';
 import '../texture/texture2d.dart';
 import 'animation_builder.dart';
 import 'geometry_builder.dart';
+import 'gltf_import_worker.dart';
 import 'gltf_resources.dart';
 import 'material_builder.dart';
 import 'skin_builder.dart';
@@ -30,6 +30,7 @@ import 'texture_builder.dart';
 export 'package:flutter_scene/src/importer/gltf.dart'
     show GltfImportWarning, GltfWarningCallback;
 
+export 'gltf_import_stats.dart' show GltfImportStats;
 export 'gltf_resources.dart' show GltfResourceResolver;
 
 /// Parse a GLB byte stream into a [Node] tree.
@@ -39,25 +40,21 @@ export 'gltf_resources.dart' show GltfResourceResolver;
 /// glTF node hierarchy. [onWarning], when given, receives non-fatal import
 /// issues (an unrecognized extension, an image that fell back to a
 /// placeholder); without it they print instead.
+///
+/// The container and JSON parse, the meshopt decode and the primitive packing
+/// run on a background isolate ([prepareGlbImport]), whose result moves back
+/// without a copy; only the device buffers, textures, materials and nodes are
+/// created here. On the web, where [compute] runs inline, all of it runs here.
+/// The root's [Node.importStats] carries the bytes of the geometry uploaded.
 Future<Node> importGlb(
   Uint8List bytes, {
   GltfWarningCallback? onWarning,
   int? maxTextureSize,
 }) async {
-  final container = parseGlb(bytes);
-  final doc = parseGltfJson(container.json);
-  _deliverWarnings(doc.warnings, onWarning);
-  final normalized = await _normalizeBuffers(
-    doc,
-    glbBinaryChunk: container.binaryChunk,
-    resolveUri: null,
-  );
-  final gltf = decodeMeshoptBufferViews(normalized.doc, normalized.bufferData);
-  final packed = await _packPrimitives(gltf.doc, gltf.bufferData);
+  final result = await compute(prepareGlbImport, bytes);
+  _deliverWarnings(result.warnings, onWarning);
   return _buildScene(
-    gltf.doc,
-    gltf.bufferData,
-    packed,
+    result.unwrap(),
     null,
     onWarning: onWarning,
     maxTextureSize: maxTextureSize,
@@ -74,6 +71,10 @@ Future<Node> importGlb(
 /// rebased, the same normalization the offline importer performs.
 /// [onWarning], when given, receives non-fatal import issues; without it
 /// they print instead.
+///
+/// The JSON parse and the buffer fetches run on the calling isolate, since
+/// [resolveUri] is the caller's; the meshopt decode and the primitive packing
+/// run on a background isolate (see [importGlb]).
 Future<Node> importGltf(
   Uint8List gltfJson, {
   required GltfResourceResolver resolveUri,
@@ -83,26 +84,25 @@ Future<Node> importGltf(
   final json = jsonDecode(utf8.decode(gltfJson)) as Map<String, Object?>;
   final doc = parseGltfJson(json);
   _deliverWarnings(doc.warnings, onWarning);
-  final normalized = await _normalizeBuffers(
-    doc,
-    glbBinaryChunk: Uint8List(0),
-    resolveUri: resolveUri,
-  );
-  final gltf = decodeMeshoptBufferViews(normalized.doc, normalized.bufferData);
-  final packed = await _packPrimitives(gltf.doc, gltf.bufferData);
+  // EXT_meshopt_compression placeholder buffers hold no data the decode path
+  // reads, so they are never resolved.
+  final placeholders = meshoptPlaceholderBuffers(doc);
+  final normalized = normalizeGltfBuffers(doc, [
+    for (int i = 0; i < doc.buffers.length; i++)
+      if (placeholders.contains(i))
+        null
+      else
+        await _resolveBufferBytes(doc.buffers[i].uri, resolveUri),
+  ], glbBinaryChunk: Uint8List(0));
   return _buildScene(
-    gltf.doc,
-    gltf.bufferData,
-    packed,
+    await compute(prepareGltfImport, normalized),
     resolveUri,
     onWarning: onWarning,
     maxTextureSize: maxTextureSize,
   );
 }
 
-// Delivers parse-time warnings to onWarning, or prints them when absent.
-// Safe to call before any isolate hop: parseGltfJson always runs on the
-// calling isolate, never inside compute().
+// Delivers the parse-time warnings to onWarning, or prints them when absent.
 void _deliverWarnings(
   List<GltfImportWarning> warnings,
   GltfWarningCallback? onWarning,
@@ -116,98 +116,22 @@ void _deliverWarnings(
   }
 }
 
-/// Packs every mesh primitive's vertex/index data on a background isolate,
-/// off the UI thread, so a large model does not stall the app while it loads.
+/// Builds the [Node] tree from a prepared import: its parsed document, its
+/// resolved buffer, and its pre-packed primitives. Shared by the GLB and
+/// multi-file glTF entry points. This is the half that needs the device, so
+/// it runs on the calling isolate.
 ///
-/// Returns the packed primitives indexed `[meshIndex][primitiveIndex]`, with a
-/// null entry for each non-triangle primitive (skipped, see [_populateNode]),
-/// and the pose bounds of each skinned node's primitives
-/// ([skinnedPoseBounds]).
-/// The GPU upload of these buffers still happens on the raster thread, in
-/// [geometryFromPacked]; only the pure-data packing moves off it. On the web,
-/// where [compute] runs inline, this is a no-op indirection.
-///
-/// TODO(runtime-import-offload): the JSON parse and the skin/animation accessor
-/// decode still run on the calling thread. They are small next to vertex
-/// packing, but could also move onto the isolate (parse from raw bytes there,
-/// return the packed skins/animations too) to fully offload a heavy import.
-typedef _PackedPrimitiveVariants = ({
-  PackedPrimitive unskinned,
-  PackedPrimitive skinned,
-});
-
-typedef _PackedDocument = ({
-  List<List<_PackedPrimitiveVariants?>> primitives,
-  Map<int, List<Aabb3?>> skinnedBounds,
-});
-
-Future<_PackedDocument> _packPrimitives(
-  GltfDocument doc,
-  Uint8List bufferData,
-) => compute(_packPrimitivesIsolate, (doc: doc, bufferData: bufferData));
-
-// Top-level so it can run on a background isolate. Packs each primitive with
-// the shared [packGltfPrimitive]; non-triangle topologies pack to null.
-_PackedDocument _packPrimitivesIsolate(
-  ({GltfDocument doc, Uint8List bufferData}) input,
-) {
-  final doc = input.doc;
-  final skinnedMeshes = <int>{};
-  final unskinnedMeshes = <int>{};
-  for (final node in doc.nodes) {
-    final mesh = node.mesh;
-    if (mesh == null) continue;
-    (node.skin == null ? unskinnedMeshes : skinnedMeshes).add(mesh);
-  }
-
-  _PackedPrimitiveVariants pack(int meshIndex, GltfMeshPrimitive primitive) {
-    PackedPrimitive run(bool includeSkinning) => packGltfPrimitive(
-      primitive: primitive,
-      accessors: doc.accessors,
-      bufferViews: doc.bufferViews,
-      bufferData: input.bufferData,
-      coordinatePolicy: GltfCoordinatePolicy.runtimeBoundary,
-      includeSkinning: includeSkinning,
-    );
-    final carriesSkinning =
-        primitive.attributes.containsKey('JOINTS_0') &&
-        primitive.attributes.containsKey('WEIGHTS_0');
-    if (carriesSkinning && skinnedMeshes.contains(meshIndex)) {
-      final skinned = run(true);
-      if (!unskinnedMeshes.contains(meshIndex)) {
-        return (unskinned: skinned, skinned: skinned);
-      }
-      return (unskinned: run(false), skinned: skinned);
-    }
-    final unskinned = run(false);
-    return (unskinned: unskinned, skinned: unskinned);
-  }
-
-  for (final mesh in doc.meshes) {
-    validateMorphTargetConsistency(mesh);
-  }
-  return (
-    primitives: [
-      for (var meshIndex = 0; meshIndex < doc.meshes.length; meshIndex++)
-        [
-          for (final p in doc.meshes[meshIndex].primitives)
-            if (p.mode != 4) null else pack(meshIndex, p),
-        ],
-    ],
-    skinnedBounds: skinnedPoseBounds(doc, input.bufferData),
-  );
-}
-
-/// Builds the [Node] tree from a parsed document, its resolved buffer, and its
-/// pre-packed primitives. Shared by the GLB and multi-file glTF entry points.
+/// TODO(runtime-import-offload): the skin and animation accessor decode still
+/// run here. They are small next to vertex packing, but could also move into
+/// [prepareGltfImport] to fully offload a heavy import.
 Future<Node> _buildScene(
-  GltfDocument doc,
-  Uint8List bufferData,
-  _PackedDocument packed,
+  PreparedGltfImport prepared,
   GltfResourceResolver? resolveUri, {
   GltfWarningCallback? onWarning,
   int? maxTextureSize,
 }) async {
+  final doc = prepared.doc;
+  final bufferData = prepared.bufferData;
   // Decode all textures up front so material construction can reference
   // them by index without per-material async work.
   final List<Texture2D> textures = await buildTextures(
@@ -235,7 +159,7 @@ Future<Node> _buildScene(
       engineNode: engineNodes[i],
       gltfNode: doc.nodes[i],
       doc: doc,
-      packed: packed,
+      prepared: prepared,
       engineNodes: engineNodes,
       materials: materials,
       variantBindings: variantBindings,
@@ -267,10 +191,13 @@ Future<Node> _buildScene(
   // Keep source data untouched and convert once at the imported boundary.
   // Packed geometry carries its source winding so the renderer can combine
   // it with this mirror without rewriting indices or vertex data.
-  final root = Node(
-    name: 'root',
-    localTransform: Matrix4.identity()..setEntry(2, 2, -1.0),
-  )..isImportRoot = true;
+  final root =
+      Node(
+          name: 'root',
+          localTransform: Matrix4.identity()..setEntry(2, 2, -1.0),
+        )
+        ..isImportRoot = true
+        ..importStats = prepared.stats;
   if (doc.materialsVariants.isNotEmpty) {
     root.addComponent(
       MaterialsVariantsComponent.internal(
@@ -327,7 +254,7 @@ void _populateNode({
   required Node engineNode,
   required GltfNode gltfNode,
   required GltfDocument doc,
-  required _PackedDocument packed,
+  required PreparedGltfImport prepared,
   required List<Node> engineNodes,
   required List<Material> materials,
   required List<MaterialsVariantBinding> variantBindings,
@@ -356,27 +283,23 @@ void _populateNode({
 
   if (gltfNode.mesh != null) {
     final gltfMesh = doc.meshes[gltfNode.mesh!];
-    final packedMesh = packed.primitives[gltfNode.mesh!];
     final skinnedBounds = gltfNode.skin == null
         ? null
-        : packed.skinnedBounds[index];
+        : prepared.skinnedBounds[index];
     var triangles = 0;
     final primitives = <MeshPrimitive>[];
     for (int pi = 0; pi < gltfMesh.primitives.length; pi++) {
       final p = gltfMesh.primitives[pi];
-      final packedVariants = packedMesh[pi];
+      final packedPrimitive = prepared.packedFor(gltfNode, pi);
       // A null entry is a non-triangle topology skipped during packing; they
       // need shader/render-state support that flutter_scene's pipeline doesn't
       // currently expose.
-      if (packedVariants == null) {
+      if (packedPrimitive == null) {
         debugPrint(
           'Skipping mesh primitive with unsupported topology mode ${p.mode}',
         );
         continue;
       }
-      final packedPrimitive = gltfNode.skin == null
-          ? packedVariants.unskinned
-          : packedVariants.skinned;
       final triangle = triangles++;
       final geometry = geometryFromPacked(
         packedPrimitive,
@@ -529,92 +452,12 @@ Component? _buildLightComponent(GltfPunctualLight light) {
   }
 }
 
-/// Resolves every buffer the document references and concatenates them into
-/// one blob with [GltfBufferView]s rebased to absolute offsets into it,
-/// returning a document copy that carries the rebased views. Mirrors the
-/// offline importer's multi-buffer normalization
-/// (`in_memory_import.dart`'s `_normalizeGltf`) so the runtime path supports
-/// the same multi-buffer `.gltf` documents.
-///
-/// For GLB the implicit buffer 0 (no uri) is the embedded BIN chunk. Every
-/// other buffer is resolved from its URI: a `data:` URI decodes inline, an
-/// external URI is percent-decoded and passed to [resolveUri].
-Future<({GltfDocument doc, Uint8List bufferData})> _normalizeBuffers(
-  GltfDocument doc, {
-  required Uint8List glbBinaryChunk,
-  required GltfResourceResolver? resolveUri,
-}) async {
-  if (doc.buffers.isEmpty) {
-    return (doc: doc, bufferData: glbBinaryChunk);
-  }
-
-  final blob = BytesBuilder();
-  void padTo4() {
-    while (blob.length % 4 != 0) {
-      blob.addByte(0);
-    }
-  }
-
-  // EXT_meshopt_compression placeholder buffers hold no data the decode path
-  // reads, so they contribute nothing to the blob and are never resolved.
-  final placeholders = meshoptPlaceholderBuffers(doc);
-  final bufferBase = <int>[];
-  for (int i = 0; i < doc.buffers.length; i++) {
-    padTo4();
-    bufferBase.add(blob.length);
-    if (placeholders.contains(i)) continue;
-    blob.add(
-      await _resolveBufferBytes(doc.buffers[i].uri, glbBinaryChunk, resolveUri),
-    );
-  }
-
-  final bufferViews = [
-    for (final v in doc.bufferViews)
-      GltfBufferView(
-        buffer: 0,
-        byteLength: v.byteLength,
-        byteOffset: v.byteOffset + bufferBase[v.buffer],
-        byteStride: v.byteStride,
-        meshopt: v.meshopt?.rebased(
-          buffer: 0,
-          byteOffset: v.meshopt!.byteOffset + bufferBase[v.meshopt!.buffer],
-        ),
-      ),
-  ];
-
-  final normalized = GltfDocument(
-    scene: doc.scene,
-    scenes: doc.scenes,
-    nodes: doc.nodes,
-    meshes: doc.meshes,
-    accessors: doc.accessors,
-    bufferViews: bufferViews,
-    buffers: doc.buffers,
-    materials: doc.materials,
-    textures: doc.textures,
-    images: doc.images,
-    samplers: doc.samplers,
-    skins: doc.skins,
-    animations: doc.animations,
-    lights: doc.lights,
-    materialsVariants: doc.materialsVariants,
-    warnings: doc.warnings,
-  );
-  return (doc: normalized, bufferData: blob.toBytes());
-}
-
 Future<Uint8List> _resolveBufferBytes(
   String? uri,
-  Uint8List glbBinaryChunk,
-  GltfResourceResolver? resolveUri,
+  GltfResourceResolver resolveUri,
 ) async {
-  if (uri == null) return glbBinaryChunk; // GLB embedded buffer.
+  // A buffer without a uri is a GLB's embedded chunk, which a .gltf has none of.
+  if (uri == null) return Uint8List(0);
   if (uri.startsWith('data:')) return decodeGltfDataUri(uri);
-  if (resolveUri == null) {
-    throw FormatException(
-      'glTF references external buffer "$uri" but no resource resolver was '
-      'provided. Use importGltf / Node.fromGltfBytes for multi-file glTF.',
-    );
-  }
   return resolveUri(Uri.decodeComponent(uri));
 }
