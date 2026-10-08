@@ -274,8 +274,7 @@ export 'src/render/frame_transients.dart'
 export 'src/render/shadow_pass.dart'
     show SpotShadowInfo, debugSplitShadowMap, shadowMapIsSplit;
 export 'src/render/draw_recorder.dart' show DrawPhase, DrawSkipReason;
-export 'src/render/depth_raster.dart'
-    show DepthRaster, currentDrawDepthRaster;
+export 'src/render/depth_raster.dart' show DepthRaster, currentDrawDepthRaster;
 export 'src/render/linear_depth_probe.dart'
     show debugSplitLinearDepth, linearDepthIsSplit;
 export 'src/render/mip_sampling_probe.dart' show mipChainsAreSampled;
@@ -298,8 +297,15 @@ export 'src/render/debug_view.dart'
         SceneDebugSettings,
         SurfaceDebugChannel,
         SurfaceDebugGroup;
+export 'src/render/instance_record_ring.dart'
+    show InstanceRecordBuffer, InstanceRecordDevice, debugInstanceRecordDevice;
 export 'src/render/render_scene.dart'
     show RenderItem, RenderScene, SceneMaterialSummary, ViewVisibleItems;
+export 'src/render/shared_instance_rows.dart'
+    show
+        InstanceRecordFrame,
+        debugCompleteInstanceRecordFrame,
+        debugDrawInstanceRecords;
 export 'src/render/render_stats.dart'
     show
         RenderCounters,
@@ -394,6 +400,7 @@ export 'src/texture/block_texture.dart'
         isKtxTexture,
         planKtxTexture,
         transcodeKtxTexture;
+export 'src/runtime_importer/gltf_import_stats.dart' show GltfImportStats;
 export 'src/runtime_importer/gltf_resources.dart' show GltfResourceResolver;
 export 'src/scene_path.dart'
     show BezierPath, CatmullRomPath, PolylinePath, ScenePath, ScenePathFrame;

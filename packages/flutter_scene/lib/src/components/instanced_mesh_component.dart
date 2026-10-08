@@ -79,7 +79,7 @@ class InstancedMeshComponent extends Component {
   void refreshRenderItem() {
     final item = _renderItem;
     if (item == null) return;
-    item.sharedRows = instancedMesh.rows;
+    item.sharedRows = instancedMesh.recordSource;
     item.debugView = Node.debugViewOverrideCount == 0
         ? null
         : node.effectiveDebugView;
@@ -151,7 +151,7 @@ class InstancedMeshComponent extends Component {
     item.cullInstances = instancedMesh.cullInstances && !nodeSpace;
     item.sortTransparentInstances = instancedMesh.sortTransparentInstances;
     if (staticShadowChanged) {
-      node.internalRenderScene?.markStaticShadowDirty();
+      node.internalRenderScene?.markStaticShadowDirty(item);
     }
     if (instanceRevision != _instanceRevision ||
         geometryBoundsVersion != _geometryBoundsVersion ||
@@ -188,7 +188,7 @@ class InstancedMeshComponent extends Component {
     // refit.
     final renderScene = node.internalRenderScene;
     if (frustumCulledChanged || wasBounded != isBounded) {
-      renderScene?.markBvhStructureDirty();
+      renderScene?.markBvhStructureDirty(item);
     } else if (boundsChanged && item.frustumCulled) {
       renderScene?.markBvhBoundsDirty();
     }
@@ -205,7 +205,7 @@ class InstancedMeshComponent extends Component {
     final item = _renderItem;
     if (item == null) return;
     if (item.visible && item.shadowStatic && item.castsShadows) {
-      node.internalRenderScene?.markStaticShadowDirty();
+      node.internalRenderScene?.markStaticShadowDirty(item);
     }
     item.visible = false;
   }

@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/frame_transients.dart';
-import 'package:flutter_scene/src/render/render_stats.dart';
+import 'package:flutter_scene/src/render/instance_record_ring.dart';
 import 'package:vector_math/vector_math.dart';
 
 /// Reusable storage for instance data copied into transient GPU buffers.
@@ -829,7 +829,7 @@ ByteData? _lastPackedBytes;
 // Device-resident copies of cached instance records, keyed by the cached
 // list. An entry uploads only once the data has gone a frame unrefreshed, so
 // instancing refreshed every frame keeps using the transient arena, which
-// takes one copy of the store per frame. The device copy spans the whole
+// takes one copy of the store per frame. The device copies span the whole
 // store behind the list, so records appended within the store's capacity are
 // written in place.
 final Expando<_RetainedInstances> _retainedInstances = Expando();
@@ -838,92 +838,93 @@ int _retainedInstanceFrame = 0;
 class _RetainedInstances {
   _RetainedInstances(this.seenFrame);
   final int seenFrame;
-  gpu.DeviceBuffer? buffer;
+  InstanceRecordRing? ring;
+  ByteData? store;
+  gpu.DeviceBuffer? viewBuffer;
   gpu.BufferView? view;
   gpu.BufferView? transient;
   int transientFrame = -1;
 }
 
 /// Advances the frame that decides when cached instance data counts as static.
-void beginRetainedInstanceFrame() => _retainedInstanceFrame++;
+void beginRetainedInstanceFrame() {
+  _retainedInstanceFrame++;
+  beginInstanceRecordFrame();
+}
 
 /// Drops the device copy of [packedWorldData] after its records change.
 void invalidateRetainedInstanceData(Float32List packedWorldData) {
   _retainedInstances[packedWorldData] = null;
 }
 
-/// Carries the device copy of [previous] over to [packedWorldData], the list
-/// over the same store after [rows] of its [count] changed, and writes the
-/// records of those rows into it, [recordFloats] floats each.
+/// Carries the device copies of [previous] over to [packedWorldData], the
+/// list over the same store after [rows] of its [count] changed, so the next
+/// frame writes the records of those rows alone (see [InstanceRecordRing]).
 ///
-/// While no submitted GPU work is pending the copy is written in place, the
-/// changed records only; otherwise in-flight frames may read it, so the whole
-/// store is copied to a new device buffer. A copy that no longer fits the
-/// records is dropped.
+/// Records that were never kept on the device stay in the transient arena.
 void updateRetainedInstanceRows(
   Float32List? previous,
   Float32List packedWorldData,
   int count,
   List<int> rows,
-  int recordFloats,
 ) {
   final entry = previous == null ? null : _retainedInstances[previous];
   if (previous != null) _retainedInstances[previous] = null;
-  final buffer = entry?.buffer;
-  if (entry == null ||
-      buffer == null ||
-      packedWorldData.offsetInBytes != 0 ||
-      packedWorldData.lengthInBytes > buffer.sizeInBytes) {
+  final ring = entry?.ring;
+  if (entry == null || ring == null || packedWorldData.offsetInBytes != 0) {
     _retainedInstances[packedWorldData] = null;
     return;
   }
-  final recordBytes = recordFloats * Float32List.bytesPerElement;
-  if (rendererSubmissions.completedThrough <
-      rendererSubmissions.latestSubmission) {
-    final store = packedWorldData.buffer.asByteData(0, buffer.sizeInBytes);
-    entry.buffer = gpu.gpuContext.createDeviceBufferWithCopy(store);
-    activeRenderCounters.instanceBytesUploaded += store.lengthInBytes;
-  } else {
-    var low = buffer.sizeInBytes;
-    var high = 0;
-    for (final row in rows) {
-      if (row >= count) continue;
-      final offset = row * recordBytes;
-      buffer.overwrite(
-        packedWorldData.buffer.asByteData(offset, recordBytes),
-        destinationOffsetInBytes: offset,
-      );
-      activeRenderCounters.instanceBytesUploaded += recordBytes;
-      if (offset < low) low = offset;
-      if (offset + recordBytes > high) high = offset + recordBytes;
-    }
-    if (high > low) buffer.flush(offsetInBytes: low, lengthInBytes: high - low);
+  for (final row in rows) {
+    if (row < count) ring.changed(row, 1);
   }
-  entry.view = null;
+  if (!identical(entry.store?.buffer, packedWorldData.buffer)) {
+    entry.store = null;
+  }
   _retainedInstances[packedWorldData] = entry;
 }
 
-/// Where the records of [packedWorldData] sit for the draws of this frame,
-/// as a view of all of them: the device copy kept while the records rest, or
-/// one copy in the transient arena on a frame that follows a change.
-gpu.BufferView instanceRecordBase(Float32List packedWorldData) {
+/// Where the records of [packedWorldData], [recordBytes] each, sit for the
+/// draws of this frame, as a view of all of them: the device copy kept while
+/// the records rest, or one copy in the transient arena on a frame that
+/// follows a change of every row.
+gpu.BufferView instanceRecordBase(
+  Float32List packedWorldData,
+  int recordBytes,
+) {
   final entry = _retainedInstances[packedWorldData] ??= _RetainedInstances(
     _retainedInstanceFrame,
   );
-  var buffer = entry.buffer;
-  if (buffer == null && entry.seenFrame != _retainedInstanceFrame) {
-    final store = packedWorldData.offsetInBytes == 0
+  var ring = entry.ring;
+  if (ring == null &&
+      entry.seenFrame != _retainedInstanceFrame &&
+      packedWorldData.isNotEmpty) {
+    ring = entry.ring = InstanceRecordRing()
+      ..changed(0, packedWorldData.lengthInBytes ~/ recordBytes);
+  }
+  if (ring != null) {
+    final store = entry.store ??= packedWorldData.offsetInBytes == 0
         ? packedWorldData.buffer.asByteData()
         : ByteData.sublistView(packedWorldData);
-    buffer = entry.buffer = gpu.gpuContext.createDeviceBufferWithCopy(store);
-    activeRenderCounters.instanceBytesUploaded += store.lengthInBytes;
-  }
-  if (buffer != null) {
-    return entry.view ??= gpu.BufferView(
-      buffer,
-      offsetInBytes: 0,
-      lengthInBytes: packedWorldData.lengthInBytes,
+    final synced = ring.sync(
+      store,
+      packedWorldData.lengthInBytes ~/ recordBytes,
+      recordBytes,
     );
+    if (synced is GpuInstanceRecordBuffer) {
+      final view = entry.view;
+      if (view != null &&
+          identical(entry.viewBuffer, synced.buffer) &&
+          view.lengthInBytes == packedWorldData.lengthInBytes) {
+        return view;
+      }
+      entry.viewBuffer = synced.buffer;
+      return entry.view = gpu.BufferView(
+        synced.buffer,
+        offsetInBytes: 0,
+        lengthInBytes: packedWorldData.lengthInBytes,
+      );
+    }
   }
   if (entry.transientFrame != _retainedInstanceFrame) {
     entry

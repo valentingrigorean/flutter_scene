@@ -62,7 +62,6 @@ class MeshComponent extends Component {
 
   void _refreshRetainedMaterials() {
     if (_renderItems.length != _mesh.primitives.length) return;
-    var staticShadowChanged = false;
     for (var i = 0; i < _renderItems.length; i++) {
       final item = _renderItems[i];
       final material = _mesh.primitives[i].material;
@@ -75,10 +74,9 @@ class MeshComponent extends Component {
       // Now, not at the next tick, so a capture before it never reaches a
       // material that cannot draw yet.
       item.visible = !material.drawsNothing;
-      staticShadowChanged |= item.shadowStatic && item.castsShadows;
-    }
-    if (staticShadowChanged) {
-      node.internalRenderScene?.markStaticShadowDirty();
+      if (item.shadowStatic && item.castsShadows) {
+        node.internalRenderScene?.markStaticShadowDirty(item);
+      }
     }
   }
 
@@ -301,7 +299,7 @@ class MeshComponent extends Component {
       item.morphWeights = morphWeights;
       // Grow the bounds before this frame culls against them.
       if (morphWeights != null) item.geometry.coverMorphWeights(morphWeights);
-      if (staticShadowChanged) renderScene?.markStaticShadowDirty();
+      if (staticShadowChanged) renderScene?.markStaticShadowDirty(item);
 
       final boundsVersion = item.geometry.localBoundsVersion;
       final geometryBoundsChanged = _boundsVersions[index] != boundsVersion;
@@ -316,7 +314,7 @@ class MeshComponent extends Component {
       // BVH membership and needs a rebuild; a plain move only needs a
       // refit.
       if (frustumCulledChanged || wasBounded != isBounded) {
-        renderScene?.markBvhStructureDirty();
+        renderScene?.markBvhStructureDirty(item);
       } else if (boundsChanged && item.frustumCulled) {
         renderScene?.markBvhBoundsDirty();
       }
@@ -330,7 +328,7 @@ class MeshComponent extends Component {
   void hideRenderItems() {
     for (final item in _renderItems) {
       if (item.visible && item.shadowStatic && item.castsShadows) {
-        node.internalRenderScene?.markStaticShadowDirty();
+        node.internalRenderScene?.markStaticShadowDirty(item);
       }
       item.visible = false;
     }
