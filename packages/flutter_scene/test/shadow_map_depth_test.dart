@@ -1,6 +1,6 @@
 // Covers the shadow map that is the depth attachment of its pass: where the
 // device samples a stored depth attachment the atlas a shadow pass publishes
-// is the depth it drew with, beside a one channel color target the pass
+// is the depth it drew with, beside an 8-bit color target the pass
 // discards, and a directional shadow, with its casters drawn each frame or
 // replayed from cached static tiles, draws the same frame from it as from the
 // color target that holds the depth elsewhere. GPU-gated like the other
@@ -99,8 +99,8 @@ void main() {
   tearDownAll(() => EnvironmentMap.synchronousRadiancePrefilter = false);
   tearDown(() => debugStoredDepthUnsampled = false);
 
-  test('a shadow pass publishes the depth it drew with and discards a one '
-      'channel color target where the device samples a stored depth', () async {
+  test('a shadow pass publishes the depth it drew with and discards an '
+      '8-bit color target where the device samples a stored depth', () async {
     if (platformSamplesStoredDepth != true) {
       markTestSkipped('This device samples no stored depth attachment.');
       return;
@@ -112,7 +112,7 @@ void main() {
     expect(shadowMapIsDepth, isTrue);
     expect(drawn.atlas, same(depth.texture));
     expect(depth.depthStoreAction, gpu.StoreAction.store);
-    expect(color.texture.format, gpu.PixelFormat.r8UNormInt);
+    expect(color.texture.format, gpu.PixelFormat.r8g8b8a8UNormInt);
     expect(color.texture.storageMode, gpu.StorageMode.deviceTransient);
     expect(color.storeAction, gpu.StoreAction.dontCare);
   });

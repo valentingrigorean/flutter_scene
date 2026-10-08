@@ -17,6 +17,10 @@ class ShadowCascadeCacheEntry {
   /// planning logic stays GPU-free).
   gpu.Texture? tile;
 
+  /// The color target a depth [tile] draws with, which its pass discards;
+  /// null beside a color tile.
+  gpu.Texture? tileColor;
+
   /// World -> light-clip matrix the tile's content was rendered with. Every
   /// consumer (dynamic casters, the lit shader, custom passes) samples through
   /// this matrix, not the frame's ideal one, so the cached content stays
@@ -161,26 +165,28 @@ class DirectionalShadowCache {
   /// The cache entries, by cascade, as the last [plan] left them.
   List<ShadowCascadeCacheEntry> get debugEntries => _entries;
 
-  /// The static tile textures the cascades hold, and the attachment their
+  /// The static tile textures the cascades hold, and the attachments their
   /// refreshes render with.
-  Iterable<gpu.Texture> get heldTextures =>
-      _entries.map((entry) => entry.tile).nonNulls.followedBy([?tileScratch]);
+  Iterable<gpu.Texture> get heldTextures => _entries
+      .expand((entry) => [entry.tile, entry.tileColor])
+      .nonNulls
+      .followedBy([?tileDepth]);
   int _resolution = 0;
   ShadowCasterFaces _casterFaces = ShadowCasterFaces.front;
   int _casterChannelMask = 0xFF;
   int _staticShadowRevision = 0;
   int _castersSeen = 0;
 
-  /// The attachment every tile refresh renders with beside the tile, allocated
-  /// lazily by the shadow pass and dropped with the tiles on a resolution
-  /// change: the depth attachment of a color tile, or the discarded color
-  /// attachment of a depth tile.
+  /// The depth attachment every refresh of a color tile renders with,
+  /// allocated lazily by the shadow pass and dropped with the tiles on a
+  /// resolution change. A depth tile draws with its own
+  /// [ShadowCascadeCacheEntry.tileColor] instead.
   ///
   /// Backends cache a framebuffer per color texture (flutter/flutter#192538),
-  /// so a tile must keep the attachment it was first rendered with for as long
-  /// as it lives. A pooled one rotates and is freed on resize or memory
+  /// so a tile must keep the depth it was first rendered with for as long as
+  /// it lives. A pooled depth rotates and is freed on resize or memory
   /// pressure, leaving the cached framebuffer attached to a released texture.
-  gpu.Texture? tileScratch;
+  gpu.Texture? tileDepth;
 
   // The draw origin the entries are stated from.
   final Float64List _origin = Float64List(3);
@@ -241,12 +247,14 @@ class DirectionalShadowCache {
     if (paramsChanged) {
       if (resolution != _resolution) {
         for (final entry in _entries) {
-          entry.tile = null;
+          entry
+            ..tile = null
+            ..tileColor = null;
         }
-        tileScratch = null;
+        tileDepth = null;
       }
       // Kept entries keep their tile textures, which still pair with
-      // [tileScratch].
+      // [tileDepth].
       if (_entries.length > idealCascades.length) {
         _entries.length = idealCascades.length;
       }

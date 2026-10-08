@@ -139,10 +139,13 @@ final gpu.DeviceBuffer _quadBuffer = gpu.gpuContext.createDeviceBufferWithCopy(
 );
 
 gpu.SamplerOptions _samplerFor(gpu.PixelFormat format) {
-  // fp32 filtering is an optional GL extension; point-sample those.
+  // fp32 filtering is an optional GL extension, and a depth source filters
+  // nearest; point-sample those.
   final nearest =
       format == gpu.PixelFormat.r32g32b32a32Float ||
-      format == gpu.PixelFormat.r32Float;
+      format == gpu.PixelFormat.r32Float ||
+      format == gpu.PixelFormat.d24UnormS8Uint ||
+      format == gpu.PixelFormat.d32FloatS8UInt;
   final filter = nearest ? gpu.MinMagFilter.nearest : gpu.MinMagFilter.linear;
   return gpu.SamplerOptions(
     minFilter: filter,

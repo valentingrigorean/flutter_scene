@@ -52,15 +52,16 @@ bool get shadowMapIsSplit =>
 /// at one, which `ShadowDepthOf` of `shaders/shadow_depth.glsl` reads as the
 /// 32-bit float layout, so no reader needs to know. A render pass needs a
 /// color attachment, so the casters draw with a [shadowPassColorFormat]
-/// target the pass discards. A cached static shadow tile keeps the kind it
-/// was made with.
+/// target the pass discards. A cached static shadow tile of the other kind is
+/// made anew at its next refresh.
 bool get shadowMapIsDepth => storedDepthIsSampled;
 
 /// The format of the color target a shadow pass draws with, and of the
 /// scratch target its pipelines build against: [shadowMapFormat] where the
-/// color target is the shadow map, else one 8-bit channel the pass discards.
+/// color target is the shadow map, else the 8-bit format every device
+/// renders, which the pass discards.
 gpu.PixelFormat get shadowPassColorFormat =>
-    shadowMapIsDepth ? gpu.PixelFormat.r8UNormInt : shadowMapFormat;
+    shadowMapIsDepth ? gpu.PixelFormat.r8g8b8a8UNormInt : shadowMapFormat;
 
 /// The format of a color shadow map and its cached static tiles: a half float
 /// target in the half float layout, else a 32-bit float one.
@@ -481,14 +482,16 @@ class ShadowPass extends RenderGraphPass {
     for (final refresh in plan.refreshes) {
       final commandBuffer = gpu.gpuContext.createCommandBuffer();
       final entry = refresh.entry;
-      // The tiles of a cache are of one kind, the one its first tile was
-      // made with: depth textures where the shadow map is the depth
-      // attachment, else color ones.
+      // A tile is a depth texture where the shadow map is the depth
+      // attachment, else a color one; a tile of the other kind is made anew.
       final depthFormat = gpu.gpuContext.defaultDepthStencilFormat;
-      final held = plan.cache.tileScratch;
-      final depthTile = held == null
-          ? shadowMapIsDepth
-          : held.format != depthFormat;
+      final depthTile = shadowMapIsDepth;
+      if (entry.tile != null &&
+          (entry.tile!.format == depthFormat) != depthTile) {
+        entry
+          ..tile = null
+          ..tileColor = null;
+      }
       final tile = entry.tile ??= statedRenderTarget(
         depthTile
             ? gpu.gpuContext.createTexture(
@@ -506,20 +509,35 @@ class ShadowPass extends RenderGraphPass {
                 format: shadowMapFormat,
               ),
       );
-      // Every refresh clears it, so one texture serves all the tiles.
-      final scratch = plan.cache.tileScratch ??= statedRenderTarget(
-        gpu.gpuContext.createTexture(
-          gpu.StorageMode.deviceTransient,
-          _tileResolution,
-          _tileResolution,
-          format: depthTile ? gpu.PixelFormat.r8UNormInt : depthFormat,
-          enableRenderTargetUsage: true,
-          enableShaderReadUsage: false,
-        ),
-      );
-      final target = depthTile
-          ? _shadowTarget(color: scratch, depth: tile, depthMap: true)
-          : _shadowTarget(color: tile, depth: scratch, depthMap: false);
+      final gpu.RenderTarget target;
+      if (depthTile) {
+        // A depth tile keeps a color target of its own: a backend caches a
+        // framebuffer per color texture with the depth it first drew with.
+        final color = entry.tileColor ??= statedRenderTarget(
+          gpu.gpuContext.createTexture(
+            gpu.StorageMode.deviceTransient,
+            _tileResolution,
+            _tileResolution,
+            format: shadowPassColorFormat,
+            enableRenderTargetUsage: true,
+            enableShaderReadUsage: false,
+          ),
+        );
+        target = _shadowTarget(color: color, depth: tile, depthMap: true);
+      } else {
+        // Every refresh clears it, so one texture serves all the tiles.
+        final depth = plan.cache.tileDepth ??= statedRenderTarget(
+          gpu.gpuContext.createTexture(
+            gpu.StorageMode.deviceTransient,
+            _tileResolution,
+            _tileResolution,
+            format: depthFormat,
+            enableRenderTargetUsage: true,
+            enableShaderReadUsage: false,
+          ),
+        );
+        target = _shadowTarget(color: tile, depth: depth, depthMap: false);
+      }
       final renderPass = commandBuffer.createRenderPass(target);
       final encoder = ShadowEncoder(
         renderPass,

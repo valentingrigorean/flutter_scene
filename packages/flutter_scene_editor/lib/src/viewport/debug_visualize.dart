@@ -157,10 +157,12 @@ class DebugVisualizePass extends CustomRenderPass {
     final resolved = resolve(context);
     if (resolved == null) return;
     final (source, settings) = resolved;
-    // fp32 sources (linear depth, the shadow atlas) filter nearest.
+    // fp32 and depth sources (linear depth, the shadow atlas) filter nearest.
     final nearest =
         source.format == gpu.PixelFormat.r32g32b32a32Float ||
-        source.format == gpu.PixelFormat.r32Float;
+        source.format == gpu.PixelFormat.r32Float ||
+        source.format == gpu.PixelFormat.d24UnormS8Uint ||
+        source.format == gpu.PixelFormat.d32FloatS8UInt;
     context.applyShader(
       editorRemapFragment,
       textures: {'source_texture': source},
