@@ -95,6 +95,29 @@ void main() {
     );
   });
 
+  test('a tile stale for a caster change waits for the light\'s refresh '
+      'interval since its last render, and an invalidation does not', () {
+    light.staticShadowCasterRefreshInterval = 30;
+    ShadowCachePlan at(int frame, int signature) => cache.plan(
+      light: light,
+      lightDirection: light.direction,
+      idealCascades: idealCascades(),
+      contentRevision: signature,
+      staticSignatureIn: (_) => signature,
+      frame: frame,
+    );
+    expect(at(100, 1).refreshes.length, 2);
+    for (var frame = 101; frame < 130; frame++) {
+      expect(at(frame, frame).refreshes, isEmpty, reason: 'frame $frame');
+    }
+    expect(at(130, 130).refreshes.single.cascadeIndex, 0);
+    expect(at(131, 130).refreshes.single.cascadeIndex, 1);
+    expect(at(132, 130).refreshes, isEmpty);
+    expect(at(140, 140).refreshes, isEmpty);
+    light.invalidateStaticShadows();
+    expect(at(141, 140).refreshes.length, 2);
+  });
+
   test('a tile that holds no caster follows its cascade to a box that holds '
       'none without a render, and renders once a caster stands in its box', () {
     expect(planOver(idealCascades(), [], revision: 1).refreshes.length, 2);

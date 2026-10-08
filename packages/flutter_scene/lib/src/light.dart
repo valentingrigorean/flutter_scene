@@ -170,6 +170,7 @@ class DirectionalLight {
     this.priority = 0,
     this.castsShadow = false,
     this.cacheStaticShadows = true,
+    this.staticShadowCasterRefreshInterval = 0,
     this.shadowFadeRange = 2.0,
     this.shadowSoftness = 0.08,
     this.shadowCascadeCount = 4,
@@ -224,6 +225,18 @@ class DirectionalLight {
   /// occasional steps (a stepped sun) can keep it on; each step refreshes the
   /// cached cascades one per frame, so far cascades lag the turn briefly.
   bool cacheStaticShadows;
+
+  /// The fewest frames between two renders of one cached static tile for a
+  /// change of the static casters inside its box.
+  ///
+  /// `0` (the default) refreshes a stale tile as soon as the amortized budget
+  /// reaches it. A streaming world, whose static casters arrive over many
+  /// frames, sets a larger value so a tile renders once per interval instead
+  /// of once per arrival; a caster that arrives sooner after the tile's last
+  /// render casts no shadow in that cascade until the interval has passed.
+  /// [invalidateStaticShadows], a coverage change and a light turn render a
+  /// tile whatever the interval.
+  int staticShadowCasterRefreshInterval;
 
   /// Counts [invalidateStaticShadows] calls; a shadow cache that saw an
   /// older count re-renders its static tiles.

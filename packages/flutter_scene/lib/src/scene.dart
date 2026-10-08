@@ -3928,6 +3928,7 @@ base class Scene implements SceneGraph {
             lightDirection: lightDirection ?? light.direction,
             idealCascades: cascades,
             contentRevision: _staticShadowContentRevision,
+            frame: renderStats.frameCount,
             staticSignatureIn: (matrix) =>
                 _staticShadowSignatureIn(matrix, light.shadowCasterChannelMask),
           );

@@ -42,6 +42,9 @@ class ShadowCascadeCacheEntry {
   /// The static content revision [signature] was read at.
   int signatureRevision = -1;
 
+  /// The frame the tile last rendered in.
+  int renderedFrame = 0;
+
   /// The normalized light direction the tile was rendered with; a mismatch
   /// marks the tile stale (refreshed amortized).
   final Vector3 direction = Vector3.zero();
@@ -186,13 +189,17 @@ class DirectionalShadowCache {
   /// change to the shadow parameters re-renders every tile this frame,
   /// keeping the tile textures unless the resolution changed, and so does a
   /// new [DirectionalLight.staticShadowRevision]. A tile that holds no caster
-  /// and whose next box holds none takes the box without a render.
+  /// and whose next box holds none takes the box without a render. [frame]
+  /// counts the frames the scene renders: a tile stale for a caster change
+  /// waits until [DirectionalLight.staticShadowCasterRefreshInterval] frames
+  /// have passed since its last render.
   ShadowCachePlan plan({
     required DirectionalLight light,
     required Vector3 lightDirection,
     required List<ShadowCascade> idealCascades,
     required int contentRevision,
     required int Function(Matrix4 lightSpaceMatrix) staticSignatureIn,
+    int frame = 0,
   }) {
     final resolution = light.shadowMapResolution;
     final dir = lightDirection.normalized();
@@ -266,7 +273,11 @@ class DirectionalShadowCache {
         // cascade first (this loop runs near-to-far). An empty tile may
         // still move for free.
         amortizes = true;
-        if (amortized < maxAmortizedRefreshes || empty) {
+        final waits =
+            signatureChanged &&
+            frame - entry.renderedFrame <
+                light.staticShadowCasterRefreshInterval;
+        if (!waits && (amortized < maxAmortizedRefreshes || empty)) {
           reason = signatureChanged ? .casters : .lightStep;
         }
       }
@@ -291,7 +302,10 @@ class DirectionalShadowCache {
           entry.direction.setFrom(dir);
           entry.hasContent = true;
           entry.incomplete = false;
-          if (renders) refreshes.add(ShadowTileRefresh(i, entry, reason));
+          if (renders) {
+            entry.renderedFrame = frame;
+            refreshes.add(ShadowTileRefresh(i, entry, reason));
+          }
         }
       }
       effective.add(
