@@ -62,4 +62,21 @@ void main() {
     expect(band.holds(rowAt(1), eye, hash: 0.2), isTrue);
     expect(band.holds(rowAt(1), eye, hash: 0.25), isFalse);
   });
+
+  test('the hash spreads rows a unit apart evenly, near the node and far from '
+      'it', () {
+    for (final base in [0.0, 100.0, 8000.0, 40000.0]) {
+      var kept = 0;
+      final seen = <double>{};
+      for (var row = 0; row < 2000; row++) {
+        final hash = InstanceBand.hashOf(
+          Vector3(base + row % 50, 0, base + row ~/ 50),
+        );
+        seen.add(hash);
+        if (hash < 0.25) kept++;
+      }
+      expect(kept, inInclusiveRange(400, 600), reason: 'base $base');
+      expect(seen.length, greaterThan(1500), reason: 'base $base');
+    }
+  });
 }

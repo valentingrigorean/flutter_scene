@@ -639,6 +639,53 @@ void main() {
       expect(item.worldBounds!.max, Vector3(4.5, 10.5, 0.5));
     });
 
+    test('an instance local transform stated after the item rests moves its '
+        'bounds', () {
+      final mesh = InstancedMesh.sharing(
+        rowsOf(3),
+        geometry: geometry(),
+        material: _StubMaterial(),
+      );
+      final component = InstancedMeshComponent(mesh);
+      final item = mounted(component);
+      component.node.shadowStatic = true;
+      component.refreshRenderItem();
+      mesh.instanceLocal = Matrix4.translation(Vector3(0, 1000, 0));
+      component.refreshRenderItem();
+      expect(item.worldBounds!.max.y, 1000.5);
+    });
+
+    test('ranges, a band, a band field and a local transform stated on a '
+        'static shadow caster each redraw the cached shadows', () {
+      final mesh = InstancedMesh.sharing(
+        rowsOf(3),
+        geometry: geometry(),
+        material: _StubMaterial(),
+      );
+      final component = InstancedMeshComponent(mesh);
+      final node = Node()..addComponent(component);
+      Node().add(node);
+      final renderScene = RenderScene();
+      node.parent!.debugMountInto(renderScene);
+      node.shadowStatic = true;
+      component.refreshRenderItem();
+      final band = InstanceBand();
+      for (final change in <void Function()>[
+        () => mesh.instanceRanges = Uint32List.fromList([0, 1]),
+        () => mesh.band = band,
+        () {
+          band.farReach = 4;
+          mesh.bandChanged();
+        },
+        () => mesh.instanceLocal = Matrix4.translation(Vector3(1, 0, 0)),
+      ]) {
+        final before = renderScene.staticShadowRevision;
+        change();
+        component.refreshRenderItem();
+        expect(renderScene.staticShadowRevision, isNot(before));
+      }
+    });
+
     test('a band and ranges stated after the item rests reach it', () {
       final mesh = InstancedMesh.sharing(
         rowsOf(3),

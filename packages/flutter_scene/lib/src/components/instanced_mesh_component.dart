@@ -28,6 +28,7 @@ class InstancedMeshComponent extends Component {
   int _worldTransformVersion = -1;
   int _instanceRevision = -1;
   int _geometryBoundsVersion = -1;
+  int _drawStateRevision = -1;
 
   @override
   void onMount() {
@@ -53,6 +54,7 @@ class InstancedMeshComponent extends Component {
       _worldTransformVersion = -1;
       _instanceRevision = -1;
       _geometryBoundsVersion = -1;
+      _drawStateRevision = -1;
     }
   }
 
@@ -78,7 +80,9 @@ class InstancedMeshComponent extends Component {
     final worldTransformVersion = node.worldTransformVersion;
     final instanceRevision = instancedMesh.revision;
     final geometryBoundsVersion = instancedMesh.geometry.localBoundsVersion;
+    final drawStateRevision = instancedMesh.drawStateRevision;
     if (node.shadowStatic &&
+        drawStateRevision == _drawStateRevision &&
         worldTransformVersion == _worldTransformVersion &&
         instanceRevision == _instanceRevision &&
         geometryBoundsVersion == _geometryBoundsVersion &&
@@ -101,7 +105,8 @@ class InstancedMeshComponent extends Component {
     final boundsChangedByInput =
         worldTransformVersion != _worldTransformVersion ||
         instanceRevision != _instanceRevision ||
-        geometryBoundsVersion != _geometryBoundsVersion;
+        geometryBoundsVersion != _geometryBoundsVersion ||
+        drawStateRevision != _drawStateRevision;
     final staticShadowChanged =
         (item.visible != visible ||
             item.shadowStatic != node.shadowStatic ||
@@ -137,7 +142,8 @@ class InstancedMeshComponent extends Component {
       node.internalRenderScene?.markStaticShadowDirty();
     }
     if (instanceRevision != _instanceRevision ||
-        geometryBoundsVersion != _geometryBoundsVersion) {
+        geometryBoundsVersion != _geometryBoundsVersion ||
+        drawStateRevision != _drawStateRevision) {
       item.instanceBounds = instancedMesh.aggregateBounds;
     }
     if (boundsChangedByInput || recordSpaceChanged) {
@@ -177,6 +183,7 @@ class InstancedMeshComponent extends Component {
     _worldTransformVersion = worldTransformVersion;
     _instanceRevision = instanceRevision;
     _geometryBoundsVersion = geometryBoundsVersion;
+    _drawStateRevision = drawStateRevision;
   }
 
   /// Keeps this component's render item out of the render passes. Called
