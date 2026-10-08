@@ -14,14 +14,35 @@ Future<ui.Image> presentTextureAsImage(
 }
 
 /// The depth-stencil format for passes that rasterize reversed depth (near
-/// at 1, far at 0), where float depth keeps distant surfaces apart. Native
-/// keeps the context default, which is float on Metal.
-PixelFormat get reversedDepthStencilFormat {
-  // TODO(float-depth): Vulkan and GLES default to D24S8, which reversed depth
-  // cannot improve. Take d32FloatS8UInt where Flutter GPU reports it
-  // attachable (supportsTextureFormat accepts every format today) and, on
-  // GLES, once Impeller takes [0, 1] clip depth through GL_EXT_clip_control.
-  return gpuContext.defaultDepthStencilFormat;
+/// at 1, far at 0), where float depth keeps distant surfaces apart: float
+/// where the context creates a `d32FloatS8UInt` attachment, as Metal and most
+/// Vulkan devices do, else the context default. OpenGL ES keeps its default:
+/// it clips depth to [-1, 1] and maps it to the buffer's [0, 1] by a half
+/// scale and offset, which drops the precision float keeps near 0.
+PixelFormat get reversedDepthStencilFormat =>
+    _reversedDepthStencilFormat ??= _floatDepthOr(
+      gpuContext.defaultDepthStencilFormat,
+    );
+
+PixelFormat? _reversedDepthStencilFormat;
+
+PixelFormat _floatDepthOr(PixelFormat fallback) {
+  if (fallback == PixelFormat.d32FloatS8UInt) return fallback;
+  // Flutter GPU names no backend; OpenGL ES is the one that renders into no
+  // mip level of a framebuffer.
+  if (!gpuContext.doesSupportFramebufferRenderMipmap) return fallback;
+  try {
+    gpuContext.createTexture(
+      StorageMode.deviceTransient,
+      1,
+      1,
+      format: PixelFormat.d32FloatS8UInt,
+      enableShaderReadUsage: false,
+    );
+    return PixelFormat.d32FloatS8UInt;
+  } on Object {
+    return fallback;
+  }
 }
 
 /// The buffers one mesh upload needs. Native has no per-role restriction, so

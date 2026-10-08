@@ -54,8 +54,12 @@ const double _kFloatRelativeStep = 1.0 / 8388608.0;
 /// compare functions, and projection from the same [DepthRaster], so the
 /// passes that share a depth attachment always agree. Shadow maps keep the
 /// standard mapping and do not use this.
-@internal
+///
+/// A custom geometry whose vertex stage moves a surface in depth reads the
+/// raster of the draw it binds from [currentDrawDepthRaster] and states the
+/// move with [writeOffset].
 class DepthRaster {
+  @internal
   const DepthRaster({
     this.reversed = false,
     this.near,
@@ -187,6 +191,14 @@ final Float32List currentDrawDepthOffset = Float32List(4);
 @internal
 final Float32List currentDrawDepthSlope = Float32List(4);
 
+/// The depth raster of the pass that encodes the draw being bound, which a
+/// geometry's `bind` reads to state a depth offset with
+/// [DepthRaster.writeOffset]: the view's raster in a camera pass, the
+/// standard mapping in a shadow pass.
+DepthRaster get currentDrawDepthRaster => _currentDrawDepthRaster;
+
+DepthRaster _currentDrawDepthRaster = DepthRaster.standard;
+
 /// The far plane's clip depth over w for the pass being encoded (1 standard,
 /// 0 reversed), for vertex stages that cull past it themselves (splats).
 @internal
@@ -211,6 +223,7 @@ void setCurrentDrawDepthOffset(
   double pixelSlope = 0.0,
   double nudge = 0.0,
 }) {
+  _currentDrawDepthRaster = raster;
   currentRasterFarClipDepth = raster.farClipDepth;
   final tie = raster.tieBreak && layer == 0;
   final below = raster.tieBreak && layer < 0 ? kTieBreakRanks - 1.0 : 0.0;
@@ -270,6 +283,7 @@ double pixelWorldScale(Matrix4 projection, double height) {
 /// (shadow maps).
 @internal
 void clearCurrentDrawDepthOffset() {
+  _currentDrawDepthRaster = DepthRaster.standard;
   currentRasterFarClipDepth = 1.0;
   currentDrawDepthOffset.fillRange(0, 4, 0.0);
   currentDrawDepthSlope.fillRange(0, 4, 0.0);
