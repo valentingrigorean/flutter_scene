@@ -169,6 +169,10 @@ enum ShadowTileRefreshReason {
   /// `DirectionalLight.invalidateStaticShadows` was called.
   invalidated,
 
+  /// `DirectionalLight.invalidateStaticShadowsOf` named a subtree with a
+  /// static caster inside the tile's box.
+  invalidatedCasters,
+
   /// The light turned past `DirectionalShadowCache.maxDirectionLagDegrees`.
   turned,
 

@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -9,6 +10,7 @@ import 'package:vector_math/vector_math.dart';
 import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/fog.dart';
 import 'package:flutter_scene/src/material/environment.dart';
+import 'package:flutter_scene/src/node.dart';
 import 'package:flutter_scene/src/render/irradiance_field.dart';
 import 'package:flutter_scene/src/render/punctual_lights.dart'
     show FroxelLighting;
@@ -170,7 +172,6 @@ class DirectionalLight {
     this.priority = 0,
     this.castsShadow = false,
     this.cacheStaticShadows = true,
-    this.staticShadowCasterRefreshInterval = 0,
     this.shadowFadeRange = 2.0,
     this.shadowSoftness = 0.08,
     this.shadowCascadeCount = 4,
@@ -226,18 +227,6 @@ class DirectionalLight {
   /// cached cascades one per frame, so far cascades lag the turn briefly.
   bool cacheStaticShadows;
 
-  /// The fewest frames between two renders of one cached static tile for a
-  /// change of the static casters inside its box.
-  ///
-  /// `0` (the default) refreshes a stale tile as soon as the amortized budget
-  /// reaches it. A streaming world, whose static casters arrive over many
-  /// frames, sets a larger value so a tile renders once per interval instead
-  /// of once per arrival; a caster that arrives sooner after the tile's last
-  /// render casts no shadow in that cascade until the interval has passed.
-  /// [invalidateStaticShadows], a coverage change and a light turn render a
-  /// tile whatever the interval.
-  int staticShadowCasterRefreshInterval;
-
   /// Counts [invalidateStaticShadows] calls; a shadow cache that saw an
   /// older count re-renders its static tiles.
   @internal
@@ -251,6 +240,47 @@ class DirectionalLight {
   /// tile textures. Call it when something the cache cannot see changes what
   /// the static casters draw, such as a clip a shader applies to them.
   void invalidateStaticShadows() => _staticShadowRevision++;
+
+  /// Marks the cached static-caster shadow tiles that [node]'s subtree casts
+  /// into stale.
+  ///
+  /// The next frame re-renders, at once, every cascade's static tile whose
+  /// box holds a static caster of the subtree, and keeps the others. Call it
+  /// when static casters join the scene or change in a way the cache cannot
+  /// see, such as instances written in place, so their shadow shows in every
+  /// cascade in the frame they draw; a change the cache sees on its own
+  /// refreshes one stale tile a frame. A subtree that has left the scene by
+  /// then casts into no tile.
+  void invalidateStaticShadowsOf(Node node) {
+    if (_invalidatedCasters.length == _keptInvalidatedCasters) {
+      _invalidatedCasters.removeFirst();
+    }
+    _invalidatedCasters.add(WeakReference(node));
+    _invalidatedCastersEnd++;
+  }
+
+  static const int _keptInvalidatedCasters = 256;
+  final ListQueue<WeakReference<Node>> _invalidatedCasters = ListQueue();
+  int _invalidatedCastersEnd = 0;
+
+  /// Counts the subtrees [invalidateStaticShadowsOf] has named.
+  @internal
+  int get invalidatedStaticCastersEnd => _invalidatedCastersEnd;
+
+  /// The subtrees [invalidateStaticShadowsOf] named after the first [from]
+  /// that are still alive, or null when the light no longer keeps all of
+  /// them.
+  @internal
+  List<Node>? invalidatedStaticCastersSince(int from) {
+    final count = _invalidatedCastersEnd - from;
+    if (count > _invalidatedCasters.length) return null;
+    return [
+      for (final caster in _invalidatedCasters.skip(
+        _invalidatedCasters.length - count,
+      ))
+        ?caster.target,
+    ];
+  }
 
   /// World-space width of the band at the far shadow cascade's edge
   /// over which shadowing fades back to lit, so the shadow distance

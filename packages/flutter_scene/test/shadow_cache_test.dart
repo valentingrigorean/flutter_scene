@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter_scene/scene.dart'
-    show PerspectiveCamera, ShadowTileRefreshReason;
+    show Node, PerspectiveCamera, ShadowTileRefreshReason;
 import 'package:flutter_test/flutter_test.dart';
 // ignore: implementation_imports
 import 'package:flutter_scene/src/light.dart';
@@ -95,27 +95,66 @@ void main() {
     );
   });
 
-  test('a tile stale for a caster change waits for the light\'s refresh '
-      'interval since its last render, and an invalidation does not', () {
-    light.staticShadowCasterRefreshInterval = 30;
-    ShadowCachePlan at(int frame, int signature) => cache.plan(
+  test('a subtree the light names re-renders at once every tile its casters '
+      'draw into and no other, once', () {
+    final near = Vector3(0, 0, 5);
+    final far = Vector3(0, 0, 40);
+    final nearNode = Node(name: 'near');
+    final farNode = Node(name: 'far');
+    final at = {nearNode: near, farNode: far};
+    ShadowCachePlan planNamed(int revision) => cache.plan(
       light: light,
       lightDirection: light.direction,
       idealCascades: idealCascades(),
-      contentRevision: signature,
-      staticSignatureIn: (_) => signature,
-      frame: frame,
+      contentRevision: revision,
+      staticSignatureIn: (_) => revision,
+      castersIn: (matrix, casters) => casters.any((caster) {
+        final clip = matrix.transformed3(at[caster]!);
+        return clip.x.abs() <= 1 && clip.y.abs() <= 1 && clip.z.abs() <= 1;
+      }),
     );
-    expect(at(100, 1).refreshes.length, 2);
-    for (var frame = 101; frame < 130; frame++) {
-      expect(at(frame, frame).refreshes, isEmpty, reason: 'frame $frame');
+    expect(planNamed(1).refreshes.length, 2);
+
+    light.invalidateStaticShadowsOf(farNode);
+    final named = planNamed(1);
+    expect(named.refreshes.single.cascadeIndex, 1);
+    expect(
+      named.refreshes.single.reason,
+      ShadowTileRefreshReason.invalidatedCasters,
+    );
+    expect(planNamed(1).refreshes, isEmpty);
+
+    // Both tiles hold the near caster: they re-render in one frame, where a
+    // caster change the cache sees on its own refreshes one tile a frame.
+    light.invalidateStaticShadowsOf(nearNode);
+    final both = planNamed(2);
+    expect(both.refreshes.map((refresh) => refresh.cascadeIndex), [0, 1]);
+    expect(
+      both.refreshes.map((refresh) => refresh.reason),
+      everyElement(ShadowTileRefreshReason.invalidatedCasters),
+    );
+    expect(planNamed(2).refreshes, isEmpty);
+  });
+
+  test('a light that no longer keeps every subtree named since a plan '
+      're-renders every tile', () {
+    plan(idealCascades());
+    for (var index = 0; index < 300; index++) {
+      light.invalidateStaticShadowsOf(Node());
     }
-    expect(at(130, 130).refreshes.single.cascadeIndex, 0);
-    expect(at(131, 130).refreshes.single.cascadeIndex, 1);
-    expect(at(132, 130).refreshes, isEmpty);
-    expect(at(140, 140).refreshes, isEmpty);
-    light.invalidateStaticShadows();
-    expect(at(141, 140).refreshes.length, 2);
+    final p = cache.plan(
+      light: light,
+      lightDirection: light.direction,
+      idealCascades: idealCascades(),
+      contentRevision: 1,
+      staticSignatureIn: (_) => 1,
+      castersIn: (_, _) => false,
+    );
+    expect(p.refreshes.map((refresh) => refresh.reason), [
+      ShadowTileRefreshReason.invalidated,
+      ShadowTileRefreshReason.invalidated,
+    ]);
+    expect(plan(idealCascades()).refreshes, isEmpty);
   });
 
   test('a tile that holds no caster follows its cascade to a box that holds '

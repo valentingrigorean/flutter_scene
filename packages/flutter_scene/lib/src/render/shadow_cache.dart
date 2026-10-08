@@ -4,6 +4,7 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/light.dart';
+import 'package:flutter_scene/src/node.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
 
 /// One cascade's cached static-caster shadow tile: the persistent texture the
@@ -41,9 +42,6 @@ class ShadowCascadeCacheEntry {
 
   /// The static content revision [signature] was read at.
   int signatureRevision = -1;
-
-  /// The frame the tile last rendered in.
-  int renderedFrame = 0;
 
   /// The normalized light direction the tile was rendered with; a mismatch
   /// marks the tile stale (refreshed amortized).
@@ -106,7 +104,9 @@ class ShadowCachePlan {
 /// box that holds none without a render, since its cleared content is the
 /// same in both.
 /// [DirectionalLight.invalidateStaticShadows] re-renders every tile in the
-/// next frame instead, into the textures the tiles already hold.
+/// next frame instead, into the textures the tiles already hold, and
+/// [DirectionalLight.invalidateStaticShadowsOf] re-renders at once every tile
+/// the named casters draw into.
 class DirectionalShadowCache {
   /// How much larger than the ideal bounding sphere each tile is rendered.
   /// Costs ~13% effective resolution; buys re-render-free camera movement
@@ -168,6 +168,7 @@ class DirectionalShadowCache {
   ShadowCasterFaces _casterFaces = ShadowCasterFaces.front;
   int _casterChannelMask = 0xFF;
   int _staticShadowRevision = 0;
+  int _castersSeen = 0;
 
   /// The depth attachment every tile refresh renders with, allocated lazily by
   /// the shadow pass and dropped with the tiles on a resolution change.
@@ -188,18 +189,19 @@ class DirectionalShadowCache {
   /// stale, as does a small turn of [lightDirection]. A larger turn or a
   /// change to the shadow parameters re-renders every tile this frame,
   /// keeping the tile textures unless the resolution changed, and so does a
-  /// new [DirectionalLight.staticShadowRevision]. A tile that holds no caster
-  /// and whose next box holds none takes the box without a render. [frame]
-  /// counts the frames the scene renders: a tile stale for a caster change
-  /// waits until [DirectionalLight.staticShadowCasterRefreshInterval] frames
-  /// have passed since its last render.
+  /// new [DirectionalLight.staticShadowRevision]. Every tile [castersIn]
+  /// answers true for, given the subtrees
+  /// [DirectionalLight.invalidateStaticShadowsOf] named since the last plan,
+  /// re-renders this frame; without [castersIn] that is every tile. A tile
+  /// that holds no caster and whose next box holds none takes the box without
+  /// a render.
   ShadowCachePlan plan({
     required DirectionalLight light,
     required Vector3 lightDirection,
     required List<ShadowCascade> idealCascades,
     required int contentRevision,
     required int Function(Matrix4 lightSpaceMatrix) staticSignatureIn,
-    int frame = 0,
+    bool Function(Matrix4 lightSpaceMatrix, List<Node> casters)? castersIn,
   }) {
     final resolution = light.shadowMapResolution;
     final dir = lightDirection.normalized();
@@ -231,9 +233,14 @@ class DirectionalShadowCache {
       _casterFaces = light.shadowCasterFaces;
       _casterChannelMask = light.shadowCasterChannelMask;
       _staticShadowRevision = light.staticShadowRevision;
+      _castersSeen = light.invalidatedStaticCastersEnd;
     }
-    final invalidated = light.staticShadowRevision != _staticShadowRevision;
+    final named = light.invalidatedStaticCastersSince(_castersSeen);
+    _castersSeen = light.invalidatedStaticCastersEnd;
+    final invalidated =
+        light.staticShadowRevision != _staticShadowRevision || named == null;
     _staticShadowRevision = light.staticShadowRevision;
+    final casters = named ?? const <Node>[];
 
     final refreshes = <ShadowTileRefresh>[];
     final effective = <ShadowCascade>[];
@@ -267,17 +274,16 @@ class DirectionalShadowCache {
       } else if ((center - entry.center).length + ideal.radius >
           entry.radius * slackFactor) {
         reason = ideal.radius > entry.radius ? .radius : .drift;
+      } else if (casters.isNotEmpty &&
+          (castersIn?.call(entry.matrix, casters) ?? true)) {
+        reason = .invalidatedCasters;
       } else if (signatureChanged ||
           entry.direction.distanceToSquared(dir) > 1e-10) {
         // Usable but stale: refresh a bounded number per frame, nearest
         // cascade first (this loop runs near-to-far). An empty tile may
         // still move for free.
         amortizes = true;
-        final waits =
-            signatureChanged &&
-            frame - entry.renderedFrame <
-                light.staticShadowCasterRefreshInterval;
-        if (!waits && (amortized < maxAmortizedRefreshes || empty)) {
+        if (amortized < maxAmortizedRefreshes || empty) {
           reason = signatureChanged ? .casters : .lightStep;
         }
       }
@@ -302,10 +308,7 @@ class DirectionalShadowCache {
           entry.direction.setFrom(dir);
           entry.hasContent = true;
           entry.incomplete = false;
-          if (renders) {
-            entry.renderedFrame = frame;
-            refreshes.add(ShadowTileRefresh(i, entry, reason));
-          }
+          if (renders) refreshes.add(ShadowTileRefresh(i, entry, reason));
         }
       }
       effective.add(
