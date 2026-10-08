@@ -62,6 +62,12 @@ class RenderCounters {
   /// node while no node ticks.
   int prePassNodes = 0;
 
+  /// Render items scanned to summarize what the scene's materials ask of a
+  /// frame: their scene inputs, the display-referred surfaces and the shadow
+  /// catchers. Zero on a frame that adds or removes no item and changes no
+  /// material.
+  int materialSummaryItems = 0;
+
   void reset() {
     draws = 0;
     instances = 0;
@@ -75,6 +81,7 @@ class RenderCounters {
     instanceBytesPacked = 0;
     instanceBytesUploaded = 0;
     prePassNodes = 0;
+    materialSummaryItems = 0;
   }
 
   void copyFrom(RenderCounters other) {
@@ -90,6 +97,7 @@ class RenderCounters {
     instanceBytesPacked = other.instanceBytesPacked;
     instanceBytesUploaded = other.instanceBytesUploaded;
     prePassNodes = other.prePassNodes;
+    materialSummaryItems = other.materialSummaryItems;
   }
 
   /// Sets this to `now - start`.
@@ -107,6 +115,8 @@ class RenderCounters {
     instanceBytesUploaded =
         now.instanceBytesUploaded - start.instanceBytesUploaded;
     prePassNodes = now.prePassNodes - start.prePassNodes;
+    materialSummaryItems =
+        now.materialSummaryItems - start.materialSummaryItems;
   }
 
   Map<String, int> toJson() => {
@@ -122,6 +132,7 @@ class RenderCounters {
     'instanceBytesPacked': instanceBytesPacked,
     'instanceBytesUploaded': instanceBytesUploaded,
     'prePassNodes': prePassNodes,
+    'materialSummaryItems': materialSummaryItems,
   };
 }
 

@@ -30,11 +30,13 @@ import 'package:flutter_scene/src/render/uniform_slots.dart';
 
 int _sceneInputsRevision = 0;
 
-/// Changes whenever live material metadata changes its scene inputs.
+/// Changes whenever live material metadata changes its scene inputs or its
+/// display-referred state.
 @internal
 int get materialSceneInputsRevision => _sceneInputsRevision;
 
-/// Invalidates cached scene-input summaries after material hot reload.
+/// Invalidates the material summaries render scenes keep, after a material
+/// changes its scene inputs or its display-referred state.
 @internal
 void markMaterialSceneInputsChanged() {
   _sceneInputsRevision++;
