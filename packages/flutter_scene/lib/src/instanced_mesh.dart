@@ -122,6 +122,7 @@ class InstancedMesh implements MeshDrawSource {
 
   void _drawStateChanged() {
     _drawStateRevision++;
+    _tellRowListeners();
     markSceneDrawChanged();
   }
 
@@ -188,8 +189,9 @@ class InstancedMesh implements MeshDrawSource {
 
   final List<void Function()> _rowListeners = [];
 
-  /// Calls [listener] after each change to the rows, so the node that draws
-  /// them refreshes its render item and no other node does.
+  /// Calls [listener] after each change to the rows and to [instanceRanges],
+  /// [instanceLocal] and [band], so the node that draws them refreshes its
+  /// render item and no other node does.
   @internal
   void addRowListener(void Function() listener) => _rowListeners.add(listener);
 

@@ -47,18 +47,16 @@ class InstancedMeshComponent extends Component {
           ..instanceSource = instancedMesh;
     _renderItem = item;
     renderScene.add(item);
-    (instancedMesh.rows ?? instancedMesh).addRowListener(
-      node.internalRenderSourcesChanged,
-    );
+    instancedMesh.addRowListener(node.internalRenderSourcesChanged);
+    instancedMesh.rows?.addRowListener(node.internalRenderSourcesChanged);
   }
 
   @override
   void onUnmount() {
     final item = _renderItem;
     if (item != null) {
-      (instancedMesh.rows ?? instancedMesh).removeRowListener(
-        node.internalRenderSourcesChanged,
-      );
+      instancedMesh.removeRowListener(node.internalRenderSourcesChanged);
+      instancedMesh.rows?.removeRowListener(node.internalRenderSourcesChanged);
       node.internalRenderScene?.remove(item);
       _renderItem = null;
       _worldTransformVersion = -1;
