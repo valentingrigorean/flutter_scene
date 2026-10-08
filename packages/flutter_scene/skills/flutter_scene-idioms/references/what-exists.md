@@ -336,7 +336,7 @@ view of it. Every light also has `shadowCasterChannelMask` (8-bit), tested again
 `Node.lightChannelMask`, to drop casters from one light's map.
 
 `ShadowCasterFaces` = `front` | `back` | `both`. `DirectionalShadowFilter` = `rotatedPoisson` |
-`fixedPcf` | `pcss`. `ShadowCascade`, `Lighting` (per-draw state) are exported.
+`fixedPcf` | `pcss` | `bilinearPcf` | `bilinear`. `ShadowCascade`, `Lighting` (per-draw state) are exported.
 
 Scene lighting: `Scene.directionalLight` (`DirectionalLight?`, null = IBL only; honors `direction`;
 highest-priority one gets cascaded shadows), `Scene.sunLight`, `Scene.environment` (`EnvironmentMap?`,

@@ -88,6 +88,12 @@ enum DirectionalShadowFilter {
   /// per tap and interpolates depth tests continuously, giving smooth analog
   /// penumbras without noise or stepping within a 16-sample texture budget.
   bilinearPcf,
+
+  /// One 2x2 bilinear PCF tap at the receiver: 4 texel reads, no noise and no
+  /// rotation. The edge is a smooth one-texel gradient whatever
+  /// [DirectionalLight.shadowSoftness] is, which sets only the receiver bias
+  /// and the cascade margin, so the penumbra is as sharp as the cascade.
+  bilinear,
 }
 
 /// A sphere a [DirectionalLight] shines on as its sun, such as a planet the
