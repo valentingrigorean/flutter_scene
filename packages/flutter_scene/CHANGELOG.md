@@ -1,6 +1,7 @@
 ## 0.24.1
 
 * `prepareGlb` parses, decodes and packs a GLB whose container and JSON the caller has read, on whatever isolate calls it, and `Node.fromPreparedGlb` builds its nodes with no parse of its own, so a caller that reads the same JSON on its own worker parses the file once. `PreparedGlb.retainedBytes` states the bytes it holds.
+* `HighlightStyle.outline` set to false keeps a scene from drawing the selection mask and outline, and from scanning its items for a `Node.highlightColor`, so an app that draws its own highlight pays nothing for the built-in one.
 * `InstancedMesh.instanceTransformAt` reads a copy of one instance's transform from a mesh of instances, of shared rows or of records.
 * `InstancedMesh.recordBoundsPad` widens the bounds of a mesh that holds records on every side, for rows its vertex stage moves.
 * `InstancedMesh.records` holds its rows as instance records the caller packs, in the layout the vertex stage reads: `setInstanceRecords(first, records, bounds:)` writes whole rows with the box each fills and `truncateInstanceRecords` drops the last ones. The mesh keeps the floats and no object per row, is culled by the hull of the boxes it was given, and other meshes draw its rows through `InstancedMesh.sharing`.
