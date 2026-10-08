@@ -1724,7 +1724,8 @@ base class Scene implements SceneGraph {
   }
 
   /// How the selection outline is drawn around nodes that have a
-  /// [Node.highlightColor]. No outline is drawn when no node is highlighted.
+  /// [Node.highlightColor]. No outline is drawn when no node is highlighted
+  /// or when [HighlightStyle.outline] is false.
   final HighlightStyle highlightStyle = HighlightStyle();
 
   final List<CustomRenderPass> _renderPasses = [];
@@ -4661,7 +4662,7 @@ base class Scene implements SceneGraph {
     // transient the next pass samples. The resolve produces the first
     // display image; FXAA, custom display passes, after-tone-mapping
     // effects, and the selection outline composite onto it in order.
-    final outlineActive = sceneHasHighlights(renderScene);
+    final outlineActive = drawsSelectionOutline(highlightStyle, renderScene);
     final displaySteps = <RenderGraphPass Function(gpu.Texture output)>[];
     // The steps that draw onto the image of the step before them and write
     // no buffer of their own (CustomRenderPass.drawsInPlace).

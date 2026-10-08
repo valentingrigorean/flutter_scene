@@ -14,6 +14,7 @@ library;
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
 import 'package:vector_math/vector_math.dart';
 
 import 'accessor.dart';
@@ -166,6 +167,11 @@ AabbBounds aabbFromPositions(Float32List positions) {
   return AabbBounds(minX, minY, minZ, maxX, maxY, maxZ, positions.length < 3);
 }
 
+/// The joint palettes [bakeSkinnedPoseUnionAabbs] has built, one per skin
+/// and pose sample time, for a test of how often a bake poses a skin.
+@visibleForTesting
+int debugPoseBoundsPaletteBuilds = 0;
+
 /// Computes the skinned pose-union AABB of every skinned mesh primitive,
 /// keyed by glTF node index.
 ///
@@ -181,6 +187,9 @@ AabbBounds aabbFromPositions(Float32List positions) {
 /// is `null` when the primitive carries no `JOINTS_0`/`WEIGHTS_0` attributes
 /// (it packs and renders unskinned) or the union came up empty; consumers
 /// treat a missing bound as "always visible".
+///
+/// Each skin is posed once per sample time, and that palette bounds every
+/// primitive of every node the skin drives.
 Map<int, List<AabbBounds?>> bakeSkinnedPoseUnionAabbs(
   GltfDocument doc,
   Uint8List bufferData,
@@ -196,22 +205,46 @@ Map<int, List<AabbBounds?>> bakeSkinnedPoseUnionAabbs(
     }
   }
 
+  // The primitives each skin bounds, gathered in node order so the result
+  // keeps that order.
+  final targetsBySkin = <int, List<_PoseUnionTarget>>{};
   for (int nodeIdx = 0; nodeIdx < doc.nodes.length; nodeIdx++) {
     final glNode = doc.nodes[nodeIdx];
     if (glNode.skin == null || glNode.mesh == null) continue;
     if (glNode.mesh! < 0 || glNode.mesh! >= doc.meshes.length) continue;
 
-    final skin = doc.skins[glNode.skin!];
-    final jointNodeIndices = skin.joints;
-    if (jointNodeIndices.isEmpty) continue;
+    final jointCount = doc.skins[glNode.skin!].joints.length;
+    if (jointCount == 0) continue;
+    final targets = targetsBySkin.putIfAbsent(glNode.skin!, () => []);
 
+    // Iterate the mesh's triangle-mode primitives in glTF source order.
+    final unions = <AabbBounds?>[];
+    for (final glPrim in doc.meshes[glNode.mesh!].primitives) {
+      if (glPrim.mode != 4) continue;
+      if (!glPrim.attributes.containsKey('JOINTS_0') ||
+          !glPrim.attributes.containsKey('WEIGHTS_0')) {
+        unions.add(null);
+        continue;
+      }
+      final target = _PoseUnionTarget(
+        _computeJointInfluenceAabbs(glPrim, doc, bufferData, jointCount),
+      );
+      targets.add(target);
+      unions.add(target.union);
+    }
+    result[nodeIdx] = unions;
+  }
+
+  for (final MapEntry(key: skinIdx, value: targets) in targetsBySkin.entries) {
+    if (targets.isEmpty) continue;
+    final jointNodeIndices = doc.skins[skinIdx].joints;
     final isJointNode = <int, int>{
       for (int i = 0; i < jointNodeIndices.length; i++) jointNodeIndices[i]: i,
     };
 
     // Inverse bind matrices, one per joint. When the glTF asset omits
     // them, the spec mandates identity — match the runtime behaviour.
-    final ibm = _readInverseBindMatrices(skin, doc, bufferData);
+    final ibm = _readInverseBindMatrices(doc.skins[skinIdx], doc, bufferData);
 
     // The rest pose, with no channel applied, then each animation's
     // keyframe times with that animation's channels alone. With the
@@ -267,61 +300,57 @@ Map<int, List<AabbBounds?>> bakeSkinnedPoseUnionAabbs(
       _collectStaticTrs(jIdx, doc, parentOf, isJointNode, staticTrs);
     }
 
-    // Iterate the mesh's triangle-mode primitives in glTF source order.
-    final unions = <AabbBounds?>[];
-    for (final glPrim in doc.meshes[glNode.mesh!].primitives) {
-      if (glPrim.mode != 4) continue;
-      if (!glPrim.attributes.containsKey('JOINTS_0') ||
-          !glPrim.attributes.containsKey('WEIGHTS_0')) {
-        unions.add(null);
-        continue;
-      }
+    // Per-pose scratch storage to avoid re-allocating during the
+    // tight (sample-times × joints) loop.
+    final palette = List<Matrix4>.generate(
+      jointNodeIndices.length,
+      (_) => Matrix4.identity(),
+    );
+    final transformedScratch = AabbBounds.empty();
 
-      final influence = _computeJointInfluenceAabbs(
-        glPrim,
-        doc,
-        bufferData,
-        jointNodeIndices.length,
-      );
+    for (final (channelsByNode, sortedTimes) in poses) {
+      for (final t in sortedTimes) {
+        _buildJointPaletteAtTime(
+          jointNodeIndices: jointNodeIndices,
+          parentOf: parentOf,
+          isJointNode: isJointNode,
+          channelsByNode: channelsByNode,
+          staticTrs: staticTrs,
+          ibm: ibm,
+          time: t,
+          out: palette,
+        );
+        debugPoseBoundsPaletteBuilds++;
 
-      final poseUnion = AabbBounds.empty();
-      // Per-pose scratch storage to avoid re-allocating during the
-      // tight (sample-times × joints) loop.
-      final palette = List<Matrix4>.generate(
-        jointNodeIndices.length,
-        (_) => Matrix4.identity(),
-      );
-      final transformedScratch = AabbBounds.empty();
-
-      for (final (channelsByNode, sortedTimes) in poses) {
-        for (final t in sortedTimes) {
-          _buildJointPaletteAtTime(
-            jointNodeIndices: jointNodeIndices,
-            parentOf: parentOf,
-            isJointNode: isJointNode,
-            channelsByNode: channelsByNode,
-            staticTrs: staticTrs,
-            ibm: ibm,
-            time: t,
-            out: palette,
-          );
-
+        for (final target in targets) {
           for (int j = 0; j < jointNodeIndices.length; j++) {
-            final infl = influence[j];
+            final infl = target.influence[j];
             if (infl.isEmpty) continue;
             transformedScratch
               ..copyFrom(infl)
               ..transform(palette[j]);
-            poseUnion.expandToBounds(transformedScratch);
+            target.union.expandToBounds(transformedScratch);
           }
         }
       }
-
-      unions.add(poseUnion.isEmpty ? null : poseUnion);
     }
-    result[nodeIdx] = unions;
+  }
+
+  for (final unions in result.values) {
+    for (int i = 0; i < unions.length; i++) {
+      if (unions[i]?.isEmpty ?? false) unions[i] = null;
+    }
   }
   return result;
+}
+
+// One skinned primitive of a pose-union bake: the joint-local extent of the
+// vertices each joint moves, and the union the poses grow.
+class _PoseUnionTarget {
+  _PoseUnionTarget(this.influence);
+
+  final List<AabbBounds> influence;
+  final AabbBounds union = AabbBounds.empty();
 }
 
 class _PoseChannel {

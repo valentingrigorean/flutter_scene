@@ -465,6 +465,8 @@ class RenderPassContext {
   /// own cleared depth so the objects self-occlude but are not occluded by
   /// the rest of the scene (an x-ray silhouette). The building block for
   /// masks, outlines, and highlights; sample the result in [applyShader].
+  /// An object whose material has a [Material.clipVolume] covers the mask
+  /// only where its color pass draws.
   ///
   /// [filter] selects which nodes draw. [colorOf] gives a per-node color
   /// (linear RGBA); when null every object uses [color] (default opaque

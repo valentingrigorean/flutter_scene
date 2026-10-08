@@ -100,10 +100,26 @@ class GlbImportWorkerResult {
 ///
 /// Top-level and synchronous so it can be an isolate's entry point.
 GlbImportWorkerResult prepareGlbImport(Uint8List bytes) {
-  var warnings = const <GltfImportWarning>[];
   try {
     final container = parseGlb(bytes);
-    final doc = parseGltfJson(container.json);
+    return prepareGlbJsonImport(container.json, container.binaryChunk);
+  } catch (error, stackTrace) {
+    return GlbImportWorkerResult.failed(error, stackTrace, const []);
+  }
+}
+
+/// [prepareGlbImport] for a GLB whose container the caller already read:
+/// [json] is its decoded JSON chunk and [binaryChunk] its BIN chunk, empty
+/// when it has none.
+///
+/// Top-level and synchronous so it can run on the caller's own isolate.
+GlbImportWorkerResult prepareGlbJsonImport(
+  Map<String, Object?> json,
+  Uint8List binaryChunk,
+) {
+  var warnings = const <GltfImportWarning>[];
+  try {
+    final doc = parseGltfJson(json);
     warnings = doc.warnings;
     final placeholders = meshoptPlaceholderBuffers(doc);
     final normalized = normalizeGltfBuffers(doc, [
@@ -111,8 +127,8 @@ GlbImportWorkerResult prepareGlbImport(Uint8List bytes) {
         if (placeholders.contains(i))
           null
         else
-          _embeddedBufferBytes(doc.buffers[i].uri, container.binaryChunk),
-    ], glbBinaryChunk: container.binaryChunk);
+          _embeddedBufferBytes(doc.buffers[i].uri, binaryChunk),
+    ], glbBinaryChunk: binaryChunk);
     return GlbImportWorkerResult.prepared(
       prepareGltfImport(normalized),
       warnings,

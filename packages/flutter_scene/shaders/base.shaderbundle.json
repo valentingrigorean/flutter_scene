@@ -131,6 +131,10 @@
     "type": "fragment",
     "file": "shaders/flutter_scene_mask_masked.frag"
   },
+  "MaskClippedFragment": {
+    "type": "fragment",
+    "file": "shaders/flutter_scene_mask_clipped.frag"
+  },
   "DebugSurfaceFragment": {
     "type": "fragment",
     "file": "shaders/flutter_scene_debug_surface.frag"

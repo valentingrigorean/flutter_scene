@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
@@ -9,7 +11,10 @@ import 'package:flutter_scene/src/geometry/geometry.dart'
     show bindUnskinnedFrameInfo;
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
-import 'package:flutter_scene/src/scene_encoder.dart' show resolvePipeline;
+import 'package:flutter_scene/src/material/engine_lighting.dart';
+import 'package:flutter_scene/src/material/material.dart';
+import 'package:flutter_scene/src/scene_encoder.dart'
+    show bindKeepAllDepthMask, resolvePipeline;
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/material/vertex_attributes.dart';
@@ -59,9 +64,11 @@ class NodeFilter {
 /// rest of the scene (an x-ray silhouette, what a selection mask wants).
 ///
 /// Reuses the engine's geometry binding (instancing, skinning, winding) so
-/// the silhouette matches the main pass exactly on every backend. This is
-/// the shared implementation behind the built-in selection mask and the
-/// public object-filtered draw.
+/// the silhouette matches the main pass exactly on every backend. An item
+/// whose material has a clip volume draws through the full vertex stage and
+/// discards the fragments its color pass discards. This is the shared
+/// implementation behind the built-in selection mask and the public
+/// object-filtered draw.
 void renderObjectMask({
   required gpu.Texture target,
   required gpu.Texture depth,
@@ -137,9 +144,35 @@ void renderObjectMask({
   rendererSubmissions.submit(commandBuffer);
 }
 
+/// The fragment shader an object mask draws an item through.
+@visibleForTesting
+enum ObjectMaskFragment {
+  /// `MaskFragment`: a flat fill, through the position-only vertex stage
+  /// where the geometry has one.
+  flat,
+
+  /// `MaskMaskedFragment`: a fill cut to the material's alpha mask, through
+  /// the full vertex stage.
+  alphaMasked,
+
+  /// `MaskClippedFragment`: a fill cut to the material's clip volume, and to
+  /// its alpha mask under a full vertex draw, through the full vertex stage,
+  /// which writes the world position the clip volume tests.
+  clipped;
+
+  /// The fragment for an item of [material] in a mask drawn through the full
+  /// vertex stage when [fullVertex] is true.
+  static ObjectMaskFragment of(Material material, {required bool fullVertex}) {
+    if (material.clipVolume != null) return clipped;
+    if (fullVertex && material.depthAlphaMasked) return alphaMasked;
+    return flat;
+  }
+}
+
 /// Records each filtered item's geometry flat into a color mask. Mirrors the
 /// depth-prepass encoder (standard vertex shaders, instancing/skinning,
-/// winding), paired with the flat `MaskFragment`.
+/// winding), paired with the flat `MaskFragment`, or `MaskClippedFragment`
+/// for an item whose material has a clip volume.
 class _ObjectMaskEncoder {
   _ObjectMaskEncoder(
     this._renderPass,
@@ -181,6 +214,8 @@ class _ObjectMaskEncoder {
   static final gpu.Shader _maskShader = baseShaderLibrary['MaskFragment']!;
   static final gpu.Shader _maskedMaskShader =
       baseShaderLibrary['MaskMaskedFragment']!;
+  static final gpu.Shader _clippedMaskShader =
+      baseShaderLibrary['MaskClippedFragment']!;
   static final Vector4 _white = Vector4(1, 1, 1, 1);
 
   final Frustum frustum;
@@ -202,7 +237,13 @@ class _ObjectMaskEncoder {
     // A `vertex { }` material displaces geometry, so pick against its displaced
     // silhouette by running the material's vertex variant here too. This pass
     // binds the real camera, so a camera-relative displacement is correct.
-    final depthVertex = _fullVertex ? null : geometry.depthOnlyVertex;
+    final variant = ObjectMaskFragment.of(
+      item.material,
+      fullVertex: _fullVertex,
+    );
+    final depthVertex = variant == ObjectMaskFragment.flat && !_fullVertex
+        ? geometry.depthOnlyVertex
+        : null;
     final materialVertex = item.material.vertexShaderForGeometry(
       geometry,
       depth: depthVertex != null,
@@ -213,9 +254,13 @@ class _ObjectMaskEncoder {
         ? item.material.vertexAttributesFor(materialVertex)
         : VertexAttributeSchema.none;
     geometry.useVertexAttributes(attributes);
-    // The masked fragment reads the full-vertex varyings.
+    // The masked fragments read the full-vertex varyings.
     final masked = _fullVertex && item.material.depthAlphaMasked;
-    final fragmentShader = masked ? _maskedMaskShader : _maskShader;
+    final fragmentShader = switch (variant) {
+      ObjectMaskFragment.flat => _maskShader,
+      ObjectMaskFragment.alphaMasked => _maskedMaskShader,
+      ObjectMaskFragment.clipped => _clippedMaskShader,
+    };
     final pipeline = resolvePipeline(
       activeVertex,
       fragmentShader,
@@ -245,7 +290,9 @@ class _ObjectMaskEncoder {
       ..[2] = highlight.z
       ..[3] = highlight.w == 0 ? 1.0 : highlight.w;
     _renderPass.bindUniform(
-      fragmentShader.cachedUniformSlot(masked ? 'MaskColor' : 'MaskInfo'),
+      fragmentShader.cachedUniformSlot(
+        variant == ObjectMaskFragment.flat ? 'MaskInfo' : 'MaskColor',
+      ),
       _transientsBuffer.emplace(ByteData.sublistView(color)),
     );
     if (masked) {
@@ -253,6 +300,16 @@ class _ObjectMaskEncoder {
         _renderPass,
         fragmentShader,
         _transientsBuffer,
+      );
+    } else if (variant == ObjectMaskFragment.clipped) {
+      bindKeepAllDepthMask(_renderPass, fragmentShader, _transientsBuffer);
+    }
+    if (variant == ObjectMaskFragment.clipped) {
+      EngineLightingUniforms.bindClipVolume(
+        _renderPass,
+        fragmentShader,
+        _transientsBuffer,
+        item.material.clipVolume,
       );
     }
 

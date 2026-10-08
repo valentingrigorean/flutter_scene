@@ -120,6 +120,42 @@ void main() {
     });
   });
 
+  group('prepareGlb', () {
+    test('prepares the JSON the caller read and edited, with its BIN chunk, '
+        'and states the bytes it holds', () async {
+      final container = parseGlb(_triangleGlb());
+      final json = container.json;
+      json['nodes'] = [(json['nodes']! as List<Object?>).first];
+      final result = await compute((input) => prepareGlb(input.$1, input.$2), (
+        json,
+        container.binaryChunk,
+      ));
+      final prepared = prepareGlbJsonImport(
+        json,
+        container.binaryChunk,
+      ).unwrap();
+
+      expect(prepared.doc.nodes, hasLength(1));
+      final packed = prepared.primitives.single.single!.unskinned;
+      expect(
+        result.retainedBytes,
+        prepared.bufferData.lengthInBytes +
+            packed.vertexBytes.lengthInBytes +
+            packed.indexBytes.lengthInBytes,
+      );
+    });
+
+    test('holds a parse error for the import to throw', () async {
+      final container = parseGlb(_triangleGlb(externalBuffer: true));
+      final result = prepareGlb(container.json, container.binaryChunk);
+      expect(result.retainedBytes, 0);
+      await expectLater(
+        importPreparedGlb(result),
+        throwsA(isA<FormatException>()),
+      );
+    });
+  });
+
   group('importGlb', () {
     test('rethrows the worker\'s FormatException on the calling '
         'isolate', () async {

@@ -27,7 +27,19 @@ const String kSelectionMaskBlackboardKey = 'selection_mask';
 class HighlightStyle {
   /// Outline width in screen pixels.
   double thickness = 3.0;
+
+  /// Whether the scene draws the outline. When false it draws no selection
+  /// mask and no outline, whatever nodes carry a `Node.highlightColor`, and
+  /// does not look for them, so an app that draws its own highlight (through
+  /// `RenderPassContext.drawObjects`, say) pays nothing for the built-in one.
+  bool outline = true;
 }
+
+/// Whether a frame of [renderScene] draws the selection outline under
+/// [style]: the outline is on and a visible item is highlighted. Scans the
+/// items only when the outline is on.
+bool drawsSelectionOutline(HighlightStyle style, RenderScene renderScene) =>
+    style.outline && sceneHasHighlights(renderScene);
 
 /// Whether [renderScene] has any visible highlighted item, i.e. whether the
 /// selection-outline passes have anything to draw this frame.

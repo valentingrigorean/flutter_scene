@@ -715,6 +715,37 @@ gpu.Shader coverageShaderFor(Material material) =>
         : null) ??
     _coverageShader;
 
+/// Binds, on a [shader] that declares the `MaskInfo` block and `mask_texture`
+/// of `depth_mask.glsl`, an alpha mask that keeps every fragment: a cutoff no
+/// alpha falls below, over the white placeholder. For a draw through such a
+/// shader whose material cuts no alpha (a cross-fade's coverage, a clipped
+/// object mask).
+void bindKeepAllDepthMask(
+  gpu.RenderPass pass,
+  gpu.Shader shader,
+  TransientWriter transientsBuffer,
+) {
+  pass.bindUniform(
+    shader.getUniformSlot('MaskInfo'),
+    transientsBuffer.emplace(_keepAllMaskInfo),
+  );
+  pass.bindTexture(
+    shader.getUniformSlot('mask_texture'),
+    Material.whitePlaceholder(null),
+    sampler: _keepAllMaskSampler,
+  );
+}
+
+final ByteData _keepAllMaskInfo = ByteData.sublistView(
+  Float32List(12)
+    ..[0] = -1.0
+    ..[1] = 1.0
+    ..[6] = 1.0
+    ..[7] = 1.0
+    ..[8] = 1.0,
+);
+final gpu.SamplerOptions _keepAllMaskSampler = gpu.SamplerOptions();
+
 /// Whether a color-pass draw of [material] at cross-fade coverage [fade]
 /// takes the coverage pre-draw: an opaque draw that cuts itself out.
 bool drawsCoverage(Material material, double fade) =>
@@ -1118,21 +1149,10 @@ base class SceneEncoder {
   static final gpu.Shader _debugFallbackShader =
       baseShaderLibrary['DebugSurfaceFragment']!;
 
-  // MaskInfo for a cross-fade without an alpha mask: a cutoff no alpha falls
-  // below, over the white placeholder.
-  static final ByteData _noMaskInfo = ByteData.sublistView(
-    Float32List(12)
-      ..[0] = -1.0
-      ..[1] = 1.0
-      ..[6] = 1.0
-      ..[7] = 1.0
-      ..[8] = 1.0,
-  );
   static final Float32List _coverageInfoScratch = Float32List(4);
   static final ByteData _coverageInfoBytes = ByteData.sublistView(
     _coverageInfoScratch,
   );
-  static final gpu.SamplerOptions _coverageMaskSampler = gpu.SamplerOptions();
 
   // Stencil for the coverage pre-draw (mark what it keeps), its color draw
   // (shade only marked pixels and clear them), and every other draw. A color
@@ -1815,15 +1835,7 @@ base class SceneEncoder {
       material.bindDepthAlphaMask(_renderPass, shader, _transientsBuffer);
       return;
     }
-    _renderPass.bindUniform(
-      shader.getUniformSlot('MaskInfo'),
-      _transientsBuffer.emplace(_noMaskInfo),
-    );
-    _renderPass.bindTexture(
-      shader.getUniformSlot('mask_texture'),
-      Material.whitePlaceholder(null),
-      sampler: _coverageMaskSampler,
-    );
+    bindKeepAllDepthMask(_renderPass, shader, _transientsBuffer);
   }
 
   void _setWindingOrder(gpu.WindingOrder windingOrder) {
