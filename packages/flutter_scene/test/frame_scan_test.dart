@@ -3,7 +3,6 @@
 
 import 'package:flutter_scene/scene.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
-import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';

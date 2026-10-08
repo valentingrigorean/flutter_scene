@@ -298,7 +298,8 @@ export 'src/render/debug_view.dart'
         SceneDebugSettings,
         SurfaceDebugChannel,
         SurfaceDebugGroup;
-export 'src/render/render_scene.dart' show RenderItem, RenderScene;
+export 'src/render/render_scene.dart'
+    show RenderItem, RenderScene, SceneMaterialSummary, ViewVisibleItems;
 export 'src/render/render_stats.dart'
     show
         RenderCounters,
