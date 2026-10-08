@@ -10,6 +10,7 @@ import 'package:flutter_scene/src/geometry/geometry.dart';
 import 'package:flutter_scene/src/material/instance_attributes.dart';
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/mesh_draw.dart';
+import 'package:flutter_scene/src/render/instance_record_ring.dart';
 import 'package:vector_math/vector_math.dart';
 
 /// Many copies of one [Geometry] / [Material] pair, each placed by its
@@ -34,7 +35,28 @@ class InstancedMesh implements MeshDrawSource {
     this.cullInstances = false,
     this.sortTransparentInstances = true,
     this.nodeSpaceInstances = false,
-  }) : rows = null;
+  }) : rows = null,
+       _ring = null;
+
+  /// A mesh whose rows are instance records the caller packs, in the layout
+  /// the vertex stage reads: sixteen floats of the row's transform, column
+  /// major, four of its linear RGBA multiplier, then the floats of the
+  /// material's `instance_attributes` in declaration order.
+  ///
+  /// Write rows with [setInstanceRecords] and drop the last ones with
+  /// [truncateInstanceRecords]. The mesh keeps the floats and no object per
+  /// row, and a write reaches the device as the rows it names, so a set that
+  /// a worker packs costs the calling isolate one copy of what changed. The
+  /// records are node-space (see [nodeSpaceInstances]), the rows are neither
+  /// culled nor sorted per instance, and all of them have one winding, which
+  /// [recordsMirrored] states. Other meshes draw the same rows through
+  /// [InstancedMesh.sharing].
+  InstancedMesh.records({required this.geometry, required this.material})
+    : rows = null,
+      cullInstances = false,
+      sortTransparentInstances = false,
+      nodeSpaceInstances = true,
+      _ring = InstanceRecordRing();
 
   /// A mesh that draws the rows of [rows] with its own [geometry] and
   /// [material].
@@ -56,9 +78,14 @@ class InstancedMesh implements MeshDrawSource {
   }) : cullInstances = false,
        sortTransparentInstances = false,
        nodeSpaceInstances = true,
+       _ring = null,
        assert(rows.rows == null, 'Share the mesh that holds the rows.'),
        assert(
          material.instanceAttributes == null,
+         'A shared record carries no instance attribute.',
+       ),
+       assert(
+         rows.instanceAttributeFloats == 0,
          'A shared record carries no instance attribute.',
        ),
        assert(
@@ -128,6 +155,191 @@ class InstancedMesh implements MeshDrawSource {
 
   StateError _sharedRows() =>
       StateError('This mesh draws the rows of another mesh; write them there.');
+
+  void _checkListRows() {
+    if (rows != null) throw _sharedRows();
+    if (_ring != null) {
+      throw StateError(
+        'This mesh holds instance records; write them with '
+        'setInstanceRecords.',
+      );
+    }
+  }
+
+  // The device copies of the records of a mesh that holds records, else null.
+  final InstanceRecordRing? _ring;
+
+  /// The mesh whose records the device holds for the draws of this mesh: the
+  /// mesh whose rows it shares, itself when it holds records, or null when
+  /// its render item packs the rows of its lists.
+  @internal
+  InstancedMesh? get recordSource => rows ?? (_ring == null ? null : this);
+
+  /// Whether the rows this mesh draws are records (see
+  /// [InstancedMesh.records]).
+  bool get holdsRecords => (rows ?? this)._ring != null;
+
+  /// The device copies of the records of a mesh that holds them.
+  @internal
+  InstanceRecordRing get recordRing => _ring!;
+
+  /// The floats of one record: twenty, then those of the material's
+  /// `instance_attributes`.
+  int get instanceRecordFloats => 20 + instanceAttributeFloats;
+
+  /// Whether the rows of a mesh that holds records mirror, which reverses the
+  /// winding of every row. Rows of both windings need a mesh each.
+  bool get recordsMirrored => (rows ?? this)._recordsMirrored;
+  bool _recordsMirrored = false;
+  set recordsMirrored(bool value) {
+    _checkRecords();
+    if (_recordsMirrored == value) return;
+    _recordsMirrored = value;
+    _revision++;
+    _tellRowListeners();
+  }
+
+  void _checkRecords() {
+    if (rows != null) throw _sharedRows();
+    if (_ring == null) {
+      throw StateError(
+        'This mesh holds a list of instances; create it with '
+        'InstancedMesh.records to write records.',
+      );
+    }
+  }
+
+  Float32List _recordStore = Float32List(0);
+  Float32List _recordBounds = Float32List(0);
+  ByteData? _recordStoreBytes;
+  int _recordCount = 0;
+
+  // The hull of the row bounds, which a row that leaves one of its faces
+  // makes loose until it is read again.
+  final Aabb3 _recordHull = Aabb3();
+  bool _recordHullLoose = false;
+
+  /// The whole record store of a mesh that holds records, past its rows too.
+  @internal
+  ByteData get recordStoreBytes =>
+      _recordStoreBytes ??= ByteData.sublistView(_recordStore);
+
+  /// Writes the rows from [first] on from [records], which holds whole
+  /// records of [instanceRecordFloats] floats, and their bounds from
+  /// [bounds]: six floats per row, the minimum then the maximum corner of
+  /// the box the row's geometry fills in the space of the node.
+  ///
+  /// [first] is at most [instanceCount]; rows past the count are appended.
+  /// The floats are copied. The mesh is culled by the hull of the row
+  /// bounds, so a box that holds every mesh sharing the row keeps each of
+  /// them drawn.
+  void setInstanceRecords(
+    int first,
+    Float32List records, {
+    required Float32List bounds,
+  }) {
+    _checkRecords();
+    final width = instanceRecordFloats;
+    final count = records.length ~/ width;
+    if (count * width != records.length) {
+      throw ArgumentError(
+        'A record of this mesh is $width floats; ${records.length} do not '
+        'hold whole records.',
+      );
+    }
+    if (bounds.length != count * 6) {
+      throw ArgumentError(
+        '$count rows need ${count * 6} bounds floats, not ${bounds.length}.',
+      );
+    }
+    RangeError.checkValueInInterval(first, 0, _recordCount, 'first');
+    if (count == 0) return;
+    final end = first + count;
+    if (_recordStore.length < end * width) {
+      final capacity = math.max(end, (_recordStore.length ~/ width) * 2);
+      _recordStore = Float32List(capacity * width)
+        ..setRange(0, _recordCount * width, _recordStore);
+      _recordBounds = Float32List(capacity * 6)
+        ..setRange(0, _recordCount * 6, _recordBounds);
+      _recordStoreBytes = null;
+    }
+    final replaced = math.min(end, _recordCount);
+    for (var row = first; row < replaced && !_recordHullLoose; row++) {
+      _recordHullLoose = _touchesHull(row);
+    }
+    _recordStore.setRange(first * width, end * width, records);
+    _recordBounds.setRange(first * 6, end * 6, bounds);
+    if (_recordCount == 0) {
+      _recordHull
+        ..min.setValues(bounds[0], bounds[1], bounds[2])
+        ..max.setValues(bounds[3], bounds[4], bounds[5]);
+    }
+    if (end > _recordCount) _recordCount = end;
+    if (!_recordHullLoose) _growHull(first, end);
+    _ring!.changed(first, count);
+    _revision++;
+    _tellRowListeners();
+  }
+
+  /// Drops the rows from [count] on of a mesh that holds records.
+  void truncateInstanceRecords(int count) {
+    _checkRecords();
+    RangeError.checkValueInInterval(count, 0, _recordCount, 'count');
+    if (count == _recordCount) return;
+    for (var row = count; row < _recordCount && !_recordHullLoose; row++) {
+      _recordHullLoose = _touchesHull(row);
+    }
+    _recordCount = count;
+    if (count == 0) _recordHullLoose = false;
+    _revision++;
+    _tellRowListeners();
+  }
+
+  bool _touchesHull(int row) {
+    final bounds = _recordBounds;
+    final at = row * 6;
+    final min = _recordHull.min;
+    final max = _recordHull.max;
+    return bounds[at] <= min.x ||
+        bounds[at + 1] <= min.y ||
+        bounds[at + 2] <= min.z ||
+        bounds[at + 3] >= max.x ||
+        bounds[at + 4] >= max.y ||
+        bounds[at + 5] >= max.z;
+  }
+
+  void _growHull(int first, int end) {
+    final bounds = _recordBounds;
+    final min = _recordHull.min;
+    final max = _recordHull.max;
+    var minX = min.x, minY = min.y, minZ = min.z;
+    var maxX = max.x, maxY = max.y, maxZ = max.z;
+    for (var at = first * 6; at < end * 6; at += 6) {
+      if (bounds[at] < minX) minX = bounds[at];
+      if (bounds[at + 1] < minY) minY = bounds[at + 1];
+      if (bounds[at + 2] < minZ) minZ = bounds[at + 2];
+      if (bounds[at + 3] > maxX) maxX = bounds[at + 3];
+      if (bounds[at + 4] > maxY) maxY = bounds[at + 4];
+      if (bounds[at + 5] > maxZ) maxZ = bounds[at + 5];
+    }
+    min.setValues(minX, minY, minZ);
+    max.setValues(maxX, maxY, maxZ);
+  }
+
+  // The hull of the row bounds, or null for no row. The box is the mesh's
+  // own and holds until the next row write.
+  Aabb3? _recordBoundsHull() {
+    if (_recordCount == 0) return null;
+    if (_recordHullLoose) {
+      _recordHullLoose = false;
+      final bounds = _recordBounds;
+      _recordHull
+        ..min.setValues(bounds[0], bounds[1], bounds[2])
+        ..max.setValues(bounds[3], bounds[4], bounds[5]);
+      _growHull(1, _recordCount);
+    }
+    return _recordHull;
+  }
 
   /// The geometry drawn for every instance.
   final Geometry geometry;
@@ -226,24 +438,29 @@ class InstancedMesh implements MeshDrawSource {
 
   /// The rows changed after [revision], oldest first and possibly repeated,
   /// or null when a change since then moved rows, so every row must be read
-  /// again. A row at or past [instanceCount] was removed from the end.
+  /// again. A row at or past [instanceCount] was removed from the end. Null
+  /// for a mesh that holds records, whose changes go to its [recordRing].
   @internal
   List<int>? rowsChangedSince(int revision) {
     final shared = rows;
     if (shared != null) return shared.rowsChangedSince(revision);
+    if (_ring != null) return null;
     if (revision < _changedFrom || revision > _revision) return null;
     return _changedRows.sublist(revision - _changedFrom);
   }
 
   /// The number of instances.
-  int get instanceCount => (rows ?? this)._instances.length;
+  int get instanceCount {
+    final held = rows ?? this;
+    return held._ring == null ? held._instances.length : held._recordCount;
+  }
 
   /// Adds an instance placed by [transform] and returns its index.
   ///
   /// The matrix is copied, so later mutating [transform] does not affect
   /// the instance; use [setInstanceTransform] to move it.
   int addInstance(Matrix4 transform, {Vector4? color}) {
-    if (rows != null) throw _sharedRows();
+    _checkListRows();
     _instances.add(transform.clone());
     _colors.add((color ?? _white).clone());
     _windingFlipped.add(transform.determinant() < 0);
@@ -256,7 +473,7 @@ class InstancedMesh implements MeshDrawSource {
 
   /// Replaces the transform of the instance at [index].
   void setInstanceTransform(int index, Matrix4 transform) {
-    if (rows != null) throw _sharedRows();
+    _checkListRows();
     _instances[index].setFrom(transform);
     _windingFlipped[index] = transform.determinant() < 0;
     _rowChanged(index);
@@ -271,7 +488,7 @@ class InstancedMesh implements MeshDrawSource {
     void Function(List<Matrix4> transforms) update, {
     bool recomputeWinding = true,
   }) {
-    if (rows != null) throw _sharedRows();
+    _checkListRows();
     try {
       update(_instanceUpdateView ??= UnmodifiableListView<Matrix4>(_instances));
     } finally {
@@ -286,7 +503,7 @@ class InstancedMesh implements MeshDrawSource {
 
   /// Replaces the color multiplier of the instance at [index].
   void setInstanceColor(int index, Vector4 color) {
-    if (rows != null) throw _sharedRows();
+    _checkListRows();
     _colors[index].setFrom(color);
     _rowChanged(index);
   }
@@ -299,7 +516,7 @@ class InstancedMesh implements MeshDrawSource {
   /// An instance whose attributes are never set draws with zeros.
   /// {@category Scene graph}
   void setInstanceAttribute(int index, String name, Object value) {
-    if (rows != null) throw _sharedRows();
+    _checkListRows();
     RangeError.checkValidIndex(index, _instances, 'index');
     final schema = _requireSchema(name);
     final slot = schema.slot(name);
@@ -334,7 +551,7 @@ class InstancedMesh implements MeshDrawSource {
   /// the expected length.
   /// {@category Scene graph}
   void setInstanceAttributes(int index, Float32List packed) {
-    if (rows != null) throw _sharedRows();
+    _checkListRows();
     RangeError.checkValidIndex(index, _instances, 'index');
     final schema = _requireSchema(null);
     if (packed.length != schema.floatCount) {
@@ -350,7 +567,7 @@ class InstancedMesh implements MeshDrawSource {
   /// Removes the instance at [index]. Instances after it shift down by
   /// one, so their indices change.
   void removeInstanceAt(int index) {
-    if (rows != null) throw _sharedRows();
+    _checkListRows();
     final schema = _syncAttributeStorage();
     if (schema != null) {
       final floats = schema.floatCount;
@@ -378,7 +595,7 @@ class InstancedMesh implements MeshDrawSource {
 
   /// Removes every instance.
   void clearInstances() {
-    if (rows != null) throw _sharedRows();
+    _checkListRows();
     _instances.clear();
     _colors.clear();
     _windingFlipped.clear();
@@ -468,15 +685,34 @@ class InstancedMesh implements MeshDrawSource {
 
   /// The live per-instance transform list the render item iterates.
   @internal
-  List<Matrix4> get instances => (rows ?? this)._instances;
+  List<Matrix4> get instances {
+    final held = rows ?? this;
+    return held._ring == null
+        ? held._instances
+        : held._recordTransforms ??= _RecordTransforms(held);
+  }
+
+  List<Matrix4>? _recordTransforms;
+  List<Vector4>? _recordColors;
+  List<bool>? _recordWinding;
 
   /// Live per-instance linear RGBA multipliers.
   @internal
-  List<Vector4> get colors => (rows ?? this)._colors;
+  List<Vector4> get colors {
+    final held = rows ?? this;
+    return held._ring == null
+        ? held._colors
+        : held._recordColors ??= _RecordColors(held);
+  }
 
   /// Per-instance local winding parity matching [instances].
   @internal
-  List<bool> get windingFlipped => (rows ?? this)._windingFlipped;
+  List<bool> get windingFlipped {
+    final held = rows ?? this;
+    return held._ring == null
+        ? held._windingFlipped
+        : held._recordWinding ??= _RecordWinding(held);
+  }
 
   /// Changes whenever instance data changes.
   @internal
@@ -485,9 +721,12 @@ class InstancedMesh implements MeshDrawSource {
   /// Aggregate AABB over every instance, in the instanced mesh's local
   /// space, or `null` when [geometry] has no computable bounds or there
   /// are no instances. Cached; after a change only the changed rows'
-  /// bounds are transformed again before the hull.
+  /// bounds are transformed again before the hull. For rows that are records
+  /// it is the hull of the bounds [setInstanceRecords] took.
   @internal
   Aabb3? get aggregateBounds {
+    final held = rows ?? this;
+    if (held._ring != null) return held._recordBoundsHull();
     final geometryVersion = geometry.localBoundsVersion;
     if (_boundsRevision != revision ||
         _boundsGeometryVersion != geometryVersion) {
@@ -550,5 +789,68 @@ class InstancedMesh implements MeshDrawSource {
       maxZ = math.max(maxZ, packed[offset + 5]);
     }
     return Aabb3.minMax(Vector3(minX, minY, minZ), Vector3(maxX, maxY, maxZ));
+  }
+}
+
+// The rows of a mesh that holds records, read as the lists a mesh of
+// instances holds. A read builds its value from the record.
+abstract base class _RecordRows<T> extends ListBase<T> {
+  _RecordRows(this._mesh);
+
+  final InstancedMesh _mesh;
+
+  @override
+  int get length => _mesh._recordCount;
+
+  @override
+  set length(int value) => throw UnsupportedError('The rows are records.');
+
+  @override
+  void operator []=(int index, T value) =>
+      throw UnsupportedError('The rows are records.');
+
+  int _offsetOf(int index) {
+    RangeError.checkValidIndex(index, this);
+    return index * _mesh.instanceRecordFloats;
+  }
+}
+
+final class _RecordTransforms extends _RecordRows<Matrix4> {
+  _RecordTransforms(super.mesh);
+
+  @override
+  Matrix4 operator [](int index) {
+    final offset = _offsetOf(index);
+    return Matrix4.fromFloat32List(
+      Float32List.fromList(
+        Float32List.sublistView(_mesh._recordStore, offset, offset + 16),
+      ),
+    );
+  }
+}
+
+final class _RecordColors extends _RecordRows<Vector4> {
+  _RecordColors(super.mesh);
+
+  @override
+  Vector4 operator [](int index) {
+    final store = _mesh._recordStore;
+    final offset = _offsetOf(index) + 16;
+    return Vector4(
+      store[offset],
+      store[offset + 1],
+      store[offset + 2],
+      store[offset + 3],
+    );
+  }
+}
+
+final class _RecordWinding extends _RecordRows<bool> {
+  _RecordWinding(super.mesh);
+
+  @override
+  bool operator [](int index) {
+    RangeError.checkValidIndex(index, this);
+    return _mesh._recordsMirrored;
   }
 }

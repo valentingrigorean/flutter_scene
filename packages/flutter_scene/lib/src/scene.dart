@@ -212,7 +212,6 @@ enum AntiAliasingMode {
 /// it provides methods for adding and removing nodes from the scene graph.
 /// {@category Scene graph}
 base class Scene implements SceneGraph {
-  int _renderMetadataStructureRevision = -1;
   int _materialInputStructureRevision = -1;
   int _materialInputMaterialRevision = -1;
   int _renderMetadataStaticShadowRevision = -1;
@@ -2628,23 +2627,11 @@ base class Scene implements SceneGraph {
   // of the static shadow content, when the render scene changed since the
   // last refresh, and returns whether any casts.
   bool _refreshStaticShadowMetadata() {
-    final structureRevision = renderScene.structureRevision;
     final staticShadowRevision = renderScene.staticShadowRevision;
-    final refreshStaticShadows =
-        _renderMetadataStructureRevision != structureRevision ||
-        _renderMetadataStaticShadowRevision != staticShadowRevision;
-    if (refreshStaticShadows) {
-      var hasStaticShadowCasters = false;
-      for (final item in renderScene.items) {
-        if (item.shadowStatic && item.castsShadows && item.visible) {
-          hasStaticShadowCasters = true;
-          break;
-        }
-      }
-      _cachedHasStaticShadowCasters = hasStaticShadowCasters;
+    if (_renderMetadataStaticShadowRevision != staticShadowRevision) {
+      _cachedHasStaticShadowCasters = renderScene.hasStaticShadowCasters;
       _staticShadowContentRevision++;
       _renderMetadataStaticShadowRevision = staticShadowRevision;
-      _renderMetadataStructureRevision = structureRevision;
     }
     return _cachedHasStaticShadowCasters;
   }

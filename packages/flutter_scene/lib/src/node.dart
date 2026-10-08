@@ -1339,6 +1339,22 @@ base class Node implements SceneGraph, PrePassNode {
   void removeAnimationClip(AnimationClip clip) =>
       _animationPlayer?.removeClip(clip);
 
+  /// The size of the geometry a runtime glTF import ([fromGlbBytes],
+  /// [fromGlbAsset], [fromGltfBytes]) uploaded for the tree under this node.
+  ///
+  /// Set on the root node those imports return, null on every other node,
+  /// a [clone] of that root included.
+  ///
+  /// ```dart
+  /// final node = await Node.fromGlbBytes(bytes);
+  /// final uploaded = node.importStats!.geometryBytes;
+  /// ```
+  GltfImportStats? get importStats => _importStats;
+  GltfImportStats? _importStats;
+
+  @internal
+  set importStats(GltfImportStats? value) => _importStats = value;
+
   /// Load a glTF binary (GLB) model directly from raw bytes.
   ///
   /// No offline conversion is required, useful for runtime use cases such
