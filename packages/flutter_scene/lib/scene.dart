@@ -274,6 +274,8 @@ export 'src/render/frame_transients.dart'
 export 'src/render/shadow_pass.dart'
     show SpotShadowInfo, debugSplitShadowMap, shadowMapIsSplit;
 export 'src/render/draw_recorder.dart' show DrawPhase, DrawSkipReason;
+export 'src/render/depth_raster.dart'
+    show DepthRaster, currentDrawDepthRaster;
 export 'src/render/linear_depth_probe.dart'
     show debugSplitLinearDepth, linearDepthIsSplit;
 export 'src/render/mip_sampling_probe.dart' show mipChainsAreSampled;
