@@ -380,6 +380,17 @@ export 'src/render/env_prefilter.dart'
         prefilterEquirectRadiance,
         prefilterEquirectRadianceToCube;
 export 'src/texture/ktx2/ktx2.dart' show Ktx2FormatException;
+export 'src/texture/block_texture.dart'
+    show
+        BlockTexture,
+        BlockTextureFormat,
+        BlockTexturePlan,
+        blockTextureMips,
+        blockTextureSupport,
+        blockTextureToTexture2D,
+        isKtxTexture,
+        planKtxTexture,
+        transcodeKtxTexture;
 export 'src/runtime_importer/gltf_resources.dart' show GltfResourceResolver;
 export 'src/scene_path.dart'
     show BezierPath, CatmullRomPath, PolylinePath, ScenePath, ScenePathFrame;
