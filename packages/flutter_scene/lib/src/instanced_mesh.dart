@@ -85,6 +85,10 @@ class InstancedMesh implements MeshDrawSource {
          'A shared record carries no instance attribute.',
        ),
        assert(
+         rows.instanceAttributeFloats == 0,
+         'A shared record carries no instance attribute.',
+       ),
+       assert(
          rows.nodeSpaceInstances,
          'A shared row set holds node-space records.',
        );

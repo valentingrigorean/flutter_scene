@@ -256,6 +256,21 @@ void main() {
       expect(scene.bvh.itemCount, 2000);
     });
 
+    test('items that join in order along a line leave a tree of logarithmic '
+        'depth', () {
+      final scene = RenderScene()
+        ..add(_itemAt(0))
+        ..add(_itemAt(4))
+        ..rebuildIfDirty();
+      for (var i = 2; i < 4096; i++) {
+        scene
+          ..add(_itemAt(i * 4.0))
+          ..rebuildIfDirty();
+      }
+      expect(scene.bvh.itemCount, 4096);
+      expect(scene.bvh.debugDepth, lessThan(40));
+    });
+
     test('a scene that adds and removes items one frame at a time culls as '
         'a brute-force frustum test does', () {
       final scene = RenderScene();

@@ -305,11 +305,96 @@ class Bvh {
     _refitFrom(grandparent);
   }
 
-  // Joins the boxes of [node] and of each node above it again.
+  // Joins the boxes of [node] and of each node above it again, turning each
+  // where that shrinks a child, so items that arrive in order along a line
+  // leave a tree of logarithmic depth and not a chain.
   void _refitFrom(int node) {
     for (var at = node; at >= 0; at = _parents[at]) {
+      _rotate(at);
       _joinChildren(at);
     }
+  }
+
+  // Half the surface area of the box that holds nodes [a] and [b].
+  double _unionArea(int a, int b) {
+    final bounds = _bounds;
+    final p = a * 6, q = b * 6;
+    final dx =
+        math.max(bounds[p + 3], bounds[q + 3]) - math.min(bounds[p], bounds[q]);
+    final dy =
+        math.max(bounds[p + 4], bounds[q + 4]) -
+        math.min(bounds[p + 1], bounds[q + 1]);
+    final dz =
+        math.max(bounds[p + 5], bounds[q + 5]) -
+        math.min(bounds[p + 2], bounds[q + 2]);
+    return dx * dy + dy * dz + dz * dx;
+  }
+
+  // Swaps a child of [node] with a child of its other child where that
+  // makes the other child's box smaller.
+  void _rotate(int node) {
+    final children = _children;
+    final left = children[node * 2];
+    final right = children[node * 2 + 1];
+    var gain = 0.0;
+    var inner = -1;
+    var slot = 0;
+    if (children[left * 2] >= 0) {
+      final area = _area(left * 6);
+      for (var side = 0; side < 2; side++) {
+        final kept = children[left * 2 + 1 - side];
+        final change = _unionArea(right, kept) - area;
+        if (change < gain) {
+          gain = change;
+          inner = left;
+          slot = side;
+        }
+      }
+    }
+    if (children[right * 2] >= 0) {
+      final area = _area(right * 6);
+      for (var side = 0; side < 2; side++) {
+        final kept = children[right * 2 + 1 - side];
+        final change = _unionArea(left, kept) - area;
+        if (change < gain) {
+          gain = change;
+          inner = right;
+          slot = side;
+        }
+      }
+    }
+    if (inner < 0) return;
+    final outerSlot = inner == left ? 1 : 0;
+    final outer = children[node * 2 + outerSlot];
+    final raised = children[inner * 2 + slot];
+    children[inner * 2 + slot] = outer;
+    _parents[outer] = inner;
+    children[node * 2 + outerSlot] = raised;
+    _parents[raised] = node;
+    _joinChildren(inner);
+  }
+
+  /// The count of nodes on the longest path from the root to a leaf.
+  @visibleForTesting
+  int get debugDepth {
+    if (_root < 0) return 0;
+    var deepest = 0;
+    final nodes = [_root];
+    final depths = [1];
+    while (nodes.isNotEmpty) {
+      final node = nodes.removeLast();
+      final depth = depths.removeLast();
+      if (depth > deepest) deepest = depth;
+      final left = _children[node * 2];
+      if (left < 0) continue;
+      nodes
+        ..add(left)
+        ..add(_children[node * 2 + 1]);
+      depths
+        ..add(depth + 1)
+        ..add(depth + 1);
+    }
+    return deepest;
   }
 
   // Traversal stack. A traversal holds at most one node per level and one

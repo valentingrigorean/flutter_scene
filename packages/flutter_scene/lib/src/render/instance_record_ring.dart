@@ -189,7 +189,7 @@ final class InstanceRecordRing {
     _landed.add(first, first + count);
   }
 
-  // Gives back a buffer no frame bound for a while, once the records rest.
+  // Gives back a buffer no frame bound for a while.
   void _dropIdle() {
     final current = _current;
     _buffers.removeWhere(
@@ -235,7 +235,7 @@ final class InstanceRecordRing {
       }
     }
     var current = _current;
-    if (_buffers.length > 1 && landedBytes == 0) _dropIdle();
+    if (_buffers.length > 1) _dropIdle();
     if (current != null && !current.pending.isEmpty) {
       if (current.free) {
         current.boundRows = 0;
