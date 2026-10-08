@@ -201,6 +201,28 @@ void main() {
     expect(device.buffers, hasLength(1));
   });
 
+  test('rows that change in more scattered ranges than a buffer keeps apart '
+      'count as the changed rows alone', () {
+    frame();
+    for (var row = 0; row < _rows; row += 4) {
+      mesh.setInstanceRecords(
+        row,
+        _records(row, 1, tint: 0.5),
+        bounds: _bounds(row, 1),
+      );
+    }
+    expect(uploaded(frame), _rows ~/ 4 * _recordBytes);
+  });
+
+  test('a pad widens the bounds of a mesh that holds records on every '
+      'side', () {
+    mesh.recordBoundsPad = 3;
+    expect(mesh.aggregateBounds!.min, Vector3(-3.5, -3.5, -3.5));
+    expect(mesh.aggregateBounds!.max.x, (_rows - 1) * 2.0 + 3.5);
+    mesh.recordBoundsPad = 0;
+    expect(mesh.aggregateBounds!.min, Vector3(-0.5, -0.5, -0.5));
+  });
+
   test('the bounds of a mesh that holds records are the hull of the bounds '
       'its rows state', () {
     expect(mesh.aggregateBounds!.min, Vector3(-0.5, -0.5, -0.5));

@@ -1,6 +1,7 @@
 ## 0.24.1
 
 * `InstancedMesh.instanceTransformAt` reads a copy of one instance's transform from a mesh of instances, of shared rows or of records.
+* `InstancedMesh.recordBoundsPad` widens the bounds of a mesh that holds records on every side, for rows its vertex stage moves.
 * `InstancedMesh.records` holds its rows as instance records the caller packs, in the layout the vertex stage reads: `setInstanceRecords(first, records, bounds:)` writes whole rows with the box each fills and `truncateInstanceRecords` drops the last ones. The mesh keeps the floats and no object per row, is culled by the hull of the boxes it was given, and other meshes draw its rows through `InstancedMesh.sharing`.
 * The instance records an instanced mesh keeps on the device are written by changed range, whether or not a frame is still on the GPU: a range a frame in flight may read goes to the next buffer of a ring per mesh and to the others as they come free, and a row appended past what any frame draws is written in place. No change copies the record store. `RenderStats.instanceBytesUploaded` counts the bytes of the rows that changed, once, and `instanceBytesReplayed` the bytes written beyond them.
 * A scene places an item that joins it, leaves it or changes between bounded and unbounded by one insert or removal in its bounding volume hierarchy; the tree is sorted and built in one pass only where it holds no item yet.
