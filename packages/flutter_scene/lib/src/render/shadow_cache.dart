@@ -161,24 +161,26 @@ class DirectionalShadowCache {
   /// The cache entries, by cascade, as the last [plan] left them.
   List<ShadowCascadeCacheEntry> get debugEntries => _entries;
 
-  /// The static tile textures the cascades hold, and the depth attachment
-  /// their refreshes render with.
+  /// The static tile textures the cascades hold, and the attachment their
+  /// refreshes render with.
   Iterable<gpu.Texture> get heldTextures =>
-      _entries.map((entry) => entry.tile).nonNulls.followedBy([?tileDepth]);
+      _entries.map((entry) => entry.tile).nonNulls.followedBy([?tileScratch]);
   int _resolution = 0;
   ShadowCasterFaces _casterFaces = ShadowCasterFaces.front;
   int _casterChannelMask = 0xFF;
   int _staticShadowRevision = 0;
   int _castersSeen = 0;
 
-  /// The depth attachment every tile refresh renders with, allocated lazily by
-  /// the shadow pass and dropped with the tiles on a resolution change.
+  /// The attachment every tile refresh renders with beside the tile, allocated
+  /// lazily by the shadow pass and dropped with the tiles on a resolution
+  /// change: the depth attachment of a color tile, or the discarded color
+  /// attachment of a depth tile.
   ///
   /// Backends cache a framebuffer per color texture (flutter/flutter#192538),
-  /// so a tile must keep the depth it was first rendered with for as long as
-  /// it lives. A pooled depth rotates and is freed on resize or memory
+  /// so a tile must keep the attachment it was first rendered with for as long
+  /// as it lives. A pooled one rotates and is freed on resize or memory
   /// pressure, leaving the cached framebuffer attached to a released texture.
-  gpu.Texture? tileDepth;
+  gpu.Texture? tileScratch;
 
   // The draw origin the entries are stated from.
   final Float64List _origin = Float64List(3);
@@ -241,10 +243,10 @@ class DirectionalShadowCache {
         for (final entry in _entries) {
           entry.tile = null;
         }
-        tileDepth = null;
+        tileScratch = null;
       }
       // Kept entries keep their tile textures, which still pair with
-      // [tileDepth].
+      // [tileScratch].
       if (_entries.length > idealCascades.length) {
         _entries.length = idealCascades.length;
       }

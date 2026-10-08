@@ -272,7 +272,11 @@ export 'src/render/custom_render_pass.dart'
 export 'src/render/frame_transients.dart'
     show GpuSubmissions, TransientWriter, gpuSubmissions;
 export 'src/render/shadow_pass.dart'
-    show SpotShadowInfo, debugSplitShadowMap, shadowMapIsSplit;
+    show
+        SpotShadowInfo,
+        debugSplitShadowMap,
+        shadowMapIsDepth,
+        shadowMapIsSplit;
 export 'src/render/draw_recorder.dart' show DrawPhase, DrawSkipReason;
 export 'src/render/depth_raster.dart' show DepthRaster, currentDrawDepthRaster;
 export 'src/render/linear_depth_probe.dart'

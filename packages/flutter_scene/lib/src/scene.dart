@@ -2322,7 +2322,7 @@ base class Scene implements SceneGraph {
           gpu.StorageMode.devicePrivate,
           1,
           1,
-          format: shadowMapFormat,
+          format: shadowPassColorFormat,
           enableShaderReadUsage: false,
         ),
       ),
@@ -3889,18 +3889,16 @@ base class Scene implements SceneGraph {
     // pass drew with, which holds those surfaces already. Where the view
     // cannot sample it (four samples a texel under multisampling, a device
     // that samples no depth attachment) the linear depth stands in for it.
-    final wantStoredDepth = _viewPasses(
-      view,
-    ).any((pass) => pass.inputs.contains(RenderInput.depthStored));
+    final wantStoredDepth = _viewPasses(view)
+        .any((pass) => pass.inputs.contains(RenderInput.depthStored));
     final sampleStoredDepth =
         wantStoredDepth && storedDepthIsSampled && !enableMsaa;
     final linearDepthForStored = wantStoredDepth && !sampleStoredDepth;
     final patchTranslucentDepth =
         wantDof ||
         linearDepthForStored ||
-        _viewPasses(
-          view,
-        ).any((pass) => pass.inputs.contains(RenderInput.depth));
+        _viewPasses(view)
+            .any((pass) => pass.inputs.contains(RenderInput.depth));
     final enableFxaa = effectiveAa == AntiAliasingMode.fxaa && !debugActive;
     if (effectiveAa == AntiAliasingMode.smaa) {
       _repaintWhenLoaded(SmaaPass.request());
@@ -4051,9 +4049,8 @@ base class Scene implements SceneGraph {
         !(capturePlanarReflections &&
             !captureLinearColor &&
             renderScene.planarReflectorComponents.isNotEmpty) &&
-        !_viewPasses(
-          view,
-        ).any((pass) => pass.inputs.contains(RenderInput.shadowMap));
+        !_viewPasses(view)
+            .any((pass) => pass.inputs.contains(RenderInput.shadowMap));
     if (receiverCullingAllowed) {
       // Receivers past the last cascade never sample the atlas, so an
       // infinite far plane can stop there.
