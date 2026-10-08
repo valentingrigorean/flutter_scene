@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter/foundation.dart'
     show
         ErrorDescription,
@@ -23,6 +24,7 @@ import 'engine_lighting.dart';
 import 'physical_material.dart';
 import 'physically_based_material.dart' show AlphaMode, TextureTransform;
 import 'preprocessed_material.dart';
+
 import 'package:flutter_scene/src/material/shader_interface.dart'
     show markEngineShaderLibrary;
 
@@ -67,10 +69,11 @@ final class _PhysicalAssets {
   final Map<String, Object?> metadata;
 }
 
-Future<_PhysicalAssets> _loadPhysicalAssets() =>
-    _physicalAssetsFuture ??= _loadPhysicalAssetsAndResetOnFailure().then(
-      (assets) => _physicalAssets = assets,
-    );
+Future<_PhysicalAssets> _loadPhysicalAssets() => _physicalAssetsFuture ??=
+    _loadPhysicalAssetsAndResetOnFailure().then((assets) {
+      markRenderSourcesChanged();
+      return _physicalAssets = assets;
+    });
 
 Future<_PhysicalAssets> _loadPhysicalAssetsAndResetOnFailure() async {
   try {
@@ -219,12 +222,20 @@ bool get physicalMaterialResourcesReady =>
 /// Overrides [physicalMaterialResourcesReady] for tests that exercise a
 /// material's behavior once the bundle is in, with no GPU to load it.
 @visibleForTesting
-bool? debugPhysicalMaterialResourcesReadyOverride;
+bool? get debugPhysicalMaterialResourcesReadyOverride => _readyOverride;
+@visibleForTesting
+set debugPhysicalMaterialResourcesReadyOverride(bool? value) {
+  _readyOverride = value;
+  markRenderSourcesChanged();
+}
+
+bool? _readyOverride;
 
 /// Forgets the loaded bundle and any recorded failure, for tests.
 @visibleForTesting
 void resetPhysicalMaterialResourcesForTesting() {
-  debugPhysicalMaterialResourcesReadyOverride = null;
+  _readyOverride = null;
+  markRenderSourcesChanged();
   _physicalAssetsFuture = null;
   _physicalAssets = null;
   _physicalAssetsFailed = false;

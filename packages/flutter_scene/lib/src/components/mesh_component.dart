@@ -17,6 +17,9 @@ import 'package:flutter_scene/src/render/render_scene.dart';
 /// node's first `MeshComponent`.
 /// {@category Scene graph}
 class MeshComponent extends Component {
+  @override
+  bool get ticks => false;
+
   /// Creates a component that draws [mesh].
   MeshComponent(this._mesh);
 
@@ -32,12 +35,16 @@ class MeshComponent extends Component {
     if (_canRetainRenderItems(value)) {
       _mesh = value;
       _refreshRetainedMaterials();
+      if (isAttached) node.internalRenderSourcesChanged();
       return;
     }
     _unregisterRenderItems();
     _mesh = value;
     _registerRenderItems();
-    if (isAttached) node.markBoundsDirty();
+    if (isAttached) {
+      node.markBoundsDirty();
+      node.internalRenderSourcesChanged();
+    }
   }
 
   bool _canRetainRenderItems(Mesh value) {
@@ -264,6 +271,7 @@ class MeshComponent extends Component {
       if (transformChanged) {
         item.previousWorldTransform.setFrom(item.worldTransform);
         item.worldTransform.setFrom(worldTransform);
+        item.worldTransformRevision++;
       }
       item.refreshWinding(windingFlipped);
       item.shadowStatic = node.shadowStatic;

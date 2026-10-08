@@ -58,6 +58,9 @@ final class NodePoseTarget implements sim.PoseTarget {
 /// contract stay first-class without widening it.
 /// {@category Physics}
 class PhysicsWorld extends Component {
+  @override
+  bool get ticks => false;
+
   PhysicsWorld(this.simulation);
 
   /// The backend this world drives.

@@ -1,8 +1,10 @@
-// Covers the per-instance cull of a shadow map: an instanced caster draws
-// into a cascade only the instances whose bounds meet that cascade's
-// light-space box, and the color pass's own instance cull is left alone.
+// Covers the per-cell cull of a shadow map: an instanced caster draws into
+// a cascade only the cells whose bounds meet that cascade's light-space box,
+// and the color pass's own cell cull is left alone. Each cell here holds
+// one instance.
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/shadow_encoder.dart';
 import 'package:flutter_scene/scene.dart';
@@ -44,6 +46,7 @@ class _StubMaterial extends Material {
 RenderItem _grid({bool cullInstances = true}) {
   final item = RenderItem(geometry: _StubGeometry(), material: _StubMaterial())
     ..cullInstances = cullInstances
+    ..instanceCellRows = 1
     ..instanceTransforms = [
       for (var row = 0; row < 100; row++)
         for (var column = 0; column < 100; column++)
@@ -80,12 +83,9 @@ void main() {
     // Six instances a side stand within 150 m of the center; the next one
     // out ends 20 m short of the box.
     expect(records, [item]);
-    expect(item.shadowInstanceIndices, hasLength(36));
-    for (final index in item.shadowInstanceIndices!) {
-      final center = item.instanceTransforms![index].getTranslation();
-      expect(center.x.abs(), lessThan(150));
-      expect(center.y.abs(), lessThan(150));
-    }
+    expect(item.shadowInstanceRanges, [
+      for (var row = 47; row < 53; row++) ...[row * 100 + 47, 6, 0],
+    ]);
   });
 
   test('an instance whose bounds cross the cascade edge is kept', () {
@@ -94,7 +94,7 @@ void main() {
     cullShadowCasterInstances([item], _cascade(342), const []);
 
     // The box ends at 171 m and the seventh instance a side starts at 170 m.
-    expect(item.shadowInstanceIndices, hasLength(64));
+    expect(instanceRowsOf(item.shadowInstanceRanges!, null), hasLength(64));
   });
 
   test('a cascade that holds every instance draws them all unculled', () {
@@ -102,7 +102,7 @@ void main() {
 
     cullShadowCasterInstances([item], _cascade(6000), const []);
 
-    expect(item.shadowInstanceIndices, isNull);
+    expect(item.shadowInstanceRanges, isNull);
   });
 
   test('a caster with no instance in the cascade leaves the records', () {
@@ -124,7 +124,7 @@ void main() {
       [Plane.normalconstant(Vector3(1, 0, 0), 0)],
     );
 
-    expect(item.shadowInstanceIndices, hasLength(18));
+    expect(instanceRowsOf(item.shadowInstanceRanges!, null), hasLength(18));
   });
 
   test('a caster that does not cull its instances draws them all', () {
@@ -134,17 +134,17 @@ void main() {
     cullShadowCasterInstances(records, _cascade(300), const []);
 
     expect(records, [item]);
-    expect(item.shadowInstanceIndices, isNull);
+    expect(item.shadowInstanceRanges, isNull);
   });
 
-  test('the shadow cull leaves the instances of the color pass alone', () {
+  test('the shadow cull leaves the ranges of the color pass alone', () {
     final item = _grid();
-    expect(item.cullVisibleInstances(_cascade(100), const []), isTrue);
-    final colorVisible = [...item.visibleInstanceIndices!];
+    expect(item.cullVisibleCells(_cascade(100), const []), isTrue);
+    final colorVisible = [...item.visibleInstanceRanges!];
 
     cullShadowCasterInstances([item], _cascade(300), const []);
 
-    expect(item.visibleInstanceIndices, colorVisible);
-    expect(colorVisible, hasLength(4));
+    expect(item.visibleInstanceRanges, colorVisible);
+    expect(colorVisible, [4949, 2, 0, 5049, 2, 0]);
   });
 }

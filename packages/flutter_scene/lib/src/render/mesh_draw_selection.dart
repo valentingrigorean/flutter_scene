@@ -1,5 +1,3 @@
-import 'dart:collection';
-
 import 'package:flutter_scene/src/geometry/geometry.dart';
 import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
@@ -40,53 +38,17 @@ void endMeshDraw(Geometry geometry) => geometry.clearDrawWindow();
 bool hasMeshDrawSelector(RenderItem item) =>
     item.drawSource?.drawSelector != null;
 
-/// [indices] (ascending instance indices, or null for all [count]) limited
-/// to instances below [limit]. Returns [indices] itself when nothing is cut.
-List<int>? limitInstanceIndices(List<int>? indices, int count, int? limit) {
-  if (limit == null || limit >= count) return indices;
-  if (indices == null) return _Prefix(limit);
-  // Binary search the first index at or past the limit.
-  var lo = 0, hi = indices.length;
-  while (lo < hi) {
-    final mid = (lo + hi) >> 1;
-    if (indices[mid] < limit) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
+/// The rows of [ranges] (first row, row count and a winding entry per range,
+/// ascending) below [limit], one by one. For a draw that orders its rows
+/// itself, such as a back-to-front sort.
+List<int> instanceRowsOf(List<int> ranges, int? limit) {
+  final rows = <int>[];
+  for (var range = 0; range < ranges.length; range += 3) {
+    var end = ranges[range] + ranges[range + 1];
+    if (limit != null && end > limit) end = limit;
+    for (var row = ranges[range]; row < end; row++) {
+      rows.add(row);
     }
   }
-  return lo == indices.length ? indices : _Head(indices, lo);
-}
-
-/// The integers `0 .. length - 1`, without storing them.
-class _Prefix extends ListBase<int> {
-  _Prefix(this._length);
-  final int _length;
-
-  @override
-  int get length => _length;
-  @override
-  set length(int value) => throw UnsupportedError('fixed length');
-  @override
-  int operator [](int index) => index;
-  @override
-  void operator []=(int index, int value) =>
-      throw UnsupportedError('read only');
-}
-
-/// The first [length] entries of a list, without copying.
-class _Head extends ListBase<int> {
-  _Head(this._source, this._length);
-  final List<int> _source;
-  final int _length;
-
-  @override
-  int get length => _length;
-  @override
-  set length(int value) => throw UnsupportedError('fixed length');
-  @override
-  int operator [](int index) => _source[index];
-  @override
-  void operator []=(int index, int value) =>
-      throw UnsupportedError('read only');
+  return rows;
 }

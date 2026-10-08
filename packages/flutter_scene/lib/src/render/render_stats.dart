@@ -1,5 +1,5 @@
 /// Steady-state rendering statistics: per-frame counters (draws, instances,
-/// vertices, culling, batching, pipeline traffic) broken down by view and by
+/// vertices, culling, pipeline traffic) broken down by view and by
 /// render-graph pass, each pass stopwatched on the CPU.
 ///
 /// Always on. Counting is an integer increment at the draw funnel and each
@@ -30,8 +30,8 @@ class RenderCounters {
   /// BVH subtrees the frustum rejected.
   int submitted = 0;
 
-  /// Items a frustum test rejected: a BVH subtree skipped whole, or the
-  /// encoder's per-instance culling.
+  /// Items a frustum test rejected: a BVH subtree skipped whole, or an
+  /// instanced item with no cell in view.
   int culled = 0;
 
   /// Items rejected by the view's render layer mask.
@@ -47,12 +47,6 @@ class RenderCounters {
   /// Pipelines built this frame. A nonzero steady-state value is a hitch.
   int pipelineBuilds = 0;
 
-  /// Opaque draw calls that merged several nodes into one instanced draw.
-  int batches = 0;
-
-  /// Nodes folded into those merged draws.
-  int batchedItems = 0;
-
   /// Bytes of per-instance world records (transform, color and custom
   /// attributes) instanced items packed again after their instances or their
   /// node changed. A change to some instances packs only their records.
@@ -62,6 +56,11 @@ class RenderCounters {
   /// while their instances rest. A change to some instances writes only their
   /// records while no submitted GPU work is pending.
   int instanceBytesUploaded = 0;
+
+  /// Nodes the scene pre-pass visited: one per node it ticked and one per
+  /// node whose render items it refreshed. Zero on a frame that changes no
+  /// node while no node ticks.
+  int prePassNodes = 0;
 
   void reset() {
     draws = 0;
@@ -73,10 +72,9 @@ class RenderCounters {
     pipelineRejected = 0;
     pipelineBinds = 0;
     pipelineBuilds = 0;
-    batches = 0;
-    batchedItems = 0;
     instanceBytesPacked = 0;
     instanceBytesUploaded = 0;
+    prePassNodes = 0;
   }
 
   void copyFrom(RenderCounters other) {
@@ -89,10 +87,9 @@ class RenderCounters {
     pipelineRejected = other.pipelineRejected;
     pipelineBinds = other.pipelineBinds;
     pipelineBuilds = other.pipelineBuilds;
-    batches = other.batches;
-    batchedItems = other.batchedItems;
     instanceBytesPacked = other.instanceBytesPacked;
     instanceBytesUploaded = other.instanceBytesUploaded;
+    prePassNodes = other.prePassNodes;
   }
 
   /// Sets this to `now - start`.
@@ -106,11 +103,10 @@ class RenderCounters {
     pipelineRejected = now.pipelineRejected - start.pipelineRejected;
     pipelineBinds = now.pipelineBinds - start.pipelineBinds;
     pipelineBuilds = now.pipelineBuilds - start.pipelineBuilds;
-    batches = now.batches - start.batches;
-    batchedItems = now.batchedItems - start.batchedItems;
     instanceBytesPacked = now.instanceBytesPacked - start.instanceBytesPacked;
     instanceBytesUploaded =
         now.instanceBytesUploaded - start.instanceBytesUploaded;
+    prePassNodes = now.prePassNodes - start.prePassNodes;
   }
 
   Map<String, int> toJson() => {
@@ -123,10 +119,9 @@ class RenderCounters {
     'pipelineRejected': pipelineRejected,
     'pipelineBinds': pipelineBinds,
     'pipelineBuilds': pipelineBuilds,
-    'batches': batches,
-    'batchedItems': batchedItems,
     'instanceBytesPacked': instanceBytesPacked,
     'instanceBytesUploaded': instanceBytesUploaded,
+    'prePassNodes': prePassNodes,
   };
 }
 

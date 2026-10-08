@@ -23,6 +23,9 @@ import 'package:flutter_scene/src/node.dart';
 /// select this one explicitly.
 /// {@category Scene graph}
 class CameraComponent extends Component {
+  @override
+  bool get ticks => false;
+
   /// Creates a camera component with the given [projection] (a
   /// [PerspectiveProjection] by default). With [activateOnMount], the camera
   /// becomes the scene's primary when its node mounts (the serialized form of

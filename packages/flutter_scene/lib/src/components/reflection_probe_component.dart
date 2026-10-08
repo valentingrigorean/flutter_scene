@@ -26,6 +26,9 @@ import 'package:flutter_scene/src/material/environment.dart';
 /// there is no automatic re-capture, so moving geometry is not tracked.
 /// {@category Lighting and environment}
 class ReflectionProbeComponent extends Component {
+  @override
+  bool get ticks => false;
+
   /// Creates a reflection probe over a box of half-size [extents].
   ReflectionProbeComponent({
     Vector3? extents,

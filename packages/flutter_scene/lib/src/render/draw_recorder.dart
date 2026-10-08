@@ -30,42 +30,6 @@ enum DrawSkipReason {
   pipelineRejected,
 }
 
-/// Why an opaque draw did not merge with the record sorted after it.
-/// {@category Debugging and profiling}
-enum BatchBreakReason {
-  /// It was the last record, or the next one merged.
-  none,
-
-  /// The geometry has no instanced vertex layout (skinned).
-  unbatchableGeometry,
-
-  /// This item binds a joints texture.
-  skinned,
-
-  /// This item binds morph weights.
-  morphed,
-
-  /// The material declares per-instance attributes.
-  instanceAttributes,
-  differentPipeline,
-  differentGeometry,
-  differentMaterial,
-  differentLodFade,
-  differentLights,
-  differentLightChannels,
-
-  /// The next item is skinned or morphed.
-  nextSkinnedOrMorphed,
-
-  /// This or the next item picks its instances or index range per draw
-  /// (a [MeshDrawSelector]).
-  drawSelector,
-
-  /// This or the next item draws node-space instance records under its own
-  /// instance frame (`InstancedMesh.nodeSpaceInstances`).
-  nodeSpaceInstances,
-}
-
 /// What the encoder knows about the draw calls it is about to issue.
 /// {@category Debugging and profiling}
 final class DrawContext {
@@ -77,8 +41,6 @@ final class DrawContext {
     this.vertexShader,
     this.fragmentShader,
     this.pipeline,
-    this.batchedItems = 1,
-    this.batchBreak = BatchBreakReason.none,
   });
 
   final DrawPhase phase;
@@ -88,10 +50,6 @@ final class DrawContext {
   final gpu.Shader? vertexShader;
   final gpu.Shader? fragmentShader;
   final gpu.RenderPipeline? pipeline;
-
-  /// Render items folded into the draw (more than one for a merged batch).
-  final int batchedItems;
-  final BatchBreakReason batchBreak;
 }
 
 /// Receives draw-level events from the encoders during a capture frame.

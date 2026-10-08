@@ -13,6 +13,9 @@ import 'package:flutter_scene/src/render/render_scene.dart';
 /// that one item.
 /// {@category Scene graph}
 class InstancedMeshComponent extends Component {
+  @override
+  bool get ticks => false;
+
   /// Creates a component that draws [instancedMesh].
   InstancedMeshComponent(this.instancedMesh);
 
@@ -110,6 +113,7 @@ class InstancedMeshComponent extends Component {
     item.visible = visible;
     if (worldTransformVersion != _worldTransformVersion) {
       item.worldTransform.setFrom(worldTransform);
+      item.worldTransformRevision++;
     }
     final windingWas = item.windingFlipped;
     item.refreshWinding(node.windingFlipped);

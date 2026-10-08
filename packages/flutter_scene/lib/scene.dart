@@ -272,8 +272,7 @@ export 'src/render/frame_transients.dart'
     show GpuSubmissions, TransientWriter, gpuSubmissions;
 export 'src/render/shadow_pass.dart'
     show SpotShadowInfo, debugSplitShadowMap, shadowMapIsSplit;
-export 'src/render/draw_recorder.dart'
-    show BatchBreakReason, DrawPhase, DrawSkipReason;
+export 'src/render/draw_recorder.dart' show DrawPhase, DrawSkipReason;
 export 'src/render/linear_depth_probe.dart'
     show debugSplitLinearDepth, linearDepthIsSplit;
 export 'src/render/mip_sampling_probe.dart' show mipChainsAreSampled;
@@ -296,6 +295,7 @@ export 'src/render/debug_view.dart'
         SceneDebugSettings,
         SurfaceDebugChannel,
         SurfaceDebugGroup;
+export 'src/render/render_scene.dart' show RenderItem, RenderScene;
 export 'src/render/render_stats.dart'
     show
         RenderCounters,

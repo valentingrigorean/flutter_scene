@@ -21,3 +21,16 @@ int get sceneDrawRevision => _sceneDrawRevision;
 
 @internal
 void markSceneDrawChanged() => _sceneDrawRevision++;
+
+int _renderSourceRevision = 0;
+
+/// The number of changes in this process to what a render item mirrors that
+/// name no node: a geometry's local bounds, a mesh primitive's `visible` or
+/// `castsShadow`, an instanced mesh's instances, a node's debug view, or a
+/// material that starts or stops drawing. The scene pre-pass refreshes every
+/// item once after it moves.
+@internal
+int get renderSourceRevision => _renderSourceRevision;
+
+@internal
+void markRenderSourcesChanged() => _renderSourceRevision++;

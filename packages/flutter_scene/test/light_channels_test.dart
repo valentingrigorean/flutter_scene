@@ -12,6 +12,8 @@ import 'package:flutter_scene/src/render/shadow_encoder.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
 
+import 'support/pre_pass.dart';
+
 class _StubGeometry extends Geometry {
   @override
   void bind(
@@ -212,7 +214,7 @@ void main() {
         ..add(meshNode)
         ..add(instancedNode);
 
-      root.scenePrePass(0);
+      runPrePass(root, 0);
 
       final masks = renderScene.items
           .map((item) => item.lightChannelMask)

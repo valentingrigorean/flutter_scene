@@ -15,6 +15,8 @@ import 'package:flutter_scene/src/animation.dart'
 import 'package:test/test.dart';
 import 'package:vector_math/vector_math.dart';
 
+import 'support/pre_pass.dart';
+
 /// A root node with a single child bone whose authored rest pose mirrors
 /// the Y axis, the way a rig mirrors one side's bones onto the other.
 (Node, Node) _rigWithMirroredBone() {
@@ -53,7 +55,7 @@ void main() {
     );
     clip.weight = 0.5;
 
-    rig.scenePrePass(1 / 60);
+    runPrePass(rig, 1 / 60);
 
     // Before the fix the bind pose decomposed to scale (-1, 1, 1), the
     // keyframe ratio came out (-1, -1, 1), and the half-weight lerp landed
@@ -69,7 +71,7 @@ void main() {
     final (rig, bone) = _rigWithMirroredBone();
     rig.createAnimationClip(_constantScaleAnimation('a', Vector3(2, -2, 2)));
 
-    rig.scenePrePass(1 / 60);
+    runPrePass(rig, 1 / 60);
 
     final scale = bone.localTransformTrs!.scale;
     expect(scale.x, closeTo(2, 1e-6));
@@ -89,7 +91,7 @@ void main() {
     for (var t = 0.0; t <= 1.0; t += 0.1) {
       a.weight = 1.0 - t;
       b.weight = t;
-      rig.scenePrePass(1 / 60);
+      runPrePass(rig, 1 / 60);
       expect(
         bone.localTransform.determinant(),
         lessThan(-0.5),

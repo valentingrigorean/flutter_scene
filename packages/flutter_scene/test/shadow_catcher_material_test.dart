@@ -22,6 +22,8 @@ import 'package:flutter_scene/scene.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
 
+import 'support/pre_pass.dart';
+
 class _StubGeometry extends Geometry {
   @override
   void bind(
@@ -256,18 +258,18 @@ void main() {
     final catcher = ShadowCatcherMaterial(shadowIntensity: 0.0);
     root.add(Node(mesh: Mesh(_StubGeometry(), catcher)));
 
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     expect(catcher.drawsNothing, isTrue);
     // The item joins no pass at all: every encoder (color, depth prepass,
     // shadows) rejects invisible items before recording a draw.
     expect(renderScene.items.single.visible, isFalse);
 
     catcher.shadowIntensity = 0.4;
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     expect(renderScene.items.single.visible, isTrue);
 
     catcher.shadowIntensity = 0.0;
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     expect(renderScene.items.single.visible, isFalse);
   });
 

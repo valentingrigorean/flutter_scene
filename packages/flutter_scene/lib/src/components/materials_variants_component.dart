@@ -59,6 +59,9 @@ class MaterialsVariantBinding {
 /// ```
 /// {@category Materials}
 class MaterialsVariantsComponent extends Component {
+  @override
+  bool get ticks => false;
+
   // Carried by both import paths: the runtime importer attaches it directly,
   // and the .fscene document serializes it as a materialsVariants component.
   // Clones get variant switching back through [rebindClone]; the component

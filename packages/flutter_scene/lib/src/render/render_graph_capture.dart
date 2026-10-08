@@ -292,8 +292,6 @@ class CapturedDraw {
     required this.vertexCount,
     required this.instanceCount,
     required this.indexed,
-    required this.batchedItems,
-    required this.batchBreak,
     required this.uniformBlocks,
     this.nodePath,
     this.materialType,
@@ -316,10 +314,6 @@ class CapturedDraw {
     vertexCount: json['vertexCount'] as int,
     instanceCount: json['instanceCount'] as int,
     indexed: json['indexed'] as bool? ?? false,
-    batchedItems: json['batchedItems'] as int? ?? 1,
-    batchBreak:
-        _enumByName(BatchBreakReason.values, json['batchBreak']) ??
-        BatchBreakReason.none,
     uniformBlocks: [
       for (final block in (json['uniformBlocks'] as List? ?? const []))
         CapturedUniformBlock.fromJson((block as Map).cast<String, Object?>()),
@@ -343,12 +337,6 @@ class CapturedDraw {
   final int vertexCount;
   final int instanceCount;
   final bool indexed;
-
-  /// Scene nodes merged into this draw, or 1.
-  final int batchedItems;
-
-  /// Why the opaque run this draw ended did not continue.
-  final BatchBreakReason batchBreak;
 
   /// Uniform blocks emplaced between the previous draw and this one, in
   /// emplacement order. Bindings the encoder kept from an earlier draw do
@@ -420,8 +408,6 @@ class CapturedDraw {
     'vertexCount': vertexCount,
     'instanceCount': instanceCount,
     'indexed': indexed,
-    'batchedItems': batchedItems,
-    'batchBreak': batchBreak.name,
     'uniformBlocks': [
       for (final block in uniformBlocks)
         block.toJson(this, includeBytes: includeUniformBytes),
@@ -677,8 +663,6 @@ class RenderGraphCapturer implements RenderGraphObserver, DrawRecorder {
         vertexCount: vertexCount,
         instanceCount: instanceCount,
         indexed: indexed,
-        batchedItems: context?.batchedItems ?? 1,
-        batchBreak: context?.batchBreak ?? BatchBreakReason.none,
         uniformBlocks: List.of(_pendingUniforms),
         nodePath: item == null ? null : nodePathOf(item),
         materialType: material?.runtimeType.toString(),

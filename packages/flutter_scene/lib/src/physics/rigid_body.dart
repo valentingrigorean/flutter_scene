@@ -16,6 +16,9 @@ import 'package:vector_math/vector_math.dart';
 /// as a teleport.
 /// {@category Physics}
 class RigidBody extends Component implements PendingPhysicsRegistration {
+  @override
+  bool get ticks => false;
+
   RigidBody({
     sim.BodyType type = sim.BodyType.dynamic_,
     double? mass,

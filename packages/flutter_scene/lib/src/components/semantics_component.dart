@@ -37,6 +37,9 @@ import 'package:flutter_scene/src/components/component.dart';
 /// regions, custom actions). The two forms are mutually exclusive.
 /// {@category Accessibility}
 class SemanticsComponent extends Component {
+  @override
+  bool get ticks => false;
+
   /// Creates semantics for the owning node.
   ///
   /// Pass either the convenience parameters or a full [properties] object,

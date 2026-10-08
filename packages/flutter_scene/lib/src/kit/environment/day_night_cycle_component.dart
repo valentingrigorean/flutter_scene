@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+
 import 'package:flutter_scene/src/components/component.dart';
 import 'package:flutter_scene/src/components/directional_light_component.dart';
 import 'package:flutter_scene/src/node.dart';

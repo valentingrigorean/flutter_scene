@@ -226,22 +226,5 @@ void main() {
       expect(packed.ccw, records);
       expect(packed.cw, isEmpty);
     });
-
-    test('copies cached transform records without color lanes', () {
-      final records = Float32List(2 * 20);
-      Matrix4.translation(Vector3(3, 0, 0)).copyIntoArray(records, 0);
-      Matrix4.translation(Vector3(7, 0, 0)).copyIntoArray(records, 20);
-      final packed = packInstanceTransformBatches([
-        InstanceDataBatch.cached(
-          packedWorldData: records,
-          packedWindingFlipped: Uint8List.fromList([1, 0]),
-        ),
-      ]);
-
-      expect(packed.ccwCount, 1);
-      expect(packed.cwCount, 1);
-      expect(packed.ccw[12], 7);
-      expect(packed.cw[12], 3);
-    });
   });
 }

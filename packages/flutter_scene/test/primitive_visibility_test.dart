@@ -11,6 +11,8 @@ import 'package:flutter_scene/scene.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
 
+import 'support/pre_pass.dart';
+
 class _StubGeometry extends Geometry {
   @override
   void bind(
@@ -56,7 +58,7 @@ void main() {
     final shown = MeshPrimitive(_StubGeometry(), _StubMaterial());
     root.add(Node(mesh: Mesh.primitives(primitives: [hidden, shown])));
 
-    root.scenePrePass(0);
+    runPrePass(root, 0);
 
     expect(renderScene.items, hasLength(2));
     final hiddenItem = _itemFor(renderScene, hidden);
@@ -76,7 +78,7 @@ void main() {
       ..castsShadow = false;
     root.add(Node(mesh: Mesh.primitives(primitives: [primitive])));
 
-    root.scenePrePass(0);
+    runPrePass(root, 0);
 
     final item = renderScene.items.single;
     expect(item.castsShadows, isFalse);
@@ -91,7 +93,7 @@ void main() {
       ..visible = false;
     root.add(Node(mesh: Mesh.primitives(primitives: [primitive])));
 
-    root.scenePrePass(0);
+    runPrePass(root, 0);
 
     final item = renderScene.items.single;
     expect(item.primitiveVisible, isFalse);
@@ -106,7 +108,7 @@ void main() {
       ..castsShadows = false;
     root.add(node);
 
-    root.scenePrePass(0);
+    runPrePass(root, 0);
 
     expect(renderScene.items.single.castsShadows, isFalse);
   });
@@ -119,13 +121,13 @@ void main() {
       ..shadowStatic = true;
     root.add(caster);
 
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     final initial = renderScene.staticShadowRevision;
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     expect(renderScene.staticShadowRevision, initial);
 
     primitive.castsShadow = false;
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     expect(renderScene.staticShadowRevision, greaterThan(initial));
   });
 
@@ -138,11 +140,11 @@ void main() {
       ..shadowStatic = true;
     root.add(caster);
 
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     final initial = renderScene.staticShadowRevision;
 
     primitive.visible = false;
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     expect(renderScene.staticShadowRevision, initial);
   });
 }

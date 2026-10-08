@@ -439,7 +439,7 @@ void main() {
       expect(ahead, closeTo(20, 1e-9));
     });
 
-    test('a spread instanced set is bounded per instance', () {
+    test('a spread instanced set is bounded per cell', () {
       // A ring of 1 m boxes 100 m around an eye below their bottoms: the
       // aggregate bounds hold the eye's column, but every box is far away.
       final instances = [
@@ -460,11 +460,13 @@ void main() {
               material: _StubMaterial(),
             )
             ..visible = true
+            ..instanceCellRows = 2
             ..instanceTransforms = instances
             ..worldBounds = Aabb3.minMax(
               Vector3(-100.5, 9.5, -100.5),
               Vector3(100.5, 10.5, 100.5),
-            );
+            )
+            ..refreshInstanceData();
       final eye = Vector3(0, 0, 0);
       final forward = Vector3(0, 0, 1);
       final camera = PerspectiveCamera(
@@ -479,8 +481,8 @@ void main() {
       expect(bound, greaterThan(50));
     });
 
-    test('a spread instanced set past the per-instance fit limit that culls '
-        'per instance is bounded per instance from its culling cache', () {
+    test('a spread set of 4096 instances is bounded per cell whether or not '
+        'it culls its cells', () {
       const count = 4096;
       final instances = [
         for (var i = 0; i < count; i++)
@@ -522,7 +524,7 @@ void main() {
       );
       expect(
         ring(culls: false).depthLowerBound(frustum, eye, forward, 0.7, 1e9),
-        lessThan(10),
+        greaterThan(50),
       );
     });
 

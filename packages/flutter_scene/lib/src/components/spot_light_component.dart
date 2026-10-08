@@ -15,6 +15,9 @@ import 'package:flutter_scene/src/node.dart';
 /// local [SpotLight.direction], so re-orienting the node aims the cone.
 /// {@category Scene graph}
 class SpotLightComponent extends Component {
+  @override
+  bool get ticks => false;
+
   /// Creates a component that lights the scene with [light].
   SpotLightComponent(this.light);
 

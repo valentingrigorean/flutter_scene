@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+
 import 'package:flutter_scene/src/components/component.dart';
 import 'package:flutter_scene/src/node.dart';
 import 'package:vector_math/vector_math.dart' as vm;

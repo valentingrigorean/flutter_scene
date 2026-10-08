@@ -1,7 +1,7 @@
 // Per-instance custom attributes end to end on the CPU side: the schema
 // resolved from a `.fmat` sidecar, the vertex layout it widens, the
-// InstancedMesh setters, the packed records (including the mirrored split),
-// and the batching opt-out. No GPU context is needed.
+// InstancedMesh setters and the packed records (including the mirrored
+// split). No GPU context is needed.
 
 import 'dart:typed_data';
 
@@ -10,7 +10,6 @@ import 'package:flutter_scene/src/geometry/geometry.dart'
     show kUnskinnedInstancedLayout;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/material/instance_attributes.dart';
-import 'package:flutter_scene/src/render/instance_batching.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/scene.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -75,33 +74,6 @@ class _StubMaterial extends Material {
   ) {
     throw UnsupportedError('Stub material is not renderable');
   }
-}
-
-class _OpaqueCandidate implements OpaqueBatchRecord {
-  _OpaqueCandidate(this.geometry, this.material, this.pipeline);
-
-  @override
-  final Geometry geometry;
-  @override
-  final Material material;
-  @override
-  final Object pipeline;
-  @override
-  double get fade => 1;
-  @override
-  int get lightListOffset => 0;
-  @override
-  int get lightListCount => 0;
-  @override
-  int get lightChannelMask => 0xFF;
-  @override
-  Object? get jointsTexture => null;
-  @override
-  Float32List? get morphWeights => null;
-  @override
-  bool get hasDrawSelector => false;
-  @override
-  bool get nodeSpaceInstances => false;
 }
 
 InstancedMesh _mesh({InstanceAttributeSchema? schema}) => InstancedMesh(
@@ -368,17 +340,6 @@ void main() {
       ], attributeFloats: 7);
       expect(packed.ccw.sublist(20, 27), [1, 2, 3, 4, 0, 5, 6]);
       expect(packed.cw.sublist(20, 27), [7, 8, 9, 10, 0, 11, 12]);
-
-      // The depth-style pass reads the same source at 16 floats per record.
-      final transforms = packInstanceTransformBatches([
-        InstanceDataBatch.cached(
-          packedWorldData: world,
-          packedWindingFlipped: Uint8List.fromList([0, 1]),
-          attributeFloats: 7,
-        ),
-      ]);
-      expect(transforms.ccwCount, 1);
-      expect(transforms.ccw.sublist(0, 16), Matrix4.identity().storage);
     });
 
     test('a batch without attribute data contributes zeros', () {
@@ -439,29 +400,6 @@ void main() {
         ),
       );
       expect(() => checkInstanceRecordWidth(null, 4), throwsStateError);
-    });
-  });
-
-  group('cross-node batching', () {
-    test('excludes a material declaring instance attributes', () {
-      final geometry = _StubGeometry(
-        layout: const VertexLayoutDescriptor(buffers: []),
-      );
-      final pipeline = Object();
-
-      final plain = _StubMaterial();
-      final plainRecords = [
-        _OpaqueCandidate(geometry, plain, pipeline),
-        _OpaqueCandidate(geometry, plain, pipeline),
-      ];
-      expect(opaqueBatchEnd(plainRecords, 0), 2);
-
-      final declaring = _StubMaterial(instanceAttributes: _schema());
-      final declaringRecords = [
-        _OpaqueCandidate(geometry, declaring, pipeline),
-        _OpaqueCandidate(geometry, declaring, pipeline),
-      ];
-      expect(opaqueBatchEnd(declaringRecords, 0), 1);
     });
   });
 }

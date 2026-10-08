@@ -18,6 +18,8 @@ import 'package:flutter_scene/scene.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
 
+import 'support/pre_pass.dart';
+
 class _StubGeometry extends Geometry {
   @override
   void bind(
@@ -107,7 +109,7 @@ void main() {
     final geometry = _StubGeometry();
     final node = Node(mesh: Mesh(geometry, PhysicallyBasedMaterial()));
     root.add(node);
-    root.scenePrePass(0);
+    runPrePass(root, 0);
     expect(renderScene.items.single.visible, isTrue);
 
     // A capture right after the swap must not reach the catcher's unprepared

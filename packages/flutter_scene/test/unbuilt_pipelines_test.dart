@@ -475,7 +475,7 @@ void main() {
     expect(skin.getPreviousJointsTexture(), same(previousJoints));
   });
 
-  test('a draw whose pipelines are built is not culled per instance by '
+  test('a draw whose pipelines are built is not culled per cell by '
       'the query', () async {
     final scene = await _scene();
     final instances =
@@ -492,11 +492,11 @@ void main() {
     final views = [RenderView(camera: _camera())];
     await scene.warmUp(views, size: _square);
     final item = _itemOf(scene, node);
-    const untouched = [7];
-    item.visibleInstanceIndices = untouched;
+    const untouched = [1, 1, 0];
+    item.visibleInstanceRanges = untouched;
 
     expect(_unbuilt(scene, views, _square), isEmpty);
-    expect(item.visibleInstanceIndices, same(untouched));
+    expect(item.visibleInstanceRanges, same(untouched));
   });
 
   test('a static caster only a far cascade takes, added while the cached '

@@ -28,6 +28,9 @@ enum EnvironmentVolumeShape {
 /// with the scene so the renderer folds it into the environment blend.
 /// {@category Lighting and environment}
 class EnvironmentVolumeComponent extends Component {
+  @override
+  bool get ticks => false;
+
   /// Creates a volume contributing [settings] over the region described by
   /// [shape]/[extents]/[radius].
   EnvironmentVolumeComponent({

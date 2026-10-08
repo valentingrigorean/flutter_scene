@@ -5,6 +5,7 @@ import 'package:flutter_scene/src/importer/build_cache.dart';
 import 'package:hooks/hooks.dart';
 
 import 'package:scene/scene.dart';
+
 import '../generated_assets/generated_assets.dart';
 import '../generated_assets/generated_tree.dart';
 import 'inline_assets.dart';

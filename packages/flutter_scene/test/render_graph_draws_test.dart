@@ -61,9 +61,7 @@ void main() {
           final recorder = activeDrawRecorder!;
           recorder.onUniformEmplaced(ByteData(64));
           recorder.onUniformEmplaced(ByteData(16));
-          recorder.setContext(
-            const DrawContext(phase: DrawPhase.shadow, batchedItems: 3),
-          );
+          recorder.setContext(const DrawContext(phase: DrawPhase.shadow));
           recorder.onDraw(36, 2, indexed: true);
           recorder.clearContext();
           recorder.onDraw(6, 1, indexed: false);
@@ -93,7 +91,6 @@ void main() {
     expect(first.vertexCount, 36);
     expect(first.instanceCount, 2);
     expect(first.indexed, isTrue);
-    expect(first.batchedItems, 3);
     expect(first.triangles, 24);
     expect(first.uniformBlocks.map((b) => b.byteLength), [64, 16]);
     expect(first.nodePath, isNull);
@@ -119,13 +116,7 @@ void main() {
           recorder.onUniformEmplaced(
             ByteData(8)..setFloat32(0, 2.5, Endian.little),
           );
-          recorder.setContext(
-            const DrawContext(
-              phase: DrawPhase.opaque,
-              batchedItems: 2,
-              batchBreak: BatchBreakReason.differentMaterial,
-            ),
-          );
+          recorder.setContext(const DrawContext(phase: DrawPhase.opaque));
           recorder.onDraw(12, 4, indexed: true);
         }),
       );
@@ -168,8 +159,6 @@ void main() {
     expect(draw.vertexCount, 12);
     expect(draw.instanceCount, 4);
     expect(draw.indexed, isTrue);
-    expect(draw.batchedItems, 2);
-    expect(draw.batchBreak, BatchBreakReason.differentMaterial);
     expect(draw.uniformBlocks.single.byteLength, 8);
     expect(draw.uniformBlocks.single.bytes.getFloat32(0, Endian.little), 2.5);
     final resource = loaded.resources.single;
@@ -233,7 +222,6 @@ void main() {
     expect(draw.indexed, isTrue);
     expect(draw.instanceCount, 1);
     expect(draw.pipelineId, isNotNull);
-    expect(draw.batchBreak, BatchBreakReason.none);
     expect(draw.uniformBlocks, isNotEmpty);
 
     await ShaderReflection.loadBundleInfo(baseShaderLibrary);
