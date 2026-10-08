@@ -10,6 +10,7 @@ import 'package:flutter_scene/src/material/environment.dart';
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/material/physical_material.dart';
 import 'package:flutter_scene/src/texture/texture2d.dart';
+import 'package:flutter_scene/src/vertex_spin.dart';
 
 import 'package:vector_math/vector_math.dart';
 import 'package:flutter_scene/src/render/custom_render_pass.dart';
@@ -256,6 +257,18 @@ class PhysicallyBasedMaterial extends Material {
   TextureTransform _normalTextureTransform = TextureTransform();
   set normalTextureTransform(TextureTransform value) {
     _normalTextureTransform = value;
+    _markMaterialDataDirty();
+  }
+
+  /// The UV offset per second of animation time that [normalTexture]
+  /// flows by, on top of [normalTextureTransform]'s offset: the fragment
+  /// shader moves the normal UV by this times `Scene.animationTime`, so a
+  /// scrolling normal map (water, a flag) moves with no per-frame write to
+  /// the material. Zero, the default, keeps the map still.
+  Vector2 get normalTextureFlow => _normalTextureFlow;
+  Vector2 _normalTextureFlow = Vector2.zero();
+  set normalTextureFlow(Vector2 value) {
+    _normalTextureFlow = value.clone();
     _markMaterialDataDirty();
   }
 
@@ -1690,52 +1703,7 @@ class PhysicallyBasedMaterial extends Material {
     );
 
     final textureTransforms = _textureTransformsScratch;
-    _packTextureTransform(
-      textureTransforms,
-      0,
-      baseColorTextureTransform,
-      baseColorTextureTexCoord,
-    );
-    _packTextureTransform(
-      textureTransforms,
-      8,
-      metallicRoughnessTextureTransform,
-      metallicRoughnessTextureTexCoord,
-    );
-    _packTextureTransform(
-      textureTransforms,
-      16,
-      normalTextureTransform,
-      normalTextureTexCoord,
-    );
-    _packTextureTransform(
-      textureTransforms,
-      24,
-      emissiveTextureTransform,
-      emissiveTextureTexCoord,
-    );
-    _packTextureTransform(
-      textureTransforms,
-      32,
-      occlusionTextureTransform,
-      occlusionTextureTexCoord,
-    );
-    // The base record's padding float carries one flag the shader branches on
-    // to skip the five UV-transform evaluations, set when any record
-    // transforms its UVs or selects UV set 1. The identity transform
-    // reproduces the raw UV bit-exactly, so the flag only gates work.
-    final transformedUvs =
-        !baseColorTextureTransform.isIdentity ||
-        !metallicRoughnessTextureTransform.isIdentity ||
-        !normalTextureTransform.isIdentity ||
-        !emissiveTextureTransform.isIdentity ||
-        !occlusionTextureTransform.isIdentity ||
-        baseColorTextureTexCoord != 0 ||
-        metallicRoughnessTextureTexCoord != 0 ||
-        normalTextureTexCoord != 0 ||
-        emissiveTextureTexCoord != 0 ||
-        occlusionTextureTexCoord != 0;
-    textureTransforms[7] = transformedUvs ? 1.0 : 0.0;
+    writeTextureTransforms(textureTransforms, currentAnimationTime);
     pass.bindUniform(
       shader.cachedUniformSlot('TextureTransforms'),
       transientsBuffer.emplace(scratchBytesOf(textureTransforms)),
@@ -1801,7 +1769,76 @@ class PhysicallyBasedMaterial extends Material {
   );
   static final ByteData _fragInfoBytes = ByteData.sublistView(_fragInfoScratch);
 
-  static final Float32List _textureTransformsScratch = Float32List(40);
+  static final Float32List _textureTransformsScratch = Float32List(44);
+
+  /// Writes the `TextureTransforms` block this material binds at [time]
+  /// seconds of animation time into [target]: the five slot records, then
+  /// the flow of the normal map (xy) and the folded time (z). The offset of
+  /// the normal record carries the flow at the start of the folded span, so
+  /// the shader adds the flow times the folded time alone.
+  @visibleForTesting
+  void writeTextureTransforms(Float32List target, double time) {
+    final flow = _normalTextureFlow;
+    final flows = flow.x != 0 || flow.y != 0;
+    final folded = foldedAnimationTime(time);
+    final whole = time - folded;
+    _packTextureTransform(
+      target,
+      0,
+      baseColorTextureTransform,
+      baseColorTextureTexCoord,
+    );
+    _packTextureTransform(
+      target,
+      8,
+      metallicRoughnessTextureTransform,
+      metallicRoughnessTextureTexCoord,
+    );
+    _packTextureTransform(
+      target,
+      16,
+      normalTextureTransform,
+      normalTextureTexCoord,
+    );
+    _packTextureTransform(
+      target,
+      24,
+      emissiveTextureTransform,
+      emissiveTextureTexCoord,
+    );
+    _packTextureTransform(
+      target,
+      32,
+      occlusionTextureTransform,
+      occlusionTextureTexCoord,
+    );
+    // The base record's padding float carries one flag the shader branches on
+    // to skip the five UV-transform evaluations, set when any record
+    // transforms its UVs or selects UV set 1. The identity transform
+    // reproduces the raw UV bit-exactly, so the flag only gates work.
+    final transformedUvs =
+        !baseColorTextureTransform.isIdentity ||
+        !metallicRoughnessTextureTransform.isIdentity ||
+        !normalTextureTransform.isIdentity ||
+        !emissiveTextureTransform.isIdentity ||
+        !occlusionTextureTransform.isIdentity ||
+        baseColorTextureTexCoord != 0 ||
+        metallicRoughnessTextureTexCoord != 0 ||
+        normalTextureTexCoord != 0 ||
+        emissiveTextureTexCoord != 0 ||
+        occlusionTextureTexCoord != 0 ||
+        flows;
+    target[7] = transformedUvs ? 1.0 : 0.0;
+    if (flows) {
+      target[16] += (flow.x * whole) % 1.0;
+      target[17] += (flow.y * whole) % 1.0;
+    }
+    target
+      ..[40] = flow.x
+      ..[41] = flow.y
+      ..[42] = flows ? folded : 0.0
+      ..[43] = 0.0;
+  }
 
   static void _packTextureTransform(
     Float32List target,
