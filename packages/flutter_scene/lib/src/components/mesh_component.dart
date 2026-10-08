@@ -112,10 +112,13 @@ class MeshComponent extends Component {
   @override
   void onUnmount() => _unregisterRenderItems();
 
+  void Function()? _sourceListener;
+
   void _registerRenderItems() {
     if (!isMounted) return;
     final renderScene = node.internalRenderScene;
     if (renderScene == null) return;
+    final listener = _sourceListener = node.internalRenderSourcesChanged;
     for (final primitive in _mesh.primitives) {
       final item =
           RenderItem(geometry: primitive.geometry, material: primitive.material)
@@ -124,6 +127,8 @@ class MeshComponent extends Component {
       _renderItems.add(item);
       _boundsVersions.add(-1);
       renderScene.add(item);
+      primitive.addRenderSourceListener(listener);
+      primitive.geometry.addRenderSourceListener(listener);
     }
     onRenderItemsRegistered();
   }
@@ -158,6 +163,14 @@ class MeshComponent extends Component {
           renderScene.remove(item);
         }
       }
+    }
+    final listener = _sourceListener;
+    _sourceListener = null;
+    for (final item in _renderItems) {
+      if (listener == null) break;
+      item.geometry.removeRenderSourceListener(listener);
+      final source = item.drawSource;
+      if (source is MeshPrimitive) source.removeRenderSourceListener(listener);
     }
     _renderItems.clear();
     _boundsVersions.clear();

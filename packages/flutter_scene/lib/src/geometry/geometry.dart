@@ -134,7 +134,7 @@ class _GeometryBufferBlock {
 /// and `GeometryBuilder` assemble a [Geometry] from vertex attribute
 /// arrays without packing vertex bytes by hand.
 /// {@category Geometry}
-abstract class Geometry {
+abstract class Geometry with RenderSourceListeners {
   // One or more vertex buffer streams, bound to consecutive slots (0, 1, ...)
   // in order. Most geometry has a single interleaved stream; unskinned
   // geometry uploaded through [uploadVertexData] is de-interleaved into a
@@ -222,7 +222,7 @@ abstract class Geometry {
     _localBounds = aabb;
     _localBoundingSphere = sphere;
     _localBoundsVersion++;
-    markRenderSourcesChanged();
+    tellRenderSourceListeners();
   }
 
   /// The vertex shader used when rendering this geometry.

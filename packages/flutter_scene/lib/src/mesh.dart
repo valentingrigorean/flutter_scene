@@ -17,7 +17,7 @@ import 'package:vector_math/vector_math.dart' as vm;
 /// Each of these parts of the car has its own [Geometry] and [Material], and together
 /// they form the complete model.
 /// {@category Geometry}
-base class MeshPrimitive implements MeshDrawSource {
+base class MeshPrimitive with RenderSourceListeners implements MeshDrawSource {
   /// Pairs [geometry] with the [material] used to shade it.
   MeshPrimitive(this.geometry, Material material) : _material = material;
 
@@ -46,7 +46,7 @@ base class MeshPrimitive implements MeshDrawSource {
     if (value == _visible) return;
     _visible = value;
     markSceneDrawChanged();
-    markRenderSourcesChanged();
+    tellRenderSourceListeners();
   }
 
   bool _visible = true;
@@ -62,7 +62,7 @@ base class MeshPrimitive implements MeshDrawSource {
     if (value == _castsShadow) return;
     _castsShadow = value;
     markSceneDrawChanged();
-    markRenderSourcesChanged();
+    tellRenderSourceListeners();
   }
 
   bool _castsShadow = true;
