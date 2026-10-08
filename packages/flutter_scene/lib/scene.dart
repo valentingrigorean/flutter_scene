@@ -402,6 +402,8 @@ export 'src/texture/block_texture.dart'
         transcodeKtxTexture;
 export 'src/runtime_importer/gltf_import_stats.dart' show GltfImportStats;
 export 'src/runtime_importer/gltf_resources.dart' show GltfResourceResolver;
+export 'src/runtime_importer/runtime_importer.dart'
+    show PreparedGlb, prepareGlb;
 export 'src/scene_path.dart'
     show BezierPath, CatmullRomPath, PolylinePath, ScenePath, ScenePathFrame;
 export 'src/raycast.dart' show SceneRaycastHit, raycastNode, raycastNodeAll;

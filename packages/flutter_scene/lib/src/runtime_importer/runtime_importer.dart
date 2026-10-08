@@ -61,6 +61,65 @@ Future<Node> importGlb(
   );
 }
 
+/// A GLB parsed, decoded and packed into plain data by [prepareGlb], on any
+/// isolate, for [importPreparedGlb] on the isolate that owns the device.
+///
+/// It moves between isolates as a message, without a copy when the isolate
+/// that prepared it exits with it.
+final class PreparedGlb {
+  PreparedGlb._(this._result);
+
+  final GlbImportWorkerResult _result;
+
+  /// The bytes it holds: the document's buffer and every packed primitive.
+  int get retainedBytes {
+    final prepared = _result.prepared;
+    if (prepared == null) return 0;
+    var bytes = prepared.bufferData.lengthInBytes;
+    final seen = Set<PackedPrimitive>.identity();
+    for (final mesh in prepared.primitives) {
+      for (final variants in mesh) {
+        if (variants == null) continue;
+        for (final packed in [variants.unskinned, variants.skinned]) {
+          if (!seen.add(packed)) continue;
+          bytes +=
+              packed.vertexBytes.lengthInBytes +
+              packed.indexBytes.lengthInBytes;
+        }
+      }
+    }
+    return bytes;
+  }
+}
+
+/// Prepares a GLB whose container the caller has read: [json] is its decoded
+/// JSON chunk, which the caller may have edited, and [binaryChunk] its BIN
+/// chunk, empty when it has none.
+///
+/// It parses the document, decodes meshopt buffers and packs every primitive,
+/// synchronously and with no device, so a caller runs it on its own isolate
+/// next to its own reading of the same JSON and parses the file once. An
+/// error is held and thrown by [importPreparedGlb].
+PreparedGlb prepareGlb(Map<String, Object?> json, Uint8List binaryChunk) =>
+    PreparedGlb._(prepareGlbJsonImport(json, binaryChunk));
+
+/// Builds the [Node] tree of [prepared], as [importGlb] does after its
+/// background parse, with no parse of its own.
+Future<Node> importPreparedGlb(
+  PreparedGlb prepared, {
+  GltfWarningCallback? onWarning,
+  int? maxTextureSize,
+}) async {
+  final result = prepared._result;
+  _deliverWarnings(result.warnings, onWarning);
+  return _buildScene(
+    result.unwrap(),
+    null,
+    onWarning: onWarning,
+    maxTextureSize: maxTextureSize,
+  );
+}
+
 /// Parse a multi-file glTF document into a [Node] tree.
 ///
 /// [gltfJson] is the raw bytes of the `.gltf` file. [resolveUri] fetches

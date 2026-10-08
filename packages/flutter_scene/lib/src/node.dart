@@ -1401,6 +1401,22 @@ base class Node implements SceneGraph, PrePassNode {
     );
   }
 
+  /// Load a GLB model that [prepareGlb] parsed and packed, on any isolate,
+  /// with no parse of its own: only the device buffers, textures, materials
+  /// and nodes are created here. [onWarning] and [maxTextureSize] are those
+  /// of [fromGlbBytes]; an error the preparation held is thrown here.
+  static Future<Node> fromPreparedGlb(
+    PreparedGlb prepared, {
+    GltfWarningCallback? onWarning,
+    int? maxTextureSize,
+  }) {
+    return importPreparedGlb(
+      prepared,
+      onWarning: onWarning,
+      maxTextureSize: maxTextureSize,
+    );
+  }
+
   /// Convenience wrapper for [fromGlbBytes] that loads from the asset bundle.
   static Future<Node> fromGlbAsset(
     String assetPath, {
