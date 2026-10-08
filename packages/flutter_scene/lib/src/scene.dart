@@ -42,7 +42,7 @@ import 'components/point_light_component.dart';
 import 'components/reflection_probe_component.dart';
 import 'components/spot_light_component.dart';
 import 'fog.dart';
-import 'geometry/geometry.dart' show Geometry;
+import 'geometry/geometry.dart' show Geometry, instanceBandViews;
 import 'god_rays.dart';
 import 'light.dart';
 import 'material/environment.dart';
@@ -4280,6 +4280,7 @@ base class Scene implements SceneGraph {
         );
       }
     }
+    instanceBandViews[camera] = view;
     graph.addPass(
       ScenePass(
         camera: camera,

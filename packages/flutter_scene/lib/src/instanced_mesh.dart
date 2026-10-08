@@ -1,7 +1,10 @@
 import 'dart:collection';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_scene/src/draw_revision.dart';
+import 'package:flutter_scene/src/instance_band.dart';
 import 'package:flutter_scene/src/fmat/fmat_ast.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart';
 import 'package:flutter_scene/src/material/instance_attributes.dart';
@@ -31,7 +34,84 @@ class InstancedMesh implements MeshDrawSource {
     this.cullInstances = false,
     this.sortTransparentInstances = true,
     this.nodeSpaceInstances = false,
-  });
+  }) : rows = null;
+
+  /// A mesh that draws the rows of [rows] with its own [geometry] and
+  /// [material].
+  ///
+  /// It holds no row: every row write goes to [rows] and reaches each mesh
+  /// sharing it, and a row write on this mesh throws. The records are
+  /// node-space (see [nodeSpaceInstances]), so one packed store and one
+  /// device buffer serve [rows] and every mesh sharing it, under any node.
+  /// The rows are neither culled nor sorted per instance, and all of them
+  /// have one winding. [rows] itself needs no node.
+  ///
+  /// The meshes of the levels of detail of one model, of the parts of one
+  /// file and of a second view share one row set this way, each with its
+  /// [instanceRanges], [instanceLocal] and [band].
+  InstancedMesh.sharing(
+    InstancedMesh this.rows, {
+    required this.geometry,
+    required this.material,
+  }) : cullInstances = false,
+       sortTransparentInstances = false,
+       nodeSpaceInstances = true,
+       assert(rows.rows == null, 'Share the mesh that holds the rows.'),
+       assert(
+         rows.nodeSpaceInstances,
+         'A shared row set holds node-space records.',
+       );
+
+  /// The mesh whose rows this mesh draws, or null when it draws its own.
+  final InstancedMesh? rows;
+
+  /// The rows this mesh draws, as pairs of a first row and a row count, or
+  /// null for every row.
+  ///
+  /// Each pass issues one instanced draw per pair from the device buffer of
+  /// the records, so stating other ranges uploads nothing. An empty list
+  /// draws nothing. Ranges apply to a mesh of node-space records whose rows
+  /// rest between frames and have one winding; such a mesh is neither culled
+  /// nor sorted per instance.
+  Uint32List? get instanceRanges => _instanceRanges;
+  Uint32List? _instanceRanges;
+  set instanceRanges(Uint32List? value) {
+    assert(value == null || value.length.isEven);
+    _instanceRanges = value;
+    markSceneDrawChanged();
+  }
+
+  /// The transform applied to a vertex before its row's record, or null for
+  /// none: a vertex lands at `node * record * instanceLocal * vertex`.
+  ///
+  /// The placement of one part of a model inside the model goes here, so the
+  /// record is the row's transform alone and the parts share one row set.
+  /// Read by the unskinned vertex stage of a mesh of node-space records.
+  Matrix4? get instanceLocal => _instanceLocal;
+  Matrix4? _instanceLocal;
+  set instanceLocal(Matrix4? value) {
+    _instanceLocal = value;
+    _boundsRevision = -1;
+    markSceneDrawChanged();
+  }
+
+  /// The rows the vertex stage keeps, or null to keep every row. See
+  /// [InstanceBand].
+  ///
+  /// Call [bandChanged] after writing a field of the band this holds.
+  InstanceBand? get band => _band;
+  InstanceBand? _band;
+  set band(InstanceBand? value) {
+    _band = value;
+    markSceneDrawChanged();
+  }
+
+  /// States that a field of [band] changed, so a frame held for an unchanged
+  /// scene is drawn again.
+  void bandChanged() => markSceneDrawChanged();
+
+  StateError _sharedRows() =>
+      StateError('This mesh draws the rows of another mesh; write them there.');
 
   /// The geometry drawn for every instance.
   final Geometry geometry;
@@ -109,18 +189,21 @@ class InstancedMesh implements MeshDrawSource {
   /// again. A row at or past [instanceCount] was removed from the end.
   @internal
   List<int>? rowsChangedSince(int revision) {
+    final shared = rows;
+    if (shared != null) return shared.rowsChangedSince(revision);
     if (revision < _changedFrom || revision > _revision) return null;
     return _changedRows.sublist(revision - _changedFrom);
   }
 
   /// The number of instances.
-  int get instanceCount => _instances.length;
+  int get instanceCount => (rows ?? this)._instances.length;
 
   /// Adds an instance placed by [transform] and returns its index.
   ///
   /// The matrix is copied, so later mutating [transform] does not affect
   /// the instance; use [setInstanceTransform] to move it.
   int addInstance(Matrix4 transform, {Vector4? color}) {
+    if (rows != null) throw _sharedRows();
     _instances.add(transform.clone());
     _colors.add((color ?? _white).clone());
     _windingFlipped.add(transform.determinant() < 0);
@@ -133,6 +216,7 @@ class InstancedMesh implements MeshDrawSource {
 
   /// Replaces the transform of the instance at [index].
   void setInstanceTransform(int index, Matrix4 transform) {
+    if (rows != null) throw _sharedRows();
     _instances[index].setFrom(transform);
     _windingFlipped[index] = transform.determinant() < 0;
     _rowChanged(index);
@@ -147,6 +231,7 @@ class InstancedMesh implements MeshDrawSource {
     void Function(List<Matrix4> transforms) update, {
     bool recomputeWinding = true,
   }) {
+    if (rows != null) throw _sharedRows();
     try {
       update(_instanceUpdateView ??= UnmodifiableListView<Matrix4>(_instances));
     } finally {
@@ -161,6 +246,7 @@ class InstancedMesh implements MeshDrawSource {
 
   /// Replaces the color multiplier of the instance at [index].
   void setInstanceColor(int index, Vector4 color) {
+    if (rows != null) throw _sharedRows();
     _colors[index].setFrom(color);
     _rowChanged(index);
   }
@@ -173,6 +259,7 @@ class InstancedMesh implements MeshDrawSource {
   /// An instance whose attributes are never set draws with zeros.
   /// {@category Scene graph}
   void setInstanceAttribute(int index, String name, Object value) {
+    if (rows != null) throw _sharedRows();
     RangeError.checkValidIndex(index, _instances, 'index');
     final schema = _requireSchema(name);
     final slot = schema.slot(name);
@@ -207,6 +294,7 @@ class InstancedMesh implements MeshDrawSource {
   /// the expected length.
   /// {@category Scene graph}
   void setInstanceAttributes(int index, Float32List packed) {
+    if (rows != null) throw _sharedRows();
     RangeError.checkValidIndex(index, _instances, 'index');
     final schema = _requireSchema(null);
     if (packed.length != schema.floatCount) {
@@ -222,6 +310,7 @@ class InstancedMesh implements MeshDrawSource {
   /// Removes the instance at [index]. Instances after it shift down by
   /// one, so their indices change.
   void removeInstanceAt(int index) {
+    if (rows != null) throw _sharedRows();
     final schema = _syncAttributeStorage();
     if (schema != null) {
       final floats = schema.floatCount;
@@ -249,6 +338,7 @@ class InstancedMesh implements MeshDrawSource {
 
   /// Removes every instance.
   void clearInstances() {
+    if (rows != null) throw _sharedRows();
     _instances.clear();
     _colors.clear();
     _windingFlipped.clear();
@@ -338,19 +428,19 @@ class InstancedMesh implements MeshDrawSource {
 
   /// The live per-instance transform list the render item iterates.
   @internal
-  List<Matrix4> get instances => _instances;
+  List<Matrix4> get instances => (rows ?? this)._instances;
 
   /// Live per-instance linear RGBA multipliers.
   @internal
-  List<Vector4> get colors => _colors;
+  List<Vector4> get colors => (rows ?? this)._colors;
 
   /// Per-instance local winding parity matching [instances].
   @internal
-  List<bool> get windingFlipped => _windingFlipped;
+  List<bool> get windingFlipped => (rows ?? this)._windingFlipped;
 
   /// Changes whenever instance data changes.
   @internal
-  int get revision => _revision;
+  int get revision => (rows ?? this)._revision;
 
   /// Aggregate AABB over every instance, in the instanced mesh's local
   /// space, or `null` when [geometry] has no computable bounds or there
@@ -359,13 +449,13 @@ class InstancedMesh implements MeshDrawSource {
   @internal
   Aabb3? get aggregateBounds {
     final geometryVersion = geometry.localBoundsVersion;
-    if (_boundsRevision != _revision ||
+    if (_boundsRevision != revision ||
         _boundsGeometryVersion != geometryVersion) {
       final rows = _boundsGeometryVersion == geometryVersion
           ? rowsChangedSince(_boundsRevision)
           : null;
       _boundsCache = _computeAggregateBounds(rows);
-      _boundsRevision = _revision;
+      _boundsRevision = revision;
       _boundsGeometryVersion = geometryVersion;
     }
     return _boundsCache;
@@ -374,9 +464,12 @@ class InstancedMesh implements MeshDrawSource {
   static final Aabb3 _rowScratch = Aabb3();
 
   Aabb3? _computeAggregateBounds(List<int>? rows) {
-    final base = geometry.localBounds;
-    final count = _instances.length;
+    final instances = this.instances;
+    var base = geometry.localBounds;
+    final count = instances.length;
     if (base == null || count == 0) return null;
+    final local = _instanceLocal;
+    if (local != null) base = Aabb3.copy(base)..transform(local);
     if (_rowBounds.length < count * 6) {
       final grown = Float32List(math.max(count, _rowBounds.length ~/ 3) * 6);
       if (rows != null) grown.setRange(0, _rowBounds.length, _rowBounds);
@@ -384,8 +477,8 @@ class InstancedMesh implements MeshDrawSource {
     }
     void boundRow(int row) {
       _rowScratch
-        ..copyFrom(base)
-        ..transform(_instances[row]);
+        ..copyFrom(base!)
+        ..transform(instances[row]);
       final offset = row * 6;
       _rowBounds
         ..[offset] = _rowScratch.min.x

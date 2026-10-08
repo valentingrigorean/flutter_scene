@@ -17,8 +17,25 @@ uniform FrameInfo {
   // The transform applied after the instance-rate model transform: a node's
   // world transform for node-space instance records, the identity otherwise.
   mat4 instance_frame;
+  // The transform applied before the instance-rate model transform: the
+  // draw's own placement inside each record (InstancedMesh.instanceLocal),
+  // the identity otherwise.
+  mat4 instance_local;
+  // The band test of instance_band.glsl. band_eye: the camera the band reads
+  // (xyz) and whether the draw has a band (w). band_forward: the view
+  // direction (xyz). band_sphere: the record-space bound center (xyz) and
+  // radius (w). band_reach: the near and far reach in row radii (xy) and the
+  // near and far distance (zw). band_edge: the margin (x), the kept fraction
+  // (y) and the view's nearest-depth range (zw).
+  vec4 band_eye;
+  vec4 band_forward;
+  vec4 band_sphere;
+  vec4 band_reach;
+  vec4 band_edge;
 }
 frame_info;
+
+#include <instance_band.glsl>
 
 #include <depth_bias.glsl>
 #include <normal_transform.glsl>
@@ -60,9 +77,15 @@ void main() {
 #define in_normal normal
 #endif
 
-  mat4 model_transform =
+  mat4 node_record =
       frame_info.instance_frame * mat4(model_transform_0, model_transform_1,
                                        model_transform_2, model_transform_3);
+  if (!InstanceBandHolds(node_record, model_transform_3.xyz)) {
+    // Outside the clip volume, so the row rasterizes no fragment.
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    return;
+  }
+  mat4 model_transform = node_record * frame_info.instance_local;
   vec4 model_position = model_transform * vec4(in_position, 1.0);
 
   VertexInputs vertex;

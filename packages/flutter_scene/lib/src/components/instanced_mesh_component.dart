@@ -63,6 +63,10 @@ class InstancedMeshComponent extends Component {
   void refreshRenderItem() {
     final item = _renderItem;
     if (item == null) return;
+    item.sharedRows = instancedMesh.rows;
+    item.instanceRanges = instancedMesh.instanceRanges;
+    item.instanceLocal = instancedMesh.instanceLocal;
+    item.instanceBand = instancedMesh.band;
     item.debugView = Node.debugViewOverrideCount == 0
         ? null
         : node.effectiveDebugView;
