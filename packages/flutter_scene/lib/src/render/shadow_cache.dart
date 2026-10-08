@@ -99,17 +99,19 @@ class DirectionalShadowCache {
   /// factor of effective resolution on top of [slackFactor].
   static const double radiusStep = slackFactor;
 
-  /// How many ideal radii from an ideal cascade's center a cached tile's box
-  /// can reach: the tile is rendered up to [radiusStep] larger with
-  /// [slackFactor] around it, and drifts until the ideal sphere touches its
-  /// edge.
-  static const double maxReachFactor = 2 * radiusStep * slackFactor - 1;
-
-  static final double _logRadiusStep = math.log(radiusStep);
-
   // Tolerance on the lower radius bound, so an ideal radius that sits on a
   // step does not flip between two steps on rounding.
   static const double _radiusTolerance = 1e-3;
+
+  /// How many ideal radii from an ideal cascade's center a cached tile's box
+  /// can reach: the tile is rendered up to [radiusStep] larger, past the
+  /// tolerance on the lower radius bound, with
+  /// [slackFactor] around it, and drifts until the ideal sphere touches its
+  /// edge.
+  static const double maxReachFactor =
+      2 * radiusStep * slackFactor / (1 - _radiusTolerance) - 1;
+
+  static final double _logRadiusStep = math.log(radiusStep);
 
   /// The smallest power of [radiusStep] that is at least [radius].
   static double snappedRadius(double radius) {
