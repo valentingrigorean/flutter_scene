@@ -119,6 +119,9 @@ class TrailComponent extends MeshComponent {
   }
 
   @override
+  bool get ticks => true;
+
+  @override
   void update(double deltaSeconds) {
     _time += deltaSeconds;
     final world = node.globalTransform.getTranslation();

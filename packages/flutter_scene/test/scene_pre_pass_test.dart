@@ -138,12 +138,35 @@ void main() {
     expect(itemOf(meshes[6]).highlightColor, Vector4(1, 0, 0, 1));
   });
 
-  test('a change that names no node refreshes every item once', () {
+  test('a primitive flag or the bounds of a geometry queue the one node that '
+      'draws it, and a geometry or primitive in no scene queues none', () {
     _visited(scene);
     final primitive = meshes[9].mesh!.primitives.single..visible = false;
-    expect(_visited(scene), meshes.length);
+    expect(_visited(scene), 1);
     final item = scene.items.firstWhere((item) => item.drawSource == primitive);
     expect(item.primitiveVisible, isFalse);
+
+    primitive.geometry.setLocalBounds(
+      Aabb3.minMax(Vector3.all(-3), Vector3.all(3)),
+      Sphere.centerRadius(Vector3.zero(), 6),
+    );
+    expect(_visited(scene), 1);
+    expect(item.worldBounds!.max.y, 3);
+
+    MeshPrimitive(_StubGeometry(), _StubMaterial()).castsShadow = false;
+    expect(_visited(scene), 0);
+
+    root.remove(groups[2]);
+    final left = groups[2].children.first.mesh!.primitives.single;
+    left.visible = false;
+    left.geometry.setLocalBounds(null, null);
+    expect(_visited(scene), 0);
+  });
+
+  test('a debug view set on a node refreshes every item once', () {
+    _visited(scene);
+    root.debugView = DebugView.none;
+    expect(_visited(scene), meshes.length);
     expect(_visited(scene), 0);
   });
 

@@ -34,3 +34,30 @@ int get renderSourceRevision => _renderSourceRevision;
 
 @internal
 void markRenderSourcesChanged() => _renderSourceRevision++;
+
+/// What a render item mirrors and no node states: a geometry's bounds, a
+/// primitive's flags. A node that draws one listens to it, so a change
+/// queues that node and a source no scene draws queues none.
+mixin RenderSourceListeners {
+  List<void Function()>? _renderSourceListeners;
+
+  /// Calls [listener] after each change a render item mirrors.
+  @internal
+  void addRenderSourceListener(void Function() listener) =>
+      (_renderSourceListeners ??= []).add(listener);
+
+  /// Removes one listener [addRenderSourceListener] added.
+  @internal
+  void removeRenderSourceListener(void Function() listener) =>
+      _renderSourceListeners?.remove(listener);
+
+  /// Tells the nodes that draw this source that it changed.
+  @protected
+  void tellRenderSourceListeners() {
+    final listeners = _renderSourceListeners;
+    if (listeners == null) return;
+    for (var index = 0; index < listeners.length; index++) {
+      listeners[index]();
+    }
+  }
+}

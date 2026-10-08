@@ -48,6 +48,9 @@ class InstancedMeshComponent extends Component {
     _renderItem = item;
     renderScene.add(item);
     instancedMesh.addRowListener(node.internalRenderSourcesChanged);
+    instancedMesh.geometry.addRenderSourceListener(
+      node.internalRenderSourcesChanged,
+    );
     instancedMesh.rows?.addRowListener(node.internalRenderSourcesChanged);
   }
 
@@ -56,6 +59,9 @@ class InstancedMeshComponent extends Component {
     final item = _renderItem;
     if (item != null) {
       instancedMesh.removeRowListener(node.internalRenderSourcesChanged);
+      instancedMesh.geometry.removeRenderSourceListener(
+        node.internalRenderSourcesChanged,
+      );
       instancedMesh.rows?.removeRowListener(node.internalRenderSourcesChanged);
       node.internalRenderScene?.remove(item);
       _renderItem = null;

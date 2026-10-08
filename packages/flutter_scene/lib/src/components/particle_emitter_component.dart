@@ -87,6 +87,9 @@ class ParticleEmitterComponent extends MeshComponent {
   double aspectRatio = 1.0;
 
   @override
+  bool get ticks => true;
+
+  @override
   void update(double deltaSeconds) {
     if (!paused) system.step(deltaSeconds);
     _repack();
