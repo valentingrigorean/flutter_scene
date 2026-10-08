@@ -82,14 +82,14 @@ final class InstanceBand {
   /// vertex stage computes, in `[0, 1)`.
   static double hashOf(Vector3 translation) {
     final f = _hashScratch;
-    f[0] = translation.x * 443.897;
-    f[1] = translation.y * 441.423;
-    f[2] = translation.z * 437.195;
+    f[0] = translation.x * 0.1031;
+    f[1] = translation.y * 0.1030;
+    f[2] = translation.z * 0.0973;
     f[0] = f[0] - f[0].floorToDouble();
     f[1] = f[1] - f[1].floorToDouble();
     f[2] = f[2] - f[2].floorToDouble();
     f[3] =
-        f[0] * (f[1] + 19.19) + f[1] * (f[0] + 19.19) + f[2] * (f[2] + 19.19);
+        f[0] * (f[1] + 33.33) + f[1] * (f[0] + 33.33) + f[2] * (f[2] + 33.33);
     f[4] = (f[0] + f[3] + f[1] + f[3]) * (f[2] + f[3]);
     return f[4] - f[4].floorToDouble();
   }

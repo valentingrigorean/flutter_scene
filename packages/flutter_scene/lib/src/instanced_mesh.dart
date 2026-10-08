@@ -58,6 +58,10 @@ class InstancedMesh implements MeshDrawSource {
        nodeSpaceInstances = true,
        assert(rows.rows == null, 'Share the mesh that holds the rows.'),
        assert(
+         material.instanceAttributes == null,
+         'A shared record carries no instance attribute.',
+       ),
+       assert(
          rows.nodeSpaceInstances,
          'A shared row set holds node-space records.',
        );
@@ -78,7 +82,7 @@ class InstancedMesh implements MeshDrawSource {
   set instanceRanges(Uint32List? value) {
     assert(value == null || value.length.isEven);
     _instanceRanges = value;
-    markSceneDrawChanged();
+    _drawStateChanged();
   }
 
   /// The transform applied to a vertex before its row's record, or null for
@@ -92,7 +96,7 @@ class InstancedMesh implements MeshDrawSource {
   set instanceLocal(Matrix4? value) {
     _instanceLocal = value;
     _boundsRevision = -1;
-    markSceneDrawChanged();
+    _drawStateChanged();
   }
 
   /// The rows the vertex stage keeps, or null to keep every row. See
@@ -103,12 +107,23 @@ class InstancedMesh implements MeshDrawSource {
   InstanceBand? _band;
   set band(InstanceBand? value) {
     _band = value;
-    markSceneDrawChanged();
+    _drawStateChanged();
   }
 
   /// States that a field of [band] changed, so a frame held for an unchanged
   /// scene is drawn again.
-  void bandChanged() => markSceneDrawChanged();
+  void bandChanged() => _drawStateChanged();
+
+  /// Counts the changes of [instanceRanges], [instanceLocal] and [band], so
+  /// the component refreshes the bounds and the cached shadows they decide.
+  @internal
+  int get drawStateRevision => _drawStateRevision;
+  int _drawStateRevision = 0;
+
+  void _drawStateChanged() {
+    _drawStateRevision++;
+    markSceneDrawChanged();
+  }
 
   StateError _sharedRows() =>
       StateError('This mesh draws the rows of another mesh; write them there.');
