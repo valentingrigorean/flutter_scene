@@ -74,6 +74,15 @@ class RenderCounters {
   /// material.
   int materialSummaryItems = 0;
 
+  /// Walks of the render scene's bounding volume hierarchy: one per view,
+  /// which its depth prepass, translucent depth patch and color pass draw
+  /// from, and one per shadow map or other pass that culls for itself.
+  int sceneCulls = 0;
+
+  /// Tests of an instanced item's instance cells against a view: at most one
+  /// per item per view.
+  int instanceCellCulls = 0;
+
   void reset() {
     draws = 0;
     instances = 0;
@@ -89,6 +98,8 @@ class RenderCounters {
     instanceBytesReplayed = 0;
     prePassNodes = 0;
     materialSummaryItems = 0;
+    sceneCulls = 0;
+    instanceCellCulls = 0;
   }
 
   void copyFrom(RenderCounters other) {
@@ -106,6 +117,8 @@ class RenderCounters {
     instanceBytesReplayed = other.instanceBytesReplayed;
     prePassNodes = other.prePassNodes;
     materialSummaryItems = other.materialSummaryItems;
+    sceneCulls = other.sceneCulls;
+    instanceCellCulls = other.instanceCellCulls;
   }
 
   /// Sets this to `now - start`.
@@ -127,6 +140,8 @@ class RenderCounters {
     prePassNodes = now.prePassNodes - start.prePassNodes;
     materialSummaryItems =
         now.materialSummaryItems - start.materialSummaryItems;
+    sceneCulls = now.sceneCulls - start.sceneCulls;
+    instanceCellCulls = now.instanceCellCulls - start.instanceCellCulls;
   }
 
   Map<String, int> toJson() => {
@@ -144,6 +159,8 @@ class RenderCounters {
     'instanceBytesReplayed': instanceBytesReplayed,
     'prePassNodes': prePassNodes,
     'materialSummaryItems': materialSummaryItems,
+    'sceneCulls': sceneCulls,
+    'instanceCellCulls': instanceCellCulls,
   };
 }
 

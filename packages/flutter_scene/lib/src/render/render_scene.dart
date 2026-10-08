@@ -65,8 +65,9 @@ final class SceneMaterialSummary {
 }
 
 /// The items one cull of a render scene kept for a view, in the order the cull
-/// visited them, with the scene inputs their materials read. The view's color
-/// pass draws from [items], so the view culls once.
+/// visited them, with the instance ranges it kept of each and the scene inputs
+/// their materials read. The view's depth prepass, translucent depth patch and
+/// color pass draw from [items], so the view culls once.
 final class ViewVisibleItems {
   /// The items the cull kept.
   final List<RenderItem> items = [];
@@ -81,11 +82,65 @@ final class ViewVisibleItems {
   int _structureRevision = -1;
   int _spatialRevision = -1;
 
+  // The instance ranges the cull kept of each of [items], in its order: null
+  // where every row draws, empty where no cell is in view. The lists are
+  // reused across culls.
+  final List<List<int>?> _cells = [];
+  final List<List<int>> _cellLists = [];
+  bool _cellsCulled = false;
+
+  /// Whether the cull tested the instance cells of the kept items, so a pass
+  /// takes the ranges it kept through [restoreCells]. False for a cull that
+  /// keeps every item.
+  bool get cellsCulled => _cellsCulled;
+
   /// Whether [scene] still holds the items and the bounds this was culled
   /// from.
   bool isCurrentFor(RenderScene scene) =>
       _structureRevision == scene._structureRevision &&
       _spatialRevision == scene._spatialRevision;
+
+  /// Sets the [RenderItem.visibleInstanceRanges] of the item at [index] of
+  /// [items] to the ranges the cull kept of it, and returns whether any
+  /// remains. Valid while [cellsCulled].
+  bool restoreCells(int index) {
+    final cells = _cells[index];
+    items[index].visibleInstanceRanges = cells;
+    return cells == null || cells.isNotEmpty;
+  }
+
+  // Tests the instance cells of each kept item that draws color in
+  // [layerMask] against [frustum] and [additionalPlanes], once, and keeps
+  // the ranges in view.
+  void _cullCells(
+    Frustum frustum,
+    List<Plane> additionalPlanes,
+    int layerMask,
+  ) {
+    _cells.clear();
+    var used = 0;
+    for (final item in items) {
+      if (!item.drawsColor ||
+          (item.layers & layerMask) == 0 ||
+          !item.cullInstances) {
+        _cells.add(null);
+        continue;
+      }
+      item.cullVisibleCells(frustum, additionalPlanes);
+      final visible = item.visibleInstanceRanges;
+      if (visible == null) {
+        _cells.add(null);
+        continue;
+      }
+      if (used == _cellLists.length) _cellLists.add([]);
+      _cells.add(
+        _cellLists[used++]
+          ..clear()
+          ..addAll(visible),
+      );
+    }
+    _cellsCulled = true;
+  }
 }
 
 /// One drawable primitive in the flat render layer.
@@ -737,6 +792,9 @@ class RenderItem {
   /// Refreshes [visibleInstanceRanges] and returns whether anything remains.
   @internal
   bool cullVisibleCells(Frustum frustum, List<Plane> additionalPlanes) {
+    if (cullInstances && instanceTransforms != null) {
+      activeRenderCounters.instanceCellCulls++;
+    }
     final visible = _cellsInside(
       frustum,
       additionalPlanes,
@@ -1521,6 +1579,7 @@ class RenderScene {
     void Function(RenderItem) visit, {
     List<Plane> additionalPlanes = const [],
   }) {
+    activeRenderCounters.sceneCulls++;
     final visited = _bvh.query(
       frustum,
       visit,
@@ -1599,7 +1658,8 @@ class RenderScene {
   }
 
   /// Culls the scene for a view into [into] and returns it: the items
-  /// [frustum] and [additionalPlanes] keep, or every item with
+  /// [frustum] and [additionalPlanes] keep, with [cullCells] the instance
+  /// cells in view of each that draws color in [layerMask], or every item with
   /// [includeOffscreen]. With [gatherInputs] it also gathers the scene inputs
   /// the kept items that draw color in [layerMask] read, so the view decides
   /// its passes from the cull its color pass draws from.
@@ -1610,12 +1670,14 @@ class RenderScene {
     List<Plane> additionalPlanes = const [],
     bool includeOffscreen = false,
     bool gatherInputs = true,
+    bool cullCells = true,
   }) {
     final kept = into.items..clear();
     final inputs = into.inputs..clear();
     into
       .._structureRevision = _structureRevision
       .._spatialRevision = _spatialRevision;
+    into._cellsCulled = false;
     if (includeOffscreen) {
       kept.addAll(items);
       into.rejected = 0;
@@ -1625,6 +1687,7 @@ class RenderScene {
         kept.add,
         additionalPlanes: additionalPlanes,
       );
+      if (cullCells) into._cullCells(frustum, additionalPlanes, layerMask);
     }
     if (!gatherInputs) return into;
     for (final item in kept) {
