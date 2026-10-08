@@ -182,6 +182,15 @@ abstract class CustomRenderPass {
   /// for every view by default.
   bool runsIn(RenderView view) => true;
 
+  /// Whether this pass draws onto [RenderPassContext.currentColor] in place,
+  /// in a render pass of its own that loads that image, where the other
+  /// passes run a full-screen shader into a buffer of their own. The engine
+  /// then keeps no buffer for it and its stage's color chain passes through
+  /// it unchanged, so an overlay of a few sprites costs no full-screen draw.
+  /// Such a pass never calls [RenderPassContext.applyShader] or
+  /// [RenderPassContext.drawObjects]. False by default.
+  bool get drawsInPlace => false;
+
   /// Records this pass's work for one frame using [context].
   void execute(RenderPassContext context);
 }
@@ -228,12 +237,19 @@ class RenderPassContext {
   /// The render-target size in physical pixels.
   final ui.Size dimensions;
 
-  final gpu.Texture _destination;
+  final gpu.Texture? _destination;
   final RenderScene _renderScene;
   final int _viewLayerMask;
   final String _passKey;
   final double _time;
   bool _wrote = false;
+
+  gpu.Texture get _ownDestination =>
+      _destination ??
+      (throw StateError(
+        'A pass that draws in place has no buffer of its own: it draws onto '
+        'currentColor.',
+      ));
   int _drawCounter = 0;
 
   static final gpu.Shader _vertexShader =
@@ -311,6 +327,12 @@ class RenderPassContext {
   /// depths the scene stored. Null when [sceneDepthAttachment] is.
   Matrix4? get sceneViewTransform =>
       _context.blackboard.get<Matrix4>(kSceneViewTransformBlackboardKey);
+
+  /// The view-projection that lands geometry on the display image of this
+  /// view: the one its camera passes rasterize with, with no jitter, since
+  /// temporal anti-aliasing resolves before tone mapping. A pass at a
+  /// display stage that draws geometry onto [currentColor] draws with it.
+  Matrix4 get displayViewTransform => rasterViewTransformOf(camera, dimensions);
 
   /// The compare function that passes a fragment at or nearer than the depth
   /// [sceneDepthAttachment] stores, under the depth raster of this view.
@@ -427,7 +449,7 @@ class RenderPassContext {
       TransientTextureDescriptor.color(
         width: width,
         height: height,
-        format: _destination.format,
+        format: _ownDestination.format,
         debugName: 'custom_mask_${_passKey}_$index',
       ),
     );
@@ -485,7 +507,9 @@ class RenderPassContext {
 
     final commandBuffer = gpu.gpuContext.createCommandBuffer();
     final renderPass = commandBuffer.createRenderPass(
-      gpu.RenderTarget.singleColor(gpu.ColorAttachment(texture: _destination)),
+      gpu.RenderTarget.singleColor(
+        gpu.ColorAttachment(texture: _ownDestination),
+      ),
     );
     renderPass.bindPipeline(resolvePipeline(_vertexShader, fragmentShader));
     bindVertexBufferCompat(renderPass, _quadView, 6);
@@ -540,7 +564,7 @@ class UserRenderGraphPass extends RenderGraphPass {
     required CustomRenderPass pass,
     required Camera camera,
     required ui.Size dimensions,
-    required gpu.Texture destination,
+    required gpu.Texture? destination,
     required RenderScene renderScene,
     required int viewLayerMask,
     required int passIndex,
@@ -557,7 +581,7 @@ class UserRenderGraphPass extends RenderGraphPass {
   final CustomRenderPass _pass;
   final Camera _camera;
   final ui.Size _dimensions;
-  final gpu.Texture _destination;
+  final gpu.Texture? _destination;
   final RenderScene _renderScene;
   final int _viewLayerMask;
   final int _passIndex;
@@ -580,8 +604,9 @@ class UserRenderGraphPass extends RenderGraphPass {
       _time,
     );
     _pass.execute(passContext);
-    if (passContext._wrote) {
-      context.blackboard.set(passContext._chainKey, _destination);
+    final destination = _destination;
+    if (passContext._wrote && destination != null) {
+      context.blackboard.set(passContext._chainKey, destination);
     }
   }
 }
