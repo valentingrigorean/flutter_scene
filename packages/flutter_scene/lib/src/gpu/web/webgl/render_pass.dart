@@ -1026,6 +1026,9 @@ final class WebGlRenderPass extends RenderPass {
     if (_finished) return;
     _finished = true;
     final gl = _gpuContext._gl;
+    // A scissor belongs to the pass that set it: left enabled, it clips the
+    // resolve below and every blit that follows the pass.
+    gl.disable(web.WebGL2RenderingContext.SCISSOR_TEST);
     for (final att in _target.colorAttachments) {
       final resolve = att.resolveTexture;
       final needsResolve =

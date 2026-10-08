@@ -6,7 +6,7 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/geometry/geometry.dart'
-    show bindUnskinnedFrameInfo, currentDrawInstanceFrame;
+    show bindUnskinnedFrameInfo;
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/scene_encoder.dart' show resolvePipeline;
@@ -309,9 +309,9 @@ class _ObjectMaskEncoder {
     final instances = item.instanceTransforms;
     if (instances != null) {
       if (dataSlot != null) {
-        currentDrawInstanceFrame = item.instanceFrame;
+        item.beginInstanceDraw();
         bindDraw(item.worldTransform);
-        currentDrawInstanceFrame = null;
+        RenderItem.endInstanceDraw();
         final packed = packInstanceData(
           item.instancePackTransform,
           instances,
@@ -347,9 +347,9 @@ class _ObjectMaskEncoder {
         }
         return;
       }
-      currentDrawInstanceFrame = item.instanceFrame;
+      item.beginInstanceDraw();
       bindDraw(item.worldTransform);
-      currentDrawInstanceFrame = null;
+      RenderItem.endInstanceDraw();
       final packed = packInstanceTransforms(
         item.instancePackTransform,
         instances,

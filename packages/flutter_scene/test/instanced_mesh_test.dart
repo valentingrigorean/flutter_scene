@@ -1,6 +1,8 @@
 // InstancedMesh API tests. Uses stub Geometry and Material so the tests
 // run without a Flutter GPU context.
 
+import 'dart:typed_data';
+
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
@@ -279,7 +281,7 @@ void main() {
         ]
         ..refreshInstanceData();
 
-      expect(item.instanceRanges, [0, 6, 0, 6, 1, 1, 7, 1, 0]);
+      expect(item.instanceRowRanges, [0, 6, 0, 6, 1, 1, 7, 1, 0]);
       expect(
         item.cullVisibleCells(
           Frustum.matrix(makeOrthographicMatrix(-5, 5, -5, 5, -5, 5)),
@@ -612,5 +614,104 @@ void main() {
         expectSameRecords(item, mesh);
       },
     );
+  });
+
+  group('InstancedMesh.sharing', () {
+    final aabb = Aabb3.minMax(Vector3.all(-0.5), Vector3.all(0.5));
+    _StubGeometry geometry() =>
+        _StubGeometry(aabb: aabb)
+          ..setVertexLayout(const VertexLayoutDescriptor(buffers: []));
+
+    InstancedMesh rowsOf(int count) {
+      final rows = InstancedMesh(
+        geometry: geometry(),
+        material: _StubMaterial(),
+        nodeSpaceInstances: true,
+      );
+      for (var i = 0; i < count; i++) {
+        rows.addInstance(Matrix4.translation(Vector3(i * 2.0, 0, 0)));
+      }
+      return rows;
+    }
+
+    RenderItem mounted(InstancedMeshComponent component) {
+      final node = Node()..addComponent(component);
+      Node().add(node);
+      node.parent!.debugMountInto(RenderScene());
+      component.refreshRenderItem();
+      return component.debugRenderItem!;
+    }
+
+    test('a sharing mesh draws the rows of its row set and packs no record '
+        'of its own', () {
+      final rows = rowsOf(100);
+      final mesh = InstancedMesh.sharing(
+        rows,
+        geometry: geometry(),
+        material: _StubMaterial(),
+      )..instanceRanges = Uint32List.fromList([10, 20, 60, 5]);
+      final component = InstancedMeshComponent(mesh);
+      final before = activeRenderCounters.instanceBytesPacked;
+      final item = mounted(component);
+      expect(activeRenderCounters.instanceBytesPacked, before);
+      expect(item.sharedRows, same(rows));
+      expect(item.instanceWorldData, isNull);
+      expect(item.nodeSpaceInstances, isTrue);
+      expect(item.instanceRanges, [10, 20, 60, 5]);
+      expect(mesh.instanceCount, 100);
+      expect(item.worldBounds!.max.x, 198.5);
+
+      rows.addInstance(Matrix4.translation(Vector3(500, 0, 0)));
+      component.refreshRenderItem();
+      expect(mesh.instanceCount, 101);
+      expect(item.worldBounds!.max.x, 500.5);
+      expect(activeRenderCounters.instanceBytesPacked, before);
+    });
+
+    test('a row write on a sharing mesh throws', () {
+      final mesh = InstancedMesh.sharing(
+        rowsOf(2),
+        geometry: geometry(),
+        material: _StubMaterial(),
+      );
+      expect(() => mesh.addInstance(Matrix4.identity()), throwsStateError);
+      expect(
+        () => mesh.setInstanceTransform(0, Matrix4.identity()),
+        throwsStateError,
+      );
+      expect(mesh.clearInstances, throwsStateError);
+    });
+
+    test('the bounds of a mesh place its geometry by its instance local '
+        'transform inside each row', () {
+      final mesh = InstancedMesh.sharing(
+        rowsOf(3),
+        geometry: geometry(),
+        material: _StubMaterial(),
+      )..instanceLocal = Matrix4.translation(Vector3(0, 10, 0));
+      final item = mounted(InstancedMeshComponent(mesh));
+      expect(item.instanceLocal!.getTranslation(), Vector3(0, 10, 0));
+      expect(item.worldBounds!.min, Vector3(-0.5, 9.5, -0.5));
+      expect(item.worldBounds!.max, Vector3(4.5, 10.5, 0.5));
+    });
+
+    test('a band and ranges stated after the item rests reach it', () {
+      final mesh = InstancedMesh.sharing(
+        rowsOf(3),
+        geometry: geometry(),
+        material: _StubMaterial(),
+      );
+      final component = InstancedMeshComponent(mesh);
+      final item = mounted(component);
+      component.node.shadowStatic = true;
+      component.refreshRenderItem();
+      final band = InstanceBand(farReach: 4);
+      mesh
+        ..band = band
+        ..instanceRanges = Uint32List.fromList([1, 1]);
+      component.refreshRenderItem();
+      expect(item.instanceBand, same(band));
+      expect(item.instanceRanges, [1, 1]);
+    });
   });
 }

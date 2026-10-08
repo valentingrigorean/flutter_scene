@@ -7,6 +7,7 @@ import 'package:flutter_scene/src/fmat/fmat_ast.dart' show DepthSurfaceKind;
 import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/render/instance_records.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
+import 'package:flutter_scene/src/render/shared_instance_rows.dart';
 import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
 
 import 'dart:ui' as ui;
@@ -21,8 +22,8 @@ import 'package:flutter_scene/src/geometry/geometry.dart'
     show
         Geometry,
         bindUnskinnedFrameInfo,
-        currentDrawInstanceFrame,
-        positionOnlyLayoutOverRecords;
+        positionOnlyLayoutOverRecords,
+        setCurrentViewInstanceBandOf;
 import 'package:flutter_scene/src/material/material.dart'
     show MaskedDepthPass, Material;
 import 'package:flutter_scene/src/render/draw_recorder.dart';
@@ -183,6 +184,7 @@ class DepthPrepass extends RenderGraphPass {
 
     final commandBuffer = gpu.gpuContext.createCommandBuffer();
     final renderPass = commandBuffer.createRenderPass(target);
+    setCurrentViewInstanceBandOf(_camera, _camera.position, _cameraForward);
     final encoder = _DepthPrepassEncoder(
       renderPass,
       context.transientsBuffer,
@@ -308,6 +310,7 @@ class TranslucentDepthPatchPass extends RenderGraphPass {
     );
     final commandBuffer = gpu.gpuContext.createCommandBuffer();
     final renderPass = commandBuffer.createRenderPass(target);
+    setCurrentViewInstanceBandOf(_camera, _camera.position, _cameraForward);
     final encoder = _DepthPrepassEncoder(
       renderPass,
       context.transientsBuffer,
@@ -766,7 +769,7 @@ class _DepthPrepassEncoder {
 
     final instances = item.instanceTransforms;
     if (instances != null) {
-      final ranges = item.visibleInstanceRanges ?? item.instanceRanges;
+      final ranges = item.visibleInstanceRanges ?? item.instanceRowRanges;
       final limit = instanceLimit == null || instanceLimit >= instances.length
           ? null
           : instanceLimit;
@@ -790,10 +793,37 @@ class _DepthPrepassEncoder {
         }
         return;
       }
-      if (item.instanceWorldData == null) return;
-      currentDrawInstanceFrame = item.instanceFrame;
+      item.beginInstanceDraw();
       _bindDraw(item.worldTransform);
-      currentDrawInstanceFrame = null;
+      RenderItem.endInstanceDraw();
+      final shared = item.sharedRows;
+      if (shared != null) {
+        final rows = sharedInstanceRowsOf(shared);
+        _renderPass.setWindingOrder(
+          item.windingFlipped != rows.flipped
+              ? gpu.WindingOrder.counterClockwise
+              : gpu.WindingOrder.clockwise,
+        );
+        final sharedRanges = item.instanceRanges;
+        final draws = rows.drawCountOf(sharedRanges);
+        for (var draw = 0; draw < draws; draw++) {
+          final count = rows.bind(
+            _renderPass,
+            sharedRanges,
+            draw,
+            instanceSlot,
+          );
+          if (count == 0) continue;
+          drawOrRejectPipeline(
+            _renderPass,
+            geometry,
+            _boundPipeline,
+            instanceCount: count,
+          );
+        }
+        return;
+      }
+      if (item.instanceWorldData == null) return;
       // One instanced draw per range of the records the item keeps; a frame
       // packs none.
       for (var range = 0; range < ranges.length; range += 3) {

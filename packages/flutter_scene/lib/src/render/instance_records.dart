@@ -141,7 +141,7 @@ void bindHeldInstanceRecord(
 /// instances rest, or from one copy of the whole store in the transient
 /// arena on a frame that changed them.
 ///
-/// No record is packed: a pass draws the ranges [RenderItem.instanceRanges]
+/// No record is packed: a pass draws the ranges [RenderItem.instanceRowRanges]
 /// or a cull of its cells names, one instanced draw per range.
 void bindInstanceRows(
   gpu.RenderPass pass,

@@ -31,6 +31,8 @@ import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
 import 'package:flutter_scene/src/render/instance_records.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
+import 'package:flutter_scene/src/render/shared_instance_rows.dart';
+import 'package:flutter_scene/src/instance_band.dart';
 import 'package:flutter_scene/src/render/lod.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
@@ -1065,6 +1067,7 @@ base class SceneEncoder {
     // Read once. A camera's getters may allocate, and both feed every draw.
     _cameraPosition = _camera.position;
     _cameraForward = _camera.forward;
+    setCurrentViewInstanceBandOf(_camera, _cameraPosition, _cameraForward);
     _raster = depthRasterOf(_camera);
     _pixelSlope = pixelDepthSlopeOf(_camera, _dimensions);
     _pixelScale = pixelWorldScaleOf(_camera, _dimensions);
@@ -1206,6 +1209,8 @@ base class SceneEncoder {
   gpu.Shader? _boundMaterialVertex;
   gpu.Shader? _boundFrameInfoShader;
   Matrix4? _boundFrameInfoFrame;
+  Matrix4? _boundFrameInfoLocal;
+  InstanceBand? _boundFrameInfoBand;
   double _boundFrameInfoDepthBias = double.nan;
   int _boundFrameInfoDepthKey = -1;
   double _boundMaterialFade = double.nan;
@@ -1842,8 +1847,12 @@ base class SceneEncoder {
       geometry.bindGeometryBuffers(_renderPass);
       final shader = materialVertex ?? geometry.vertexShader;
       final frame = currentDrawInstanceFrame;
+      final local = currentDrawInstanceLocal;
+      final band = currentDrawInstanceBand;
       if (!identical(_boundFrameInfoShader, shader) ||
           !identical(_boundFrameInfoFrame, frame) ||
+          !identical(_boundFrameInfoLocal, local) ||
+          !identical(_boundFrameInfoBand, band) ||
           _boundFrameInfoDepthBias != depthBias ||
           _boundFrameInfoDepthKey != depthKey) {
         bindUnskinnedFrameInfo(
@@ -1856,6 +1865,8 @@ base class SceneEncoder {
         );
         _boundFrameInfoShader = shader;
         _boundFrameInfoFrame = frame;
+        _boundFrameInfoLocal = local;
+        _boundFrameInfoBand = band;
         _boundFrameInfoDepthBias = depthBias;
         _boundFrameInfoDepthKey = depthKey;
       }
@@ -2125,7 +2136,7 @@ base class SceneEncoder {
       // Node-space records draw under the node's transform as the instance
       // frame, and a back-to-front sort reads the eye in the node's space.
       final nodeSpace = item.nodeSpaceInstances;
-      if (nodeSpace) currentDrawInstanceFrame = item.worldTransform;
+      item.beginInstanceDraw();
       try {
         _encodeInstancedRecords(
           pipeline,
@@ -2144,7 +2155,7 @@ base class SceneEncoder {
               debugFallback ?? _usesDebugFallback(item, material, geometry),
         );
       } finally {
-        currentDrawInstanceFrame = null;
+        RenderItem.endInstanceDraw();
       }
     } finally {
       endMeshDraw(geometry);
@@ -2176,7 +2187,7 @@ base class SceneEncoder {
     _setPrimitiveType(geometry.primitiveType);
 
     final nodeTransform = item.instancePackTransform;
-    final ranges = item.visibleInstanceRanges ?? item.instanceRanges;
+    final ranges = item.visibleInstanceRanges ?? item.instanceRowRanges;
     final limit = instanceLimit == null || instanceLimit >= instances.length
         ? null
         : instanceLimit;
@@ -2210,6 +2221,22 @@ base class SceneEncoder {
 
     _bindGeometry(geometry, nodeTransform, material, materialVertex);
     final instanceSlot = geometry.vertexStreamCount;
+    final shared = item.sharedRows;
+    if (shared != null) {
+      final rows = sharedInstanceRowsOf(shared);
+      _setWindingOrder(
+        windingFlipped != rows.flipped
+            ? gpu.WindingOrder.counterClockwise
+            : gpu.WindingOrder.clockwise,
+      );
+      final sharedRanges = item.instanceRanges;
+      final draws = rows.drawCountOf(sharedRanges);
+      for (var draw = 0; draw < draws; draw++) {
+        final count = rows.bind(_renderPass, sharedRanges, draw, instanceSlot);
+        if (count > 0) _drawGeometry(geometry, material, instanceCount: count);
+      }
+      return;
+    }
     if (sortBackToFrontFrom == null && item.instanceWorldData != null) {
       for (var range = 0; range < ranges.length; range += 3) {
         final first = ranges[range];

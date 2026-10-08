@@ -27,6 +27,8 @@ class RenderView {
     this.renderScale,
     this.filterQuality,
     this.cullingPlanes = const [],
+    this.instanceDepthFrom = double.negativeInfinity,
+    this.instanceDepthTo = double.infinity,
   }) : assert(
          renderScale == null || (renderScale.isFinite && renderScale > 0.0),
          'renderScale must be a positive, finite number.',
@@ -94,4 +96,17 @@ class RenderView {
   /// This supports horizon, portal, and application-defined occlusion culling.
   /// Objects with frustum culling disabled ignore these planes.
   List<Plane> cullingPlanes;
+
+  /// The least nearest depth of a banded instance row this view draws.
+  ///
+  /// A row of a mesh with an `InstancedMesh.band` draws in this view when the
+  /// depth of its bound sphere's nearest point along the view direction lies
+  /// in `[instanceDepthFrom, instanceDepthTo)`. Two views over the same
+  /// layers that state one value, one as its from and one as its to, draw
+  /// each row in exactly one of them. A mesh without a band ignores both.
+  double instanceDepthFrom;
+
+  /// The nearest depth at which this view stops drawing a banded instance
+  /// row, see [instanceDepthFrom].
+  double instanceDepthTo;
 }

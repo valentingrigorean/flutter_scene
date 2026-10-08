@@ -42,15 +42,22 @@ class InstancedMeshComponent extends Component {
             material: instancedMesh.material,
           )
           ..sourceNode = node
-          ..drawSource = instancedMesh;
+          ..drawSource = instancedMesh
+          ..instanceSource = instancedMesh;
     _renderItem = item;
     renderScene.add(item);
+    (instancedMesh.rows ?? instancedMesh).addRowListener(
+      node.internalRenderSourcesChanged,
+    );
   }
 
   @override
   void onUnmount() {
     final item = _renderItem;
     if (item != null) {
+      (instancedMesh.rows ?? instancedMesh).removeRowListener(
+        node.internalRenderSourcesChanged,
+      );
       node.internalRenderScene?.remove(item);
       _renderItem = null;
       _worldTransformVersion = -1;
@@ -66,6 +73,7 @@ class InstancedMeshComponent extends Component {
   void refreshRenderItem() {
     final item = _renderItem;
     if (item == null) return;
+    item.sharedRows = instancedMesh.rows;
     item.debugView = Node.debugViewOverrideCount == 0
         ? null
         : node.effectiveDebugView;

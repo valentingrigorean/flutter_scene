@@ -253,6 +253,7 @@ export 'src/geometry/splat_geometry.dart' show SplatCropMode;
 export 'src/splats/gaussian_splats.dart' show GaussianSplats;
 export 'src/splats/splat_codec.dart' show SplatFormat;
 export 'src/splats/splat_data.dart' show SplatColorSpace, SplatData;
+export 'src/instance_band.dart' show InstanceBand;
 export 'src/instanced_mesh.dart' show InstancedMesh;
 export 'src/light.dart'
     show

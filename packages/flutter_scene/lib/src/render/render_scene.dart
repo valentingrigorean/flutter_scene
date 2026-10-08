@@ -17,6 +17,8 @@ import 'package:flutter_scene/src/components/reflection_probe_component.dart';
 import 'package:flutter_scene/src/components/semantics_component.dart';
 import 'package:flutter_scene/src/components/spot_light_component.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart';
+import 'package:flutter_scene/src/instance_band.dart';
+import 'package:flutter_scene/src/instanced_mesh.dart';
 import 'package:flutter_scene/src/light.dart' show ShadowCasterFaces;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart' show ShadowCastingMode;
@@ -287,8 +289,51 @@ class RenderItem {
   Matrix4? get instanceFrame => nodeSpaceInstances ? worldTransform : null;
 
   /// The row ranges the current view draws, or null when it draws every
-  /// range of [instanceRanges]. Three entries per range, as there.
+  /// range of [instanceRowRanges]. Three entries per range, as there.
   List<int>? visibleInstanceRanges;
+
+  /// The mesh whose rows this item draws from the records they share, or
+  /// null when the item packs its own (see [InstancedMesh.sharing]).
+  @internal
+  InstancedMesh? sharedRows;
+
+  /// The instanced mesh this item draws, read at each draw for what a frame
+  /// may set without a change to the node: [instanceRanges], [instanceLocal]
+  /// and [instanceBand].
+  @internal
+  InstancedMesh? instanceSource;
+
+  /// The rows a draw of [sharedRows] takes, as pairs of a first row and a
+  /// row count, or null for every row.
+  @internal
+  Uint32List? get instanceRanges => instanceSource?.instanceRanges;
+
+  /// The transform a vertex takes before its row's record, or null for none.
+  @internal
+  Matrix4? get instanceLocal => instanceSource?.instanceLocal;
+
+  /// The band each row is tested against, or null for none.
+  @internal
+  InstanceBand? get instanceBand => instanceSource?.band;
+
+  /// States this item's instance frame, local transform and band for the
+  /// unskinned `FrameInfo` of the draws bound next. Pair with
+  /// [endInstanceDraw].
+  @internal
+  void beginInstanceDraw() {
+    if (!nodeSpaceInstances) return;
+    currentDrawInstanceFrame = worldTransform;
+    currentDrawInstanceLocal = instanceLocal;
+    currentDrawInstanceBand = instanceBand;
+  }
+
+  /// Clears what [beginInstanceDraw] stated.
+  @internal
+  static void endInstanceDraw() {
+    currentDrawInstanceFrame = null;
+    currentDrawInstanceLocal = null;
+    currentDrawInstanceBand = null;
+  }
 
   final List<int> _visibleRangeScratch = [];
 
@@ -326,7 +371,7 @@ class RenderItem {
   /// each: the first row, the row count and 1 where the rows reverse the
   /// winding, three entries per range. Rows that share a winding form one
   /// range, so a set that mirrors no instance is one range.
-  List<int> get instanceRanges => _allRanges;
+  List<int> get instanceRowRanges => _allRanges;
 
   List<int> _allRanges = const [];
 
@@ -380,7 +425,7 @@ class RenderItem {
 
   void _packInstances(List<int>? rows) {
     _cellWorldBounds = null;
-    final instances = instanceTransforms;
+    final instances = sharedRows == null ? instanceTransforms : null;
     final colors = instanceColors;
     if (instances == null) {
       instanceWorldData = null;
