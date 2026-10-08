@@ -209,13 +209,13 @@ class _WireframeEncoder {
     if (instances != null) {
       if (geometry.instancedVertexLayout == null) {
         for (final instanceTransform in instances) {
-          bindDraw(item.worldTransform * instanceTransform);
+          bindDraw(item.drawTransform * instanceTransform);
           drawIndexedCompat(_pass, edges.count);
         }
         return;
       }
       item.beginInstanceDraw();
-      bindDraw(item.worldTransform);
+      bindDraw(item.drawTransform);
       RenderItem.endInstanceDraw();
       final packed = packInstanceTransforms(
         item.instancePackTransform,
@@ -234,9 +234,12 @@ class _WireframeEncoder {
       return;
     }
 
-    item.beginSpinDraw();
-    bindDraw(item.worldTransform);
+    item
+      ..beginAnchoredDraw()
+      ..beginSpinDraw();
+    bindDraw(item.drawTransform);
     RenderItem.endSpinDraw();
+    RenderItem.endAnchoredDraw();
     if (geometry.instancedVertexLayout != null &&
         geometry.bindsModelTransformInstance) {
       bindSingleInstanceTransform(_pass, item.worldTransform);

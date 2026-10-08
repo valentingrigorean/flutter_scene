@@ -236,7 +236,7 @@ class ShadowCatcherBakePass extends RenderGraphPass {
         geometry.bind(
           pass,
           context.transientsBuffer,
-          item.worldTransform,
+          item.drawTransform,
           bakeTransform,
           bakeCameraPosition,
           shaderOverride: materialVertex,
@@ -252,7 +252,7 @@ class ShadowCatcherBakePass extends RenderGraphPass {
             geometry.bindsModelTransformInstance) {
           bindSingleInstanceData(
             pass,
-            item.worldTransform,
+            item.drawTransform,
             slot: geometry.vertexStreamCount,
           );
         }

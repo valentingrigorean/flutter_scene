@@ -167,14 +167,14 @@ class CoplanarOverlapScan {
           groups,
           item,
           null,
-          item.worldTransform,
+          item.drawTransform,
           triangles,
         );
       } else {
         final world = Matrix4.zero();
         for (var i = 0; i < instances.length; i++) {
           world
-            ..setFrom(item.worldTransform)
+            ..setFrom(item.drawTransform)
             ..multiply(instances[i]);
           yield* _collectGroups(groups, item, i, world, triangles);
         }

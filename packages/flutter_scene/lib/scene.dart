@@ -300,7 +300,13 @@ export 'src/render/debug_view.dart'
 export 'src/render/instance_record_ring.dart'
     show InstanceRecordBuffer, InstanceRecordDevice, debugInstanceRecordDevice;
 export 'src/render/render_scene.dart'
-    show RenderItem, RenderScene, SceneMaterialSummary, ViewVisibleItems;
+    show
+        RenderItem,
+        RenderScene,
+        SceneMaterialSummary,
+        ViewVisibleItems,
+        currentDrawAnchor,
+        currentDrawOrigin;
 export 'src/render/shared_instance_rows.dart'
     show
         InstanceRecordFrame,
