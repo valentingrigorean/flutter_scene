@@ -162,8 +162,8 @@ void main() {
   });
 
   group('a zoom whose near plane follows the camera distance, so the '
-      'cascade radii change on every frame, refreshes at most one tile per '
-      'frame, amortized', () {
+      'cascade radii change on every frame, keeps its tiles from one '
+      'radius step to the next', () {
     final target = Vector3.zero();
     final toEye = Vector3(0, 0.6, -0.8);
 
@@ -186,7 +186,9 @@ void main() {
       );
     }
 
-    for (final pinned in [false, true]) {
+    // A pinned first cascade leaves its tile as the camera moves, as in a pan;
+    // the free cascades only change radius.
+    for (final (pinned, limit) in [(false, 10), (true, 18)]) {
       for (final (name, step) in [('out', 1.01), ('in', 1 / 1.01)]) {
         test('zooming $name, first cascade ${pinned ? 'pinned' : 'free'}', () {
           light
@@ -206,7 +208,7 @@ void main() {
             most = math.max(most, count);
           }
           printOnFailure('$refreshes refreshes, at most $most in a frame');
-          expect(refreshes, lessThanOrEqualTo(60));
+          expect(refreshes, lessThanOrEqualTo(limit));
           expect(most, lessThan(4));
         });
       }
