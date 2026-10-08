@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/render_scene.dart';
+import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/scene.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
@@ -124,6 +125,32 @@ void main() {
         reason: 'point far off the side should be outside',
       );
     });
+
+    test(
+      'keeps its near and far planes at a near/far ratio of ten million',
+      () {
+        final camera = PerspectiveCamera(
+          position: Vector3(0, 0, 10),
+          target: Vector3.zero(),
+          fovNear: 0.00005,
+          fovFar: 600,
+        );
+        final frustum = camera.getFrustum(_viewport);
+        for (final along in [0.0001, 0.035, 0.5, 599.0]) {
+          expect(
+            frustum.containsVector3(Vector3(0, 0, 10 - along)),
+            isTrue,
+            reason: 'a point $along ahead lies between the near and far planes',
+          );
+        }
+        expect(frustum.containsVector3(Vector3(0, 0, 10 - 0.00001)), isFalse);
+        expect(frustum.containsVector3(Vector3(0, 0, 10 - 601)), isFalse);
+        expect(
+          cullingFrustumOf(camera, _viewport).containsVector3(Vector3(0, 0, 9)),
+          isTrue,
+        );
+      },
+    );
   });
 
   group('Node.isVisibleTo', () {

@@ -139,16 +139,18 @@ Matrix4 finiteViewTransformOf(Camera camera, ui.Size dimensions, double far) {
   return camera.getViewTransform(dimensions);
 }
 
-/// The frustum CPU culling tests against for [camera], from the standard
-/// view-projection (a reversed or infinite projection loses its far plane in
-/// Gribb-Hartmann extraction).
+/// The frustum CPU culling tests against for [camera], [Camera.getFrustum]
+/// over the standard view-projection (a reversed or infinite projection loses
+/// its far plane in Gribb-Hartmann extraction).
 Frustum cullingFrustumOf(Camera camera, ui.Size dimensions) =>
-    cullingFrustum(camera.getViewTransform(dimensions));
+    _finitePlanes(camera.getFrustum(dimensions));
 
 /// The six clip planes of [viewProjection], with a far plane that an infinite
 /// projection leaves degenerate replaced by one that culls nothing.
-Frustum cullingFrustum(Matrix4 viewProjection) {
-  final frustum = Frustum.matrix(viewProjection);
+Frustum cullingFrustum(Matrix4 viewProjection) =>
+    _finitePlanes(Frustum.matrix(viewProjection));
+
+Frustum _finitePlanes(Frustum frustum) {
   for (final plane in [
     frustum.plane0,
     frustum.plane1,

@@ -4,6 +4,9 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show internal;
 import 'package:vector_math/vector_math.dart';
 
+import 'package:flutter_scene/src/render/viewport_camera.dart'
+    show ViewportBoundProjection;
+
 /// A lens projection that maps view-space coordinates into clip space.
 ///
 /// The projection is the half of a camera that does not depend on where the
@@ -165,11 +168,39 @@ abstract class Camera {
   /// Returns the view frustum (six normalized clip planes) for a render
   /// target of the given [dimensions].
   ///
-  /// Built from [getViewTransform] using the standard Gribb-Hartmann
-  /// extraction. Useful for [Node.isVisibleTo] queries and any other
+  /// The side planes come from [getViewTransform] by the standard
+  /// Gribb-Hartmann extraction. A perspective camera's near and far planes
+  /// come from its [position], [forward] and the projection's near and far
+  /// distances instead: the extraction subtracts two float32 rows that agree
+  /// to within near/far, so past a ratio of about a million (a 5 cm near
+  /// plane with a far plane at a planet's horizon) its far plane culls
+  /// everything. Useful for [Node.isVisibleTo] queries and any other
   /// caller-driven culling.
-  Frustum getFrustum(ui.Size dimensions) =>
-      Frustum.matrix(getViewTransform(dimensions));
+  Frustum getFrustum(ui.Size dimensions) {
+    final frustum = Frustum.matrix(getViewTransform(dimensions));
+    final lens = switch (projection) {
+      final ViewportBoundProjection bound => bound.inner,
+      final other => other,
+    };
+    if (lens.runtimeType == PerspectiveProjection) {
+      final perspective = lens as PerspectiveProjection;
+      final axis = forward;
+      final along = axis.dot(position);
+      frustum.plane4.setFromComponents(
+        -axis.x,
+        -axis.y,
+        -axis.z,
+        along + perspective.far,
+      );
+      frustum.plane5.setFromComponents(
+        axis.x,
+        axis.y,
+        axis.z,
+        -(along + perspective.near),
+      );
+    }
+    return frustum;
+  }
 }
 
 /// How an [OrthographicProjection] sizes its view volume against the render
