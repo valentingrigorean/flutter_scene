@@ -438,8 +438,8 @@ class EngineLightingUniforms {
   }
 
   /// Binds the `ClipInfo` block (see `shaders/clip_volume.glsl`) on [shader]:
-  /// the planes of [volume], or a zero block that keeps every fragment when it
-  /// is null. The shaders that declare `FogInfo` declare `ClipInfo` too, so
+  /// the cut and keep planes of [volume], or a zero block that keeps every
+  /// fragment when it is null. The shaders that declare `FogInfo` declare `ClipInfo` too, so
   /// every caller of [bindFog] calls this with the material's
   /// [Material.clipVolume], and so does the coverage pre-draw. A shader that
   /// declares no `ClipInfo` binds nothing.
@@ -462,7 +462,7 @@ class EngineLightingUniforms {
   // The zero ClipInfo block, device-resident so an unclipped draw binds no
   // per-frame buffer.
   static final gpu.BufferView _noClipVolume = () {
-    const length = ClipVolume.maxPlanes * 16;
+    const length = ClipVolume.uniformByteSize;
     final buffer = gpu.gpuContext.createDeviceBufferWithCopy(ByteData(length));
     return gpu.BufferView(buffer, offsetInBytes: 0, lengthInBytes: length);
   }();

@@ -1,7 +1,7 @@
 // Clip volume tests. A material's clip volume discards the fragments inside
-// it in the built-in lit and unlit shaders and in every physical variant,
-// and a material without one draws every fragment. GPU-gated like the other
-// render suites.
+// its cut planes and outside its keep planes in the built-in lit and unlit
+// shaders and in every physical variant, and a material without one draws
+// every fragment. GPU-gated like the other render suites.
 
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -24,6 +24,12 @@ const int _height = 32;
 
 // Keeps the half of world space with x <= 0 and clips the rest.
 final ClipVolume _rightHalf = ClipVolume([Vector4(1, 0, 0, 0)]);
+
+// Keeps the same half through a keep plane alone.
+final ClipVolume _keepLeftHalf = ClipVolume(
+  const [],
+  keep: [Vector4(-1, 0, 0, 0)],
+);
 
 final Map<String, Material Function()> _materials = {
   'standard': () =>
@@ -112,18 +118,97 @@ void main() {
     expect(box.contains(Vector3.zero()), isFalse);
   });
 
-  test('a clip volume holds one to six planes and keeps its own copies', () {
+  test('a clip volume holds up to six cut and four keep planes and keeps '
+      'its own copies', () {
     final plane = Vector4(1, 0, 0, 0);
-    final volume = ClipVolume([plane]);
+    final volume = ClipVolume([plane], keep: [plane]);
     plane.x = -1;
 
     expect(volume.planes.single, Vector4(1, 0, 0, 0));
+    expect(volume.keep.single, Vector4(1, 0, 0, 0));
     expect(() => volume.planes.add(plane), throwsUnsupportedError);
+    expect(() => volume.keep.add(plane), throwsUnsupportedError);
     expect(() => ClipVolume(const []), throwsArgumentError);
+    expect(ClipVolume(const [], keep: [plane]).planes, isEmpty);
     expect(
       () => ClipVolume(List.filled(ClipVolume.maxPlanes + 1, plane)),
       throwsArgumentError,
     );
+    expect(
+      () => ClipVolume(
+        const [],
+        keep: List.filled(ClipVolume.maxKeepPlanes + 1, plane),
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('a point behind a keep plane is discarded, and so is one in the '
+      'cut region', () {
+    final slab = ClipVolume(
+      const [],
+      keep: [Vector4(0, 0, 1, 1), Vector4(0, 0, -1, 1)],
+    );
+    expect(slab.discards(Vector3(5, 5, 0)), isFalse);
+    expect(slab.discards(Vector3(0, 0, 1)), isFalse);
+    expect(slab.discards(Vector3(0, 0, 2)), isTrue);
+    expect(slab.discards(Vector3(0, 0, -2)), isTrue);
+    expect(slab.contains(Vector3.zero()), isFalse);
+
+    final both = ClipVolume([Vector4(1, 0, 0, 0)], keep: [Vector4(0, 1, 0, 0)]);
+    expect(both.discards(Vector3(-1, 1, 0)), isFalse);
+    expect(both.discards(Vector3(1, 1, 0)), isTrue);
+    expect(both.discards(Vector3(-1, -1, 0)), isTrue);
+  });
+
+  group('the ClipInfo block', () {
+    // The block as floats: six cut planes, then four keep planes.
+    List<double> floats(ClipVolume volume) {
+      final bytes = volume.uniformBytes;
+      expect(bytes.lengthInBytes, ClipVolume.uniformByteSize);
+      expect(ClipVolume.uniformByteSize, 160);
+      return bytes.buffer.asFloat32List(bytes.offsetInBytes, 40).toList();
+    }
+
+    const front = [0.0, 0.0, 0.0, 1.0];
+    const zero = [0.0, 0.0, 0.0, 0.0];
+
+    test('of a cut-only volume pads its cut planes to cut nothing more and '
+        'writes zero keep planes', () {
+      expect(floats(ClipVolume([Vector4(1, 2, 3, 4), Vector4(5, 6, 7, 8)])), [
+        1, 2, 3, 4, //
+        5, 6, 7, 8,
+        ...front, ...front, ...front, ...front,
+        ...zero, ...zero, ...zero, ...zero,
+      ]);
+    });
+
+    test('of a keep-only volume writes zero cut planes, whose first cuts '
+        'nothing, and pads its keep planes with zero planes', () {
+      expect(floats(ClipVolume(const [], keep: [Vector4(1, 2, 3, 4)])), [
+        ...zero, ...zero, ...zero, ...zero, ...zero, ...zero,
+        1, 2, 3, 4, //
+        ...zero, ...zero, ...zero,
+      ]);
+    });
+
+    test('of a volume that cuts and keeps writes both lists', () {
+      expect(
+        floats(
+          ClipVolume(
+            [Vector4(1, 2, 3, 4)],
+            keep: [Vector4(5, 6, 7, 8), Vector4(9, 10, 11, 12)],
+          ),
+        ),
+        [
+          1, 2, 3, 4, //
+          ...front, ...front, ...front, ...front, ...front,
+          5, 6, 7, 8, //
+          9, 10, 11, 12,
+          ...zero, ...zero,
+        ],
+      );
+    });
   });
 
   test('a material has no clip volume until one is set', () {
@@ -148,6 +233,17 @@ void main() {
     test('a $name material draws its fragments outside its clip volume '
         'and none inside it', () async {
       final drawn = await _draw(material()..clipVolume = _rightHalf);
+
+      expect(
+        (_backdrop(drawn.left), _backdrop(drawn.right)),
+        (false, true),
+        reason: '$drawn',
+      );
+    });
+
+    test('a $name material draws its fragments inside its keep planes '
+        'and none outside them', () async {
+      final drawn = await _draw(material()..clipVolume = _keepLeftHalf);
 
       expect(
         (_backdrop(drawn.left), _backdrop(drawn.right)),
