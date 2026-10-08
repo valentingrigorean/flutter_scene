@@ -2684,6 +2684,38 @@ base class Scene implements SceneGraph {
     return 0x40000000 | (signature & 0x3fffffff);
   }
 
+  // Whether a static caster of one of the [casters] subtrees draws into a
+  // tile rendered with [lightSpaceMatrix], as the shadow pass culls it.
+  bool _staticCastersIn(
+    Matrix4 lightSpaceMatrix,
+    List<Node> casters,
+    int channelMask,
+  ) {
+    final named = Set<Node>.identity()..addAll(casters);
+    var found = false;
+    renderScene.cull(Frustum.matrix(lightSpaceMatrix), (item) {
+      if (found ||
+          !shadowCasterAccepted(
+            item,
+            ShadowCasterFilter.staticOnly,
+            channelMask,
+          )) {
+        return;
+      }
+      for (
+        var node = item.sourceNode as Node?;
+        node != null;
+        node = node.parent
+      ) {
+        if (named.contains(node)) {
+          found = true;
+          return;
+        }
+      }
+    });
+    return found;
+  }
+
   List<SpotLightComponent> _visibleSpotLights() => [
     for (final light in renderScene.spotLights)
       if (light.node.internalEffectiveVisible) light,
@@ -3928,9 +3960,13 @@ base class Scene implements SceneGraph {
             lightDirection: lightDirection ?? light.direction,
             idealCascades: cascades,
             contentRevision: _staticShadowContentRevision,
-            frame: renderStats.frameCount,
             staticSignatureIn: (matrix) =>
                 _staticShadowSignatureIn(matrix, light.shadowCasterChannelMask),
+            castersIn: (matrix, casters) => _staticCastersIn(
+              matrix,
+              casters,
+              light.shadowCasterChannelMask,
+            ),
           );
       effectiveCascades = shadowCachePlan.cascades;
       if (shadowCachePlan.refreshes.isNotEmpty) {
