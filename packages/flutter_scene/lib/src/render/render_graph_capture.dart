@@ -800,9 +800,12 @@ class RenderGraphCapturer implements RenderGraphObserver, DrawRecorder {
     // pool transients. Submit-time failures are asynchronous and cannot be
     // caught here; this keeps the blit from ever being recorded against a
     // source it cannot sample.
+    // A depth-stencil source (a shadow map that is its pass's depth, the
+    // stored scene depth) has no color target of its format to copy into.
     if (texture.storageMode == gpu.StorageMode.deviceTransient ||
         !texture.enableShaderReadUsage ||
-        texture.sampleCount > 1) {
+        texture.sampleCount > 1 ||
+        isDepthStencilFormat(texture.format)) {
       resource.snapshotFailed = true;
       return;
     }
@@ -845,7 +848,8 @@ class RenderGraphCapturer implements RenderGraphObserver, DrawRecorder {
   static gpu.SamplerOptions _samplerFor(gpu.PixelFormat format) {
     final nearest =
         format == gpu.PixelFormat.r32g32b32a32Float ||
-        format == gpu.PixelFormat.r32Float;
+        format == gpu.PixelFormat.r32Float ||
+        isDepthStencilFormat(format);
     final filter = nearest ? gpu.MinMagFilter.nearest : gpu.MinMagFilter.linear;
     return gpu.SamplerOptions(
       minFilter: filter,
@@ -893,3 +897,10 @@ class RenderGraphCapturer implements RenderGraphObserver, DrawRecorder {
     return copy;
   }
 }
+
+/// Whether [format] is a depth-stencil format: one a pass samples with a
+/// nearest sampler and no color target can take.
+bool isDepthStencilFormat(gpu.PixelFormat format) =>
+    format == gpu.PixelFormat.d24UnormS8Uint ||
+    format == gpu.PixelFormat.d32FloatS8UInt ||
+    format == gpu.PixelFormat.s8UInt;

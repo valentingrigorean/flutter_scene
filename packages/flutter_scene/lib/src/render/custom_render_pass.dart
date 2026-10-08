@@ -325,9 +325,12 @@ class RenderPassContext {
   /// depth, in a layout of the engine include `shadow_depth.glsl`): the
   /// directional cascades first, then one tile per casting spot (see
   /// [spotShadows]). Decode a texel with its `ShadowDepthOf`, which reads
-  /// either layout. Its format is `r32Float`, or `r16g16b16a16Float` in the
-  /// half float layout ([shadowMapIsSplit]) where the device renders no
-  /// 32-bit float color target. Non-null when the pass declared
+  /// every layout, and sample it with a nearest sampler. It is the depth
+  /// attachment the casters drew into where the device samples a stored depth
+  /// ([shadowMapIsDepth]); elsewhere its format is `r32Float`, or
+  /// `r16g16b16a16Float` in the half float layout ([shadowMapIsSplit]) where
+  /// the device renders no 32-bit float color target. Non-null when the pass
+  /// declared
   /// [RenderInput.shadowMap] and a light cast this frame. Pair with
   /// [shadowInfo] for the cascades.
   gpu.Texture? get shadowMap =>

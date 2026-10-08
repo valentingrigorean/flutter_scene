@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:vector_math/vector_math.dart';
 
@@ -13,14 +15,16 @@ import 'package:flutter_scene/src/render/shadow_encoder.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/linear_depth_probe.dart';
 import 'package:flutter_scene/src/render/spot_shadow.dart';
+import 'package:flutter_scene/src/render/stored_depth_probe.dart';
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/scene_encoder.dart'
     show deferredPipelineBuilds, resolvePipeline;
 import 'package:flutter_scene/src/render/uniform_slots.dart';
 
 /// Render-graph blackboard key under which [ShadowPass] publishes the shadow
-/// map atlas (a [shadowMapFormat] texture in a layout of
-/// `shaders/shadow_depth.glsl`). The downstream scene pass reads it from here.
+/// map atlas: the depth attachment the casters drew into where
+/// [shadowMapIsDepth], else a [shadowMapFormat] texture in a layout of
+/// `shaders/shadow_depth.glsl`. The downstream scene pass reads it from here.
 const String kShadowMapBlackboardKey = 'directional_shadow_map';
 
 /// Forces the half float layout of the shadow maps, as on a device that
@@ -40,9 +44,27 @@ bool debugSplitShadowMap = false;
 bool get shadowMapIsSplit =>
     debugSplitShadowMap || platformRendersFloat32ColorTargets == false;
 
-/// The format of a shadow map, its cached static tiles and the scratch target
-/// its pipelines build against: a half float target in the half float layout,
-/// else a 32-bit float one.
+/// Whether a shadow map is the depth attachment its casters drew into,
+/// stored and sampled, with no depth encoded into a color target.
+///
+/// True where the device samples a stored depth attachment
+/// ([storedDepthIsSampled]). A depth sample reads the depth in red with alpha
+/// at one, which `ShadowDepthOf` of `shaders/shadow_depth.glsl` reads as the
+/// 32-bit float layout, so no reader needs to know. A render pass needs a
+/// color attachment, so the casters draw with a [shadowPassColorFormat]
+/// target the pass discards. A cached static shadow tile of the other kind is
+/// made anew at its next refresh.
+bool get shadowMapIsDepth => storedDepthIsSampled;
+
+/// The format of the color target a shadow pass draws with, and of the
+/// scratch target its pipelines build against: [shadowMapFormat] where the
+/// color target is the shadow map, else the 8-bit format every device
+/// renders, which the pass discards.
+gpu.PixelFormat get shadowPassColorFormat =>
+    shadowMapIsDepth ? gpu.PixelFormat.r8g8b8a8UNormInt : shadowMapFormat;
+
+/// The format of a color shadow map and its cached static tiles: a half float
+/// target in the half float layout, else a 32-bit float one.
 ///
 /// Not a single half float channel: the far cascade's orthographic depth range
 /// spans hundreds of world units, and a half float's 11 significant bits
@@ -131,12 +153,14 @@ const String kShadowUniformBlackboardKey = 'shadow_uniform';
 /// each shadow-casting spot's cone, then each shadow-casting point light's six
 /// cube faces (quarter-tile quadrants, two tiles per light).
 ///
-/// The atlas is one fp32 color texture holding the tiles as a horizontal strip,
-/// each [tileResolution] square (cascade tiles `0..cascades.length`, then spot
-/// tiles, then point tiles); window-space depth goes in the red channel (a
-/// transient depth attachment backs the depth test). It is cleared to 1.0 so
-/// texels no caster covers read as "lit". Sharing one atlas keeps every shadow
-/// type on a single sampler in the lit shader.
+/// The atlas holds the tiles as a horizontal strip, each [tileResolution]
+/// square (cascade tiles `0..cascades.length`, then spot tiles, then point
+/// tiles). Where [shadowMapIsDepth] it is the pass's depth attachment, stored
+/// and sampled, and the color target is discarded; elsewhere it is one color
+/// texture with window-space depth in a layout of `shaders/shadow_depth.glsl`
+/// and a transient depth attachment backs the depth test. It is cleared to
+/// 1.0 so texels no caster covers read as "lit". Sharing one atlas keeps
+/// every shadow type on a single sampler in the lit shader.
 ///
 /// With a [cachePlan] (some casters are `shadowStatic`), static casters render
 /// into the plan's persistent per-cascade tiles only when the plan asks, and
@@ -226,6 +250,11 @@ class ShadowPass extends RenderGraphPass {
     lengthInBytes: 6 * 2 * 4,
   );
 
+  /// The render target the last atlas drew into and the atlas it published,
+  /// so a test reads which attachment is the shadow map.
+  @visibleForTesting
+  static ({gpu.RenderTarget target, gpu.Texture atlas})? debugLastAtlas;
+
   @override
   String get name => 'ShadowPass';
 
@@ -252,29 +281,43 @@ class ShadowPass extends RenderGraphPass {
     final totalTiles =
         _cascades.length + spotCount + pointCount * kPointShadowTilesPerLight;
     final atlasWidth = _tileResolution * totalTiles;
+    final depthMap = shadowMapIsDepth;
     final color = context.texturePool.acquire(
-      TransientTextureDescriptor.color(
-        width: atlasWidth,
-        height: _tileResolution,
-        format: shadowMapFormat,
-        debugName: 'directional_shadow_map',
-      ),
+      depthMap
+          ? TransientTextureDescriptor(
+              width: atlasWidth,
+              height: _tileResolution,
+              format: shadowPassColorFormat,
+              storageMode: gpu.StorageMode.deviceTransient,
+              enableShaderReadUsage: false,
+              debugName: 'directional_shadow_map_discard',
+            )
+          : TransientTextureDescriptor.color(
+              width: atlasWidth,
+              height: _tileResolution,
+              format: shadowMapFormat,
+              debugName: 'directional_shadow_map',
+            ),
     );
     final depth = context.texturePool.acquire(
       TransientTextureDescriptor.depth(
         width: atlasWidth,
         height: _tileResolution,
         format: gpu.gpuContext.defaultDepthStencilFormat,
+        shaderReadable: depthMap,
         debugName: 'directional_shadow_map_depth',
       ),
     );
-    final target = gpu.RenderTarget.singleColor(
-      gpu.ColorAttachment(texture: color, clearValue: _shadowMapClearValue),
-      depthStencilAttachment: gpu.DepthStencilAttachment(
-        texture: depth,
-        depthClearValue: 1.0,
-      ),
+    final atlas = depthMap ? depth : color;
+    final target = _shadowTarget(
+      color: color,
+      depth: depth,
+      depthMap: depthMap,
     );
+    assert(() {
+      debugLastAtlas = (target: target, atlas: atlas);
+      return true;
+    }());
     final commandBuffer = gpu.gpuContext.createCommandBuffer();
     final renderPass = commandBuffer.createRenderPass(target);
 
@@ -403,7 +446,7 @@ class ShadowPass extends RenderGraphPass {
     }
 
     rendererSubmissions.submit(commandBuffer);
-    context.blackboard.set(kShadowMapBlackboardKey, color);
+    context.blackboard.set(kShadowMapBlackboardKey, atlas);
     final spotFrame = _spotShadows;
     SpotShadowInfo? spotInfo;
     if (spotFrame != null) {
@@ -422,7 +465,7 @@ class ShadowPass extends RenderGraphPass {
     // renders its own and counts its own deferred draws.
     if (shared != null && deferredPipelineBuilds == deferredBefore) {
       shared
-        ..atlas = color
+        ..atlas = atlas
         ..spotInfo = spotInfo;
     }
     final shadowUniform = _shadowUniform;
@@ -439,35 +482,62 @@ class ShadowPass extends RenderGraphPass {
     for (final refresh in plan.refreshes) {
       final commandBuffer = gpu.gpuContext.createCommandBuffer();
       final entry = refresh.entry;
-      entry.tile ??= statedRenderTarget(
-        gpu.gpuContext.createTexture(
-          gpu.StorageMode.devicePrivate,
-          _tileResolution,
-          _tileResolution,
-          format: shadowMapFormat,
-        ),
+      // A tile is a depth texture where the shadow map is the depth
+      // attachment, else a color one; a tile of the other kind is made anew.
+      final depthFormat = gpu.gpuContext.defaultDepthStencilFormat;
+      final depthTile = shadowMapIsDepth;
+      if (entry.tile != null &&
+          (entry.tile!.format == depthFormat) != depthTile) {
+        entry
+          ..tile = null
+          ..tileColor = null;
+      }
+      final tile = entry.tile ??= statedRenderTarget(
+        depthTile
+            ? gpu.gpuContext.createTexture(
+                gpu.StorageMode.devicePrivate,
+                _tileResolution,
+                _tileResolution,
+                format: depthFormat,
+                enableRenderTargetUsage: true,
+                enableShaderReadUsage: true,
+              )
+            : gpu.gpuContext.createTexture(
+                gpu.StorageMode.devicePrivate,
+                _tileResolution,
+                _tileResolution,
+                format: shadowMapFormat,
+              ),
       );
-      // Every refresh clears it, so one texture serves all the tiles.
-      final depth = plan.cache.tileDepth ??= statedRenderTarget(
-        gpu.gpuContext.createTexture(
-          gpu.StorageMode.deviceTransient,
-          _tileResolution,
-          _tileResolution,
-          format: gpu.gpuContext.defaultDepthStencilFormat,
-          enableRenderTargetUsage: true,
-          enableShaderReadUsage: false,
-        ),
-      );
-      final target = gpu.RenderTarget.singleColor(
-        gpu.ColorAttachment(
-          texture: entry.tile!,
-          clearValue: _shadowMapClearValue,
-        ),
-        depthStencilAttachment: gpu.DepthStencilAttachment(
-          texture: depth,
-          depthClearValue: 1.0,
-        ),
-      );
+      final gpu.RenderTarget target;
+      if (depthTile) {
+        // A depth tile keeps a color target of its own: a backend caches a
+        // framebuffer per color texture with the depth it first drew with.
+        final color = entry.tileColor ??= statedRenderTarget(
+          gpu.gpuContext.createTexture(
+            gpu.StorageMode.deviceTransient,
+            _tileResolution,
+            _tileResolution,
+            format: shadowPassColorFormat,
+            enableRenderTargetUsage: true,
+            enableShaderReadUsage: false,
+          ),
+        );
+        target = _shadowTarget(color: color, depth: tile, depthMap: true);
+      } else {
+        // Every refresh clears it, so one texture serves all the tiles.
+        final depth = plan.cache.tileDepth ??= statedRenderTarget(
+          gpu.gpuContext.createTexture(
+            gpu.StorageMode.deviceTransient,
+            _tileResolution,
+            _tileResolution,
+            format: depthFormat,
+            enableRenderTargetUsage: true,
+            enableShaderReadUsage: false,
+          ),
+        );
+        target = _shadowTarget(color: tile, depth: depth, depthMap: false);
+      }
       final renderPass = commandBuffer.createRenderPass(target);
       final encoder = ShadowEncoder(
         renderPass,
@@ -494,6 +564,31 @@ class ShadowPass extends RenderGraphPass {
         entry.tile,
       );
     }
+  }
+
+  /// The target of a shadow map draw into [color] and [depth], which stores
+  /// the attachment that is the shadow map and discards the other.
+  static gpu.RenderTarget _shadowTarget({
+    required gpu.Texture color,
+    required gpu.Texture depth,
+    required bool depthMap,
+  }) {
+    return gpu.RenderTarget.singleColor(
+      gpu.ColorAttachment(
+        texture: color,
+        clearValue: _shadowMapClearValue,
+        storeAction: depthMap
+            ? gpu.StoreAction.dontCare
+            : gpu.StoreAction.store,
+      ),
+      depthStencilAttachment: gpu.DepthStencilAttachment(
+        texture: depth,
+        depthClearValue: 1.0,
+        depthStoreAction: depthMap
+            ? gpu.StoreAction.store
+            : gpu.StoreAction.dontCare,
+      ),
+    );
   }
 
   /// Replays cascade [tile]'s cached static content into its atlas slot,
