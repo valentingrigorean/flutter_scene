@@ -107,6 +107,13 @@ class GpuSubmissionTracker {
 /// The tracker for every command buffer the renderer submits.
 final GpuSubmissionTracker rendererSubmissions = GpuSubmissionTracker();
 
+/// Records a submission with no command buffer, for the helpers that stand
+/// in for a frame in a test without a GPU.
+int debugRecordSubmission() => rendererSubmissions.record();
+
+/// Completes a submission [debugRecordSubmission] recorded.
+void debugCompleteSubmission(int id) => rendererSubmissions.complete(id);
+
 /// How many `beginFrame` calls a pooled transient buffer may sit unused
 /// before it is released. Pools reuse their most recently used buffer first,
 /// so a steady workload keeps cycling the same buffers and never allocates,

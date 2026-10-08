@@ -1,8 +1,10 @@
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/instanced_mesh.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
+import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/instance_record_ring.dart';
 
 /// Floats of one shared record: the row's transform, then its color.
@@ -145,3 +147,49 @@ SharedInstanceRows sharedInstanceRowsOf(InstancedMesh rows) {
   shared._sync();
   return shared;
 }
+
+/// What one frame did to the instance records of the meshes it drew, as
+/// [debugDrawInstanceRecords] answers it.
+final class InstanceRecordFrame {
+  const InstanceRecordFrame._({
+    required this.submission,
+    required this.bytesUploaded,
+    required this.bytesReplayed,
+  });
+
+  /// The id of the frame's submission, in flight until
+  /// [debugCompleteInstanceRecordFrame] takes it.
+  final int submission;
+
+  /// The frame's share of `RenderCounters.instanceBytesUploaded`.
+  final int bytesUploaded;
+
+  /// The frame's share of `RenderCounters.instanceBytesReplayed`.
+  final int bytesReplayed;
+}
+
+/// Runs what a frame that draws [meshes] does to their instance records,
+/// for a test without a GPU (see [debugInstanceRecordDevice]): starts the
+/// frame, has each mesh's records written and bound as a pass does, and
+/// submits the frame, which stays on the GPU until
+/// [debugCompleteInstanceRecordFrame].
+@visibleForTesting
+InstanceRecordFrame debugDrawInstanceRecords(Iterable<InstancedMesh> meshes) {
+  final uploaded = activeRenderCounters.instanceBytesUploaded;
+  final replayed = activeRenderCounters.instanceBytesReplayed;
+  beginInstanceRecordFrame();
+  for (final mesh in meshes) {
+    final source = mesh.recordSource;
+    if (source != null) sharedInstanceRowsOf(source);
+  }
+  return InstanceRecordFrame._(
+    submission: debugRecordSubmission(),
+    bytesUploaded: activeRenderCounters.instanceBytesUploaded - uploaded,
+    bytesReplayed: activeRenderCounters.instanceBytesReplayed - replayed,
+  );
+}
+
+/// Marks the frame of [debugDrawInstanceRecords] as finished by the GPU.
+@visibleForTesting
+void debugCompleteInstanceRecordFrame(InstanceRecordFrame frame) =>
+    debugCompleteSubmission(frame.submission);
