@@ -1556,7 +1556,6 @@ class RenderScene {
       return;
     }
     if (_unplaced.isNotEmpty) {
-      _spatialRevision++;
       for (final item in _unplaced) {
         _place(item);
       }
