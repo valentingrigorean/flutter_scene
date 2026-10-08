@@ -10,6 +10,7 @@ import 'package:flutter_scene/src/hot_reload/hot_reload_coordinator.dart';
 import 'package:flutter_scene/src/coplanar_overlaps.dart'
     as coplanar
     show CoplanarOverlap, CoplanarOverlapScan, describeCoplanarOverlaps;
+import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/depth_conflicts.dart'
     as depth_conflicts
     show DepthConflictReport, probeDepthConflicts;
@@ -23,6 +24,7 @@ import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart'
     show beginRetainedInstanceFrame;
 import 'package:flutter_scene/src/render/linear_depth_probe.dart';
+import 'package:flutter_scene/src/render/stored_depth_probe.dart';
 import 'package:flutter_scene/src/render/mip_sampling_probe.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/gpu/raster_sync.dart';
@@ -573,6 +575,7 @@ base class Scene implements SceneGraph {
         // rendering unblocks (environment radiance builds consult it).
         .then((_) => probePlatformMipSampling())
         .then((_) => probeFloat32ColorTargets())
+        .then((_) => probeStoredDepthRead())
         .then((_) => _buildDefaultEnvironmentBetweenFrames())
         .then((_) {
           _readyToRender = true;
@@ -623,6 +626,24 @@ base class Scene implements SceneGraph {
   /// Kept in sync by the node graph as mesh-bearing nodes are added and
   /// removed. Engine-internal; not part of the stable public API.
   final RenderScene renderScene = RenderScene();
+
+  /// The point this scene draws from, as `[x, y, z]` in scene axes.
+  ///
+  /// A scene far larger than a 32-bit float resolves gives each piece an
+  /// anchor (`Node.setAnchor`) and moves this point along with the camera.
+  /// An anchored node draws at its transforms plus its anchors minus this
+  /// point, subtracted in 64-bit floats for each draw, so every position
+  /// the GPU reads stays small. A node with no anchor on its chain, a
+  /// camera and a light are stated from this point itself.
+  ///
+  /// Moving it writes no node transform, bound, instance record or cached
+  /// directional shadow tile.
+  Float64List get drawOrigin => Float64List.fromList(renderScene.drawOrigin.at);
+
+  /// Moves [drawOrigin].
+  void setDrawOrigin(double x, double y, double z) {
+    if (renderScene.drawOrigin.moveTo(x, y, z)) markSceneDrawChanged();
+  }
 
   // Builds the per-frame data texture carrying the scene's point, spot, and
   // extra directional lights. Rebuilt once per frame in [render].
@@ -2608,6 +2629,8 @@ base class Scene implements SceneGraph {
     final customDepth =
         customNormals ||
         customInputs.contains(RenderInput.depth) ||
+        (customInputs.contains(RenderInput.depthStored) &&
+            !(storedDepthIsSampled && effectiveAa != AntiAliasingMode.msaa)) ||
         bindSceneDepth ||
         (depthOfField.enabled && !debugActive);
     final irradianceField = projectionValid && globalIllumination.enabled;
@@ -2632,6 +2655,20 @@ base class Scene implements SceneGraph {
               contactShadows ||
               customDepth),
       depthNormals: ssr || customNormals || irradianceField,
+    );
+  }
+
+  // The view transform of the frame before, [previous], as it reads a
+  // position stated from this frame's draw origin.
+  Matrix4? _fromThisOrigin(Matrix4? previous) {
+    final origin = renderScene.drawOrigin;
+    if (previous == null || !origin.moved) return previous;
+    return previous.clone()..multiply(
+      Matrix4.translationValues(
+        origin.at[0] - origin.previous[0],
+        origin.at[1] - origin.previous[1],
+        origin.at[2] - origin.previous[2],
+      ),
     );
   }
 
@@ -2664,7 +2701,6 @@ base class Scene implements SceneGraph {
         return;
       }
       casts = true;
-      final t = item.worldTransform.storage;
       signature += Object.hash(
         identityHashCode(item.geometry),
         identityHashCode(item.instanceTransforms),
@@ -2674,9 +2710,6 @@ base class Scene implements SceneGraph {
         identityHashCode(item.material),
         // A caster's channels decide which lights it casts into.
         item.lightChannelMask,
-        t[12],
-        t[13],
-        t[14],
       );
     });
     if (!casts) return DirectionalShadowCache.noCasters;
@@ -3103,6 +3136,7 @@ base class Scene implements SceneGraph {
 
     _sharedShadowAtlas = null;
     _sharedShadowAnchor = null;
+    renderScene.drawOrigin.frameDrawn();
     renderStats.endFrame(pipelineCacheSize: pipelineCacheSize);
     rendererSubmissions.endFrame();
 
@@ -3850,12 +3884,23 @@ base class Scene implements SceneGraph {
     // everything that wants the visible surface: custom passes that read
     // depth at any stage (a water composite fogs to the nearest surface, so
     // a translucent fish must be in it) and depth of field.
+    final enableMsaa = effectiveAa == AntiAliasingMode.msaa;
+    // A pass that asks for the stored depth samples the attachment the scene
+    // pass drew with, which holds those surfaces already. Where the view
+    // cannot sample it (four samples a texel under multisampling, a device
+    // that samples no depth attachment) the linear depth stands in for it.
+    final wantStoredDepth = _viewPasses(
+      view,
+    ).any((pass) => pass.inputs.contains(RenderInput.depthStored));
+    final sampleStoredDepth =
+        wantStoredDepth && storedDepthIsSampled && !enableMsaa;
+    final linearDepthForStored = wantStoredDepth && !sampleStoredDepth;
     final patchTranslucentDepth =
         wantDof ||
+        linearDepthForStored ||
         _viewPasses(
           view,
         ).any((pass) => pass.inputs.contains(RenderInput.depth));
-    final enableMsaa = effectiveAa == AntiAliasingMode.msaa;
     final enableFxaa = effectiveAa == AntiAliasingMode.fxaa && !debugActive;
     if (effectiveAa == AntiAliasingMode.smaa) {
       _repaintWhenLoaded(SmaaPass.request());
@@ -3906,6 +3951,7 @@ base class Scene implements SceneGraph {
       customInputs.addAll(pass.inputs);
     }
     if (wantGodRays) customInputs.addAll(_godRaysPass.inputs);
+    if (linearDepthForStored) customInputs.add(RenderInput.depth);
 
     // The view culls once, here: the kept items decide which attachments the
     // frame produces, and the scene pass draws from the same list. Most
@@ -3956,6 +4002,7 @@ base class Scene implements SceneGraph {
             light: light,
             lightDirection: lightDirection ?? light.direction,
             idealCascades: cascades,
+            origin: renderScene.drawOrigin.at,
             contentRevision: _staticShadowContentRevision,
             staticSignatureIn: (matrix) =>
                 _staticShadowSignatureIn(matrix, light.shadowCasterChannelMask),
@@ -4251,7 +4298,7 @@ base class Scene implements SceneGraph {
       }
       if (enableTaa && temporalAntiAliasing.objectMotion) {
         final prevViewProj =
-            taaState!.previousViewTransform ??
+            _fromThisOrigin(taaState!.previousViewTransform) ??
             (currentJitteredViewProjection ??
                 camera.getViewTransform(pixelSize));
         graph.addPass(
@@ -4390,6 +4437,7 @@ base class Scene implements SceneGraph {
         // Depth binding needs the prepass, which needs a valid projection.
         bindSceneDepth: bindSceneDepth && projectionValid,
         publishSceneDepth: customInputs.contains(RenderInput.depthAttachment),
+        sampleSceneDepth: sampleStoredDepth,
         time: DateTime.now().millisecondsSinceEpoch.remainder(100000) / 1000.0,
         cullingPlanes: view.cullingPlanes,
         includeOffscreen: _warmUpIncludeOffscreen,
@@ -4545,7 +4593,8 @@ base class Scene implements SceneGraph {
     if (enableTaa) {
       final unjitteredViewProj = camera.getViewTransform(pixelSize);
       final prevViewProj =
-          taaState!.previousViewTransform ?? unjitteredViewProj;
+          _fromThisOrigin(taaState!.previousViewTransform) ??
+          unjitteredViewProj;
       final cameraForward = camera.forward;
       final cameraRight = camera.up.cross(cameraForward)..normalize();
       final cameraUp = cameraForward.cross(cameraRight)..normalize();

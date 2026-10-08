@@ -32,6 +32,10 @@ uniform TextureTransforms {
   highp vec4 emissive_rotation;
   highp vec4 occlusion_transform;
   highp vec4 occlusion_rotation;
+  // The normal map's flow: its UV offset per second of animation time (xy)
+  // and the folded animation time (z). normal_transform's offset holds the
+  // flow at the start of the folded span.
+  highp vec4 normal_flow;
 }
 texture_transforms;
 
@@ -88,10 +92,12 @@ void Surface(inout MaterialInputs material) {
   //       (camera_position - vertex_position).
   vec3 normal = GetWorldNormal();
   if (frag_info.has_normal_map > 0.5) {
+    highp vec4 normal_transform = texture_transforms.normal_transform;
+    normal_transform.xy +=
+        texture_transforms.normal_flow.xy * texture_transforms.normal_flow.z;
     highp vec2 normal_uv = transformed_uvs
-        ? MaterialTextureUv(
-              texture_transforms.normal_transform,
-              texture_transforms.normal_rotation)
+        ? MaterialTextureUv(normal_transform,
+                            texture_transforms.normal_rotation)
         : GetUV0();
     normal = PerturbNormal(normal_texture, normal, v_viewvector,
                            normal_uv, frag_info.normal_scale);

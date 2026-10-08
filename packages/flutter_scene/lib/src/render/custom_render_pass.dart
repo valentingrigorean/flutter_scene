@@ -131,6 +131,24 @@ enum RenderInput {
   /// that pass matches it and resolves. Requesting it makes the scene pass
   /// store its depth, which otherwise stays in tile memory.
   depthAttachment,
+
+  /// The depth the scene pass stored, as a texture a pass samples after the
+  /// scene pass, on [RenderPassContext.sceneDepthStored]: window depth under
+  /// the depth raster of the view, in the red channel, which
+  /// [RenderPassContext.sceneDepthStoredTerms] turns into planar view depth.
+  /// It holds every surface that wrote depth, translucent ones included, and
+  /// costs the frame no draw of the scene geometry: the scene pass keeps the
+  /// depth it drew with.
+  ///
+  /// A view that cannot sample it (a multisampled view, whose depth holds
+  /// four samples a texel, a device the stored depth probe measured as
+  /// unable, the web backend) gets [depth] in its place: there
+  /// [RenderPassContext.sceneDepthStored] is null and
+  /// [RenderPassContext.sceneDepthLinear] holds the linear depth, so a pass
+  /// that declares this input reads whichever is present. A material does not
+  /// declare it: a draw of the scene pass cannot sample the attachment it
+  /// draws into.
+  depthStored,
 }
 
 /// A user-supplied render pass inserted into the built-in pipeline at a
@@ -321,6 +339,21 @@ class RenderPassContext {
   /// frame may read it.
   gpu.Texture? get sceneDepthAttachment =>
       _context.blackboard.get<gpu.Texture>(kSceneDepthAttachmentBlackboardKey);
+
+  /// The depth the scene pass stored, to sample: window depth in the red
+  /// channel, read with a nearest sampler. Non-null when the pass declared
+  /// [RenderInput.depthStored] and the view samples it; null where
+  /// [sceneDepthLinear] stands in for it.
+  gpu.Texture? get sceneDepthStored =>
+      _context.blackboard.get<gpu.Texture>(kSceneDepthStoredBlackboardKey);
+
+  /// The terms that turn a window depth `d` of [sceneDepthStored] into planar
+  /// view depth, `(y - d * w) / (d * z - x)`: the depth row and the w row of
+  /// the projection the scene pass rasterized with, as `(a, b, c, e)` where
+  /// clip z is `a * depth + b` and clip w is `c * depth + e`. Perspective,
+  /// orthographic, reversed and fitted-near rasters all read through it.
+  Vector4 get sceneDepthStoredTerms =>
+      storedDepthTermsOf(rasterProjectionOf(camera, dimensions));
 
   /// The view-projection the scene pass drew [sceneDepthAttachment] with,
   /// jitter and depth raster included, so geometry drawn with it lands on the

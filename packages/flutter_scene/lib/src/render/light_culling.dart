@@ -223,7 +223,7 @@ double _distanceToItemSquared(
   // Directional lights have no position and must survive any local-light cap.
   if (position == null) return double.negativeInfinity;
   if (bounds == null) {
-    final transform = item.worldTransform.storage;
+    final transform = item.drawTransform.storage;
     return _distanceSquared(
       position,
       transform[12],

@@ -96,6 +96,32 @@ void main() {
     expect(material.lightmapRgbm, isFalse);
   });
 
+  test('a normal flow writes its rate and the folded animation time, and '
+      'the normal offset carries the flow at the start of the folded span', () {
+    final material = PhysicallyBasedMaterial()
+      ..normalTextureTransform = TextureTransform(
+        offset: Vector2(0.1, 0.0),
+        scale: Vector2.all(0.5),
+      )
+      ..normalTextureFlow = Vector2(-0.3, 0.05);
+    final block = Float32List(44);
+
+    material.writeTextureTransforms(block, 64 * 2 + 1.5);
+
+    expect(block[7], 1.0);
+    expect(block[16], closeTo(0.1 + (-0.3 * 128) % 1.0, 1e-5));
+    expect(block[17], closeTo((0.05 * 128) % 1.0, 1e-5));
+    expect(block[40], closeTo(-0.3, 1e-6));
+    expect(block[41], closeTo(0.05, 1e-6));
+    expect(block[42], 1.5);
+
+    final still = PhysicallyBasedMaterial()..writeTextureTransforms(block, 9);
+    expect(still.normalTextureFlow, Vector2.zero());
+    expect(block[7], 0.0);
+    expect(block[16], 0.0);
+    expect([block[40], block[41], block[42]], [0.0, 0.0, 0.0]);
+  });
+
   test('the lightmap slot round-trips its transform and texcoord', () {
     final texture = _FakeTextureSource();
     final transform = TextureTransform(

@@ -334,7 +334,7 @@ class ShadowEncoder {
       if (bounds != null) {
         _cullScratchAabb
           ..copyFrom(bounds)
-          ..transform(item.worldTransform);
+          ..transform(item.drawTransform);
         if (!frustum.intersectsWithAabb3(_cullScratchAabb)) return;
         for (final plane in receiverPlanes) {
           if (_aabbOutsidePlane(_cullScratchAabb, plane)) return;
@@ -481,7 +481,7 @@ class ShadowEncoder {
           if (limit != null && end > limit) end = limit;
           for (var row = ranges[range]; row < end; row++) {
             final instanceTransform = instances[row];
-            _bindDraw(item.worldTransform * instanceTransform);
+            _bindDraw(item.drawTransform * instanceTransform);
             final flip =
                 item.windingFlipped != (instanceTransform.determinant() < 0);
             _renderPass.setWindingOrder(
@@ -495,7 +495,7 @@ class ShadowEncoder {
         return;
       }
       item.beginInstanceDraw();
-      _bindDraw(item.worldTransform);
+      _bindDraw(item.drawTransform);
       RenderItem.endInstanceDraw();
       final shared = item.sharedRows;
       if (shared != null) {
@@ -550,7 +550,9 @@ class ShadowEncoder {
       return;
     }
 
-    _bindDraw(item.worldTransform);
+    item.beginAnchoredDraw();
+    _bindDraw(item.drawTransform);
+    RenderItem.endAnchoredDraw();
     // Skip the model-transform instance buffer for geometry that supplies its
     // own per-instance buffer (see the color encoder), or it clobbers the
     // stream slot.

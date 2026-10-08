@@ -299,10 +299,17 @@ class MeshComponent extends Component {
               playback == null &&
               (jointsTexture != null || (!uploadSkin && !skinPosed)));
       item.isMoving = isMoving;
+      var anchorChanged = false;
+      var anchoredChanged = false;
       if (transformChanged) {
         item.previousWorldTransform.setFrom(item.worldTransform);
         item.worldTransform.setFrom(worldTransform);
         item.worldTransformRevision++;
+        final anchoredWas = item.anchored;
+        anchorChanged = item.takeAnchor(
+          node.worldAnchored ? node.worldAnchor : null,
+        );
+        anchoredChanged = anchoredWas != item.anchored;
       }
       item.refreshWinding(windingFlipped);
       item.shadowStatic = node.shadowStatic;
@@ -348,9 +355,9 @@ class MeshComponent extends Component {
       // A toggled cull flag or a bounded/unbounded transition changes the
       // BVH membership and needs a rebuild; a plain move only needs a
       // refit.
-      if (frustumCulledChanged || wasBounded != isBounded) {
+      if (frustumCulledChanged || wasBounded != isBounded || anchoredChanged) {
         renderScene?.markBvhStructureDirty(item);
-      } else if (boundsChanged && item.frustumCulled) {
+      } else if ((boundsChanged || anchorChanged) && item.frustumCulled) {
         renderScene?.markBvhBoundsDirty();
       }
     }

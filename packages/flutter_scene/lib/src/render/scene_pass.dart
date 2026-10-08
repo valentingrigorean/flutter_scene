@@ -47,6 +47,11 @@ const String kSceneColorBlackboardKey = 'scene_color';
 /// `RenderInput.depthAttachment`.
 const String kSceneDepthAttachmentBlackboardKey = 'scene_depth_attachment';
 
+/// Render-graph blackboard key for the depth [ScenePass] stored, as a texture
+/// a later pass samples, published when a custom pass requests
+/// `RenderInput.depthStored` and the view can sample it.
+const String kSceneDepthStoredBlackboardKey = 'scene_depth_stored';
+
 /// Render-graph blackboard key for the view-projection [ScenePass] drew its
 /// depth attachment with, published beside it.
 const String kSceneViewTransformBlackboardKey = 'scene_view_transform';
@@ -113,6 +118,7 @@ class ScenePass extends RenderGraphPass {
     int maxCaptureBatches = maxSceneColorCaptureBatches,
     bool bindSceneDepth = false,
     bool publishSceneDepth = false,
+    bool sampleSceneDepth = false,
     double time = 0.0,
     List<Plane> cullingPlanes = const [],
     bool includeOffscreen = false,
@@ -131,6 +137,7 @@ class ScenePass extends RenderGraphPass {
        _suppressPlanarReflections = suppressPlanarReflections,
        _bindSceneDepth = bindSceneDepth,
        _publishSceneDepth = publishSceneDepth,
+       _sampleSceneDepth = sampleSceneDepth,
        _time = time,
        _camera = camera,
        _cameraTransform = cameraTransform,
@@ -214,6 +221,9 @@ class ScenePass extends RenderGraphPass {
   // A custom pass requested the depth attachment, so it is stored and
   // published after the scene draws.
   final bool _publishSceneDepth;
+  // Whether a later pass samples the depth this pass stores. The caller asks
+  // only for a view without multisampling on a device that samples it.
+  final bool _sampleSceneDepth;
   final bool _suppressPlanarReflections;
   final double _time;
   final List<Plane> _cullingPlanes;
@@ -250,7 +260,10 @@ class ScenePass extends RenderGraphPass {
     // pooled texture (see TransientTextureDescriptor.attachmentKey).
     final attachmentKey = _enableMsaa
         ? 'resolve'
-        : capture || _displayReferredLayer || _publishSceneDepth
+        : capture ||
+              _displayReferredLayer ||
+              _publishSceneDepth ||
+              _sampleSceneDepth
         ? 'depth_stored'
         : 'depth_transient';
     final hdrColor = context.texturePool.acquire(
@@ -266,9 +279,13 @@ class ScenePass extends RenderGraphPass {
     // re-attaches it: a capture splits the scene across passes, and the
     // display-referred layer draws in a pass of its own. Tile-transient
     // storage does not survive that, so those cases take device memory.
-    // Shader-read usage is a separate question and only the capture path
-    // samples it.
-    final keepDepth = capture || _displayReferredLayer || _publishSceneDepth;
+    // Shader-read usage is a separate question: the capture path samples it,
+    // and so does a later pass that asked for the stored depth.
+    final keepDepth =
+        capture ||
+        _displayReferredLayer ||
+        _publishSceneDepth ||
+        _sampleSceneDepth;
     final depth = context.texturePool.acquire(
       TransientTextureDescriptor(
         width: width,
@@ -278,7 +295,7 @@ class ScenePass extends RenderGraphPass {
         storageMode: keepDepth
             ? gpu.StorageMode.devicePrivate
             : gpu.StorageMode.deviceTransient,
-        enableShaderReadUsage: capture,
+        enableShaderReadUsage: capture || _sampleSceneDepth,
         debugName: 'scene_depth',
       ),
     );
@@ -642,6 +659,9 @@ class ScenePass extends RenderGraphPass {
     SceneEncoder encoder,
     gpu.Texture depth,
   ) {
+    if (_sampleSceneDepth) {
+      context.blackboard.set(kSceneDepthStoredBlackboardKey, depth);
+    }
     if (!_publishSceneDepth) return;
     context.blackboard.set(kSceneDepthAttachmentBlackboardKey, depth);
     context.blackboard.set(
@@ -706,7 +726,11 @@ class ScenePass extends RenderGraphPass {
         depthStencilAttachment: gpu.DepthStencilAttachment(
           texture: depth,
           depthLoadAction: gpu.LoadAction.load,
-          depthStoreAction: gpu.StoreAction.dontCare,
+          // A later pass that samples or attaches the scene depth reads it
+          // after this layer, so the layer keeps it.
+          depthStoreAction: _sampleSceneDepth || _publishSceneDepth
+              ? gpu.StoreAction.store
+              : gpu.StoreAction.dontCare,
           depthClearValue: depthRasterOf(_camera).clearDepth,
         ),
       ),
