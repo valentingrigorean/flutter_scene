@@ -414,7 +414,8 @@ final class SceneTranslucentDraw {
 /// bounds meet the view or whose node opts out of the
 /// frustum cull. Each sorts at [sceneSortDepth] of its bounds less its
 /// node's [Node.sortDepthBias]; an instanced mesh at the centre of its
-/// instances. A level-of-detail node sorts by its base level.
+/// instances, and a node with a [Node.sortDepth] at that depth less its
+/// bias. A level-of-detail node sorts by its base level.
 ///
 /// It leaves out the encoder's level-of-detail selection and its
 /// cull by cell, so it may list more draws than the encoder makes: a
@@ -446,6 +447,7 @@ List<SceneTranslucentDraw> sceneTranslucentDraws(
     if (node.layers & layerMask != 0) {
       final transform = node.globalTransform;
       final bias = node.sortDepthBias;
+      final fixed = node.sortDepth;
       for (final component in node.getComponents<MeshComponent>()) {
         for (final primitive in component.mesh.primitives) {
           final material = primitive.material;
@@ -464,7 +466,9 @@ List<SceneTranslucentDraw> sceneTranslucentDraws(
               primitive.geometry,
               material,
               bounds,
-              sceneSortDepth(transform, bounds, eye, forward, bias: bias),
+              fixed != null
+                  ? fixed.depth - bias
+                  : sceneSortDepth(transform, bounds, eye, forward, bias: bias),
             ),
           );
         }
@@ -487,7 +491,9 @@ List<SceneTranslucentDraw> sceneTranslucentDraws(
             instanced.geometry,
             material,
             bounds,
-            bounds == null
+            fixed != null
+                ? fixed.depth - bias
+                : bounds == null
                 ? sceneSortDepth(transform, null, eye, forward, bias: bias)
                 : (world.center - eye).dot(forward) - bias,
           ),
@@ -1408,7 +1414,7 @@ base class SceneEncoder {
           material,
           fade,
           pipeline,
-          bounds == null
+          bounds == null || item.sortDepth != null
               ? _depthOf(item)
               : _depthOfPoint(
                       (bounds.min.x + bounds.max.x) * 0.5,
@@ -1529,6 +1535,8 @@ base class SceneEncoder {
   ) => resolveLodLevels(lod, worldBounds, _lodProjection, _cameraPosition);
 
   double _depthOf(RenderItem item, [Geometry? geometry]) {
+    final fixed = item.sortDepth;
+    if (fixed != null) return fixed.depth - item.sortDepthBias;
     return sceneSortDepth(
       item.worldTransform,
       geometry?.localBounds,

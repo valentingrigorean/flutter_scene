@@ -223,6 +223,7 @@ class MeshComponent extends Component {
           item.shadowCasterFaces == node.shadowCasterFaces &&
           item.highlightColor == node.highlightColor &&
           item.sortDepthBias == node.sortDepthBias &&
+          identical(item.sortDepth, node.sortDepth) &&
           _boundsVersions[index] == item.geometry.localBoundsVersion;
     }
     if (staticStateUnchanged) {
@@ -276,6 +277,7 @@ class MeshComponent extends Component {
       item.layers = layers;
       item.renderOrder = node.renderOrder;
       item.sortDepthBias = sortDepthBias;
+      item.sortDepth = node.sortDepth;
       item.lightChannelMask = lightChannelMask;
       final isMoving =
           transformChanged ||

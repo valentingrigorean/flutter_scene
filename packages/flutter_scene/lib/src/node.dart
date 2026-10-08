@@ -22,6 +22,7 @@ import 'package:flutter_scene/src/render/pre_pass.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/skin.dart';
+import 'package:flutter_scene/src/sort_depth.dart';
 import 'package:vector_math/vector_math.dart';
 import 'package:vector_math/vector_math.dart' as vm;
 
@@ -260,6 +261,22 @@ base class Node implements SceneGraph, PrePassNode {
   }
 
   double _sortDepthBias = 0.0;
+
+  /// The depth this node's meshes sort at in the encoder's depth sort, read
+  /// at each sort in place of the view-axis depth of their bounds centre,
+  /// or null to sort by the bounds. Its owner writes [SortDepth.depth] for
+  /// the camera it draws for, which changes no node. [sortDepthBias] is
+  /// still taken off. The node keeps its own bounds for the frustum cull and
+  /// raycasts. Not inherited by children; set it on each mesh-bearing node.
+  /// {@category Rendering}
+  SortDepth? get sortDepth => _sortDepth;
+  set sortDepth(SortDepth? value) {
+    if (identical(value, _sortDepth)) return;
+    _sortDepth = value;
+    _markRenderChanged();
+  }
+
+  SortDepth? _sortDepth;
 
   /// Marks this node's meshes as static shadow casters: their geometry,
   /// material coverage, and world transform are promised not to change while

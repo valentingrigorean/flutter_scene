@@ -184,6 +184,41 @@ void main() {
     expect(line.isVisibleTo(_camera, _size), visible);
   });
 
+  test('a node with a sort depth sorts at that depth less its bias, and a '
+      'depth written for a moved camera changes no node', () {
+    final depth = SortDepth(30);
+    final overlay = _at(80, name: 'overlay')..sortDepth = depth;
+    final root = Node()
+      ..add(_at(50, name: 'near'))
+      ..add(_at(90, name: 'far'))
+      ..add(overlay);
+    List<String> read() => [
+      for (final draw in sceneTranslucentDraws(root, _camera, _size))
+        '${draw.node.name} ${draw.depth}',
+    ];
+    final drawn = RenderScene();
+    root.debugMountInto(drawn);
+    drawn.runPrePass(0.016);
+
+    expect(read(), ['far 90.0', 'near 50.0', 'overlay 30.0']);
+    expect(
+      [
+        for (final item in drawn.items)
+          if (item.sortDepth != null) item.sortDepth,
+      ],
+      [same(depth)],
+    );
+
+    depth.depth = 70;
+
+    expect(drawn.runPrePass(0.016), 0);
+    expect(read(), ['far 90.0', 'overlay 70.0', 'near 50.0']);
+
+    overlay.sortDepthBias = 25;
+
+    expect(read(), ['far 90.0', 'near 50.0', 'overlay 45.0']);
+  });
+
   test('an instanced mesh sorts at the centre of its instances', () {
     final instanced = InstancedMesh(
       geometry: _StubGeometry(_slab()),

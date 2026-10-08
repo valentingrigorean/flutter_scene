@@ -338,6 +338,7 @@ export 'src/mesh_draw.dart'
     show MeshDrawContext, MeshDrawPass, MeshDrawSelection, MeshDrawSelector;
 export 'src/decal.dart' show DecalNode;
 export 'src/node.dart' show Node;
+export 'src/sort_depth.dart' show SortDepth;
 export 'src/sprite.dart' show Sprite;
 export 'src/texture_atlas.dart'
     show TextureAtlas, generateSolidColorAtlasPixels;

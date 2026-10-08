@@ -31,6 +31,7 @@ import 'package:flutter_scene/src/render/instance_records.dart';
 import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/render/lod.dart';
+import 'package:flutter_scene/src/sort_depth.dart';
 import 'package:flutter_scene/src/render/pre_pass.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
@@ -113,6 +114,10 @@ class RenderItem {
   /// The owning node's sort-depth bias, refreshed each frame. The encoder
   /// takes it off the view-axis depth it sorts this item by.
   double sortDepthBias = 0.0;
+
+  /// The owning node's [Node.sortDepth], refreshed each frame. When set, the
+  /// encoder sorts this item at its depth, less [sortDepthBias].
+  SortDepth? sortDepth;
 
   /// The owning node's light channels (an 8-bit bitmask), refreshed each
   /// frame. A light shades this item only when its own channel mask
