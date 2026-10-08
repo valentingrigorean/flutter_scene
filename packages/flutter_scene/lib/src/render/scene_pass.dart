@@ -472,9 +472,8 @@ class ScenePass extends RenderGraphPass {
       // items or their bounds since then leaves that cull stale.
       final int rejected;
       if (visibleItems != null && visibleItems.isCurrentFor(_renderScene)) {
-        final kept = visibleItems.items;
-        for (var i = 0; i < kept.length; i++) {
-          encoder.submit(kept[i]);
+        for (var i = 0; i < visibleItems.items.length; i++) {
+          encoder.submitKept(visibleItems, i);
         }
         rejected = visibleItems.rejected;
       } else {

@@ -2597,6 +2597,7 @@ base class Scene implements SceneGraph {
           ViewVisibleItems(),
           layerMask: view.layerMask,
           additionalPlanes: view.cullingPlanes,
+          cullCells: false,
         )
         .inputs
         .contains(RenderInput.depth);
@@ -4243,6 +4244,7 @@ base class Scene implements SceneGraph {
             cullingPlanes: view.cullingPlanes,
             cameraTransform: currentJitteredViewProjection,
             primaryView: viewIndex >= 0,
+            visibleItems: visibleItems,
           ),
         );
       }
@@ -4481,6 +4483,7 @@ base class Scene implements SceneGraph {
           layerMask: view.layerMask,
           cullingPlanes: view.cullingPlanes,
           primaryView: viewIndex >= 0,
+          visibleItems: visibleItems,
         ),
       );
     }
