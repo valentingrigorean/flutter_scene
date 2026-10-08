@@ -14,8 +14,10 @@ import 'package:vector_math/vector_math.dart';
 ///
 /// Set it on [Material.clipVolume]. The built-in lit and unlit materials,
 /// every physical variant of [PhysicallyBasedMaterial] and lit `.fmat`
-/// materials honor it in their color pass; a material without one draws
-/// every fragment.
+/// materials honor it in their color pass, and every object mask (the
+/// selection outline's, `RenderPassContext.drawObjects` and
+/// `Scene.probeDepthConflicts`) honors it for any material; a material
+/// without one draws every fragment.
 /// {@category Materials}
 final class ClipVolume {
   /// A clip volume that cuts the region bounded by [planes] and keeps only
