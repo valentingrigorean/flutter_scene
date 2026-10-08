@@ -210,7 +210,7 @@ void main() {
     mesh.setInstanceRecords(0, _records(3, 1), bounds: _bounds(3, 1));
     expect(mesh.aggregateBounds!.min.x, 1.5);
     expect(mesh.instanceCount, 10);
-    expect(mesh.instances[1].getTranslation().x, 2);
+    expect(mesh.instanceTransformAt(1).getTranslation().x, 2);
     expect(() => mesh.addInstance(Matrix4.identity()), throwsStateError);
   });
 }
