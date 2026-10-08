@@ -4614,6 +4614,9 @@ base class Scene implements SceneGraph {
     // effects, and the selection outline composite onto it in order.
     final outlineActive = sceneHasHighlights(renderScene);
     final displaySteps = <RenderGraphPass Function(gpu.Texture output)>[];
+    // The steps that draw onto the image of the step before them and write
+    // no buffer of their own (CustomRenderPass.drawsInPlace).
+    final inPlaceSteps = <int>{};
 
     displaySteps.add(
       (output) => ResolvePass(
@@ -4654,12 +4657,13 @@ base class Scene implements SceneGraph {
     var userPassIndex = 0;
     for (final pass in _passesAt(RenderStage.afterToneMapping, view)) {
       final index = userPassIndex++;
+      if (pass.drawsInPlace) inPlaceSteps.add(displaySteps.length);
       displaySteps.add(
         (output) => UserRenderGraphPass(
           pass: pass,
           camera: camera,
           dimensions: pixelSize,
-          destination: output,
+          destination: pass.drawsInPlace ? null : output,
           renderScene: renderScene,
           viewLayerMask: view.layerMask,
           passIndex: index,
@@ -4719,12 +4723,13 @@ base class Scene implements SceneGraph {
 
     for (final pass in _passesAt(RenderStage.afterAntiAliasing, view)) {
       final index = userPassIndex++;
+      if (pass.drawsInPlace) inPlaceSteps.add(displaySteps.length);
       displaySteps.add(
         (output) => UserRenderGraphPass(
           pass: pass,
           camera: camera,
           dimensions: pixelSize,
-          destination: output,
+          destination: pass.drawsInPlace ? null : output,
           renderScene: renderScene,
           viewLayerMask: view.layerMask,
           passIndex: index,
@@ -4756,8 +4761,18 @@ base class Scene implements SceneGraph {
       );
     }
 
+    // The last step that writes a buffer writes [outputColor]; a step that
+    // draws in place after it draws onto that image.
+    var lastWriter = displaySteps.length - 1;
+    while (inPlaceSteps.contains(lastWriter)) {
+      lastWriter--;
+    }
     for (var i = 0; i < displaySteps.length; i++) {
-      final isLast = i == displaySteps.length - 1;
+      if (inPlaceSteps.contains(i)) {
+        graph.addPass(displaySteps[i](outputColor));
+        continue;
+      }
+      final isLast = i == lastWriter;
       final output = isLast
           ? outputColor
           : pool.acquire(
@@ -4995,14 +5010,16 @@ base class Scene implements SceneGraph {
   ) {
     var i = 0;
     for (final pass in _passesAt(stage, view)) {
-      final output = pool.acquire(
-        TransientTextureDescriptor.color(
-          width: width,
-          height: height,
-          format: gpu.PixelFormat.r16g16b16a16Float,
-          debugName: 'custom_hdr_${stage.name}_$i',
-        ),
-      );
+      final output = pass.drawsInPlace
+          ? null
+          : pool.acquire(
+              TransientTextureDescriptor.color(
+                width: width,
+                height: height,
+                format: gpu.PixelFormat.r16g16b16a16Float,
+                debugName: 'custom_hdr_${stage.name}_$i',
+              ),
+            );
       graph.addPass(
         UserRenderGraphPass(
           pass: pass,
