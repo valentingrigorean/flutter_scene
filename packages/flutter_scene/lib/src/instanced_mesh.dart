@@ -354,9 +354,33 @@ class InstancedMesh implements MeshDrawSource {
     max.setValues(maxX, maxY, maxZ);
   }
 
-  // The hull of the row bounds, or null for no row. The box is the mesh's
-  // own and holds until the next row write.
+  /// How far the hull of the row bounds of a mesh that holds records is
+  /// widened on every side, in the space of the node, for rows a vertex
+  /// stage moves by up to that much. Zero widens nothing.
+  double get recordBoundsPad => (rows ?? this)._recordBoundsPad;
+  double _recordBoundsPad = 0;
+  set recordBoundsPad(double value) {
+    _checkRecords();
+    if (_recordBoundsPad == value) return;
+    _recordBoundsPad = value;
+    _revision++;
+    _tellRowListeners();
+  }
+
+  final Aabb3 _recordPaddedHull = Aabb3();
+
+  // The hull of the row bounds, widened by the pad, or null for no row. The
+  // box is the mesh's own and holds until the next row write.
   Aabb3? _recordBoundsHull() {
+    final hull = _recordRowHull();
+    final pad = _recordBoundsPad;
+    if (hull == null || pad == 0) return hull;
+    return _recordPaddedHull
+      ..min.setValues(hull.min.x - pad, hull.min.y - pad, hull.min.z - pad)
+      ..max.setValues(hull.max.x + pad, hull.max.y + pad, hull.max.z + pad);
+  }
+
+  Aabb3? _recordRowHull() {
     if (_recordCount == 0) return null;
     if (_recordHullLoose) {
       _recordHullLoose = false;
