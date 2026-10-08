@@ -10,6 +10,9 @@ import 'package:flutter_scene/src/geometry/vertex_layout.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:flutter_scene/src/importer/constants.dart';
+import 'package:flutter_scene/src/instance_band.dart';
+import 'package:flutter_scene/src/camera.dart';
+import 'package:flutter_scene/src/render_view.dart';
 import 'package:flutter_scene/src/material/instance_attributes.dart';
 import 'package:flutter_scene/src/material/vertex_attributes.dart';
 import 'package:vector_math/vector_math.dart' as vm;
@@ -2276,7 +2279,7 @@ final VertexLayoutDescriptor kUnskinnedSoADepthLayout = VertexLayoutDescriptor(
 // Reused across every call: this runs for every draw of every pass, and
 // [TransientWriter.emplace] copies the bytes out immediately, so a shared
 // scratch is safe and avoids a per-draw allocation.
-final Float32List _unskinnedFrameInfoScratch = Float32List(44);
+final Float32List _unskinnedFrameInfoScratch = Float32List(80);
 
 final vm.Matrix4 _identityInstanceFrame = vm.Matrix4.identity();
 
@@ -2289,6 +2292,69 @@ final vm.Matrix4 _identityInstanceFrame = vm.Matrix4.identity();
 @internal
 vm.Matrix4? currentDrawInstanceFrame;
 
+/// The transform the unskinned vertex stage applies before the instance-rate
+/// model transform of the draws bound next (`InstancedMesh.instanceLocal`),
+/// or null for none.
+@internal
+vm.Matrix4? currentDrawInstanceLocal;
+
+/// The band the unskinned vertex stage tests each row of the draws bound
+/// next against (`InstancedMesh.band`), or null for none.
+@internal
+InstanceBand? currentDrawInstanceBand;
+
+/// What a band test reads from the view being drawn: the camera position at
+/// 0, the view direction at 4, and the nearest-depth range at 8 and 9.
+///
+/// A pass sets it before its draws. A shadow pass states the camera of the
+/// primary view and an unbounded depth range.
+@internal
+final Float32List currentViewInstanceBand = Float32List(10)
+  ..[8] = -3.0e38
+  ..[9] = 3.0e38;
+
+/// The view each camera draws, stated by the scene as it builds the passes of
+/// the view, so a pass that holds the camera reads the view's
+/// `instanceDepthFrom` and `instanceDepthTo`.
+@internal
+final Expando<RenderView> instanceBandViews = Expando();
+
+/// States the view a band test reads from the [camera] of a pass at [eye]
+/// looking along [forward], see [currentViewInstanceBand].
+@internal
+void setCurrentViewInstanceBandOf(
+  Camera camera,
+  vm.Vector3 eye,
+  vm.Vector3 forward,
+) {
+  final view = instanceBandViews[camera];
+  setCurrentViewInstanceBand(
+    eye,
+    forward,
+    depthFrom: view?.instanceDepthFrom ?? double.negativeInfinity,
+    depthTo: view?.instanceDepthTo ?? double.infinity,
+  );
+}
+
+/// States the view a band test reads, see [currentViewInstanceBand].
+@internal
+void setCurrentViewInstanceBand(
+  vm.Vector3 eye,
+  vm.Vector3 forward, {
+  double depthFrom = double.negativeInfinity,
+  double depthTo = double.infinity,
+}) {
+  currentViewInstanceBand
+    ..[0] = eye.x
+    ..[1] = eye.y
+    ..[2] = eye.z
+    ..[4] = forward.x
+    ..[5] = forward.y
+    ..[6] = forward.z
+    ..[8] = depthFrom.isFinite ? depthFrom : -3.0e38
+    ..[9] = depthTo.isFinite ? depthTo : 3.0e38;
+}
+
 @internal
 void bindUnskinnedFrameInfo(
   gpu.RenderPass pass,
@@ -2299,6 +2365,8 @@ void bindUnskinnedFrameInfo(
   double depthBias = 0.0,
 }) {
   final frameInfoSlot = shader.cachedUniformSlot('FrameInfo');
+  final band = currentDrawInstanceBand;
+  final view = currentViewInstanceBand;
   final scratch = _unskinnedFrameInfoScratch
     ..setAll(0, cameraTransform.storage)
     ..[16] = cameraPosition.x
@@ -2307,7 +2375,22 @@ void bindUnskinnedFrameInfo(
     ..[19] = depthBias
     ..setAll(20, currentDrawDepthOffset)
     ..setAll(24, currentDrawDepthSlope)
-    ..setAll(28, (currentDrawInstanceFrame ?? _identityInstanceFrame).storage);
+    ..setAll(28, (currentDrawInstanceFrame ?? _identityInstanceFrame).storage)
+    ..setAll(44, (currentDrawInstanceLocal ?? _identityInstanceFrame).storage)
+    ..[60] = view[0]
+    ..[61] = view[1]
+    ..[62] = view[2]
+    ..[63] = band == null ? 0.0 : 1.0
+    ..[64] = view[4]
+    ..[65] = view[5]
+    ..[66] = view[6]
+    ..[67] = 0.0;
+  if (band != null) {
+    band.writeTo(scratch, 68);
+    scratch
+      ..[78] = view[8]
+      ..[79] = view[9];
+  }
   pass.bindUniform(
     frameInfoSlot,
     transientsBuffer.emplace(scratchBytesOf(scratch)),

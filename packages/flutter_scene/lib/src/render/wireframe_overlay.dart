@@ -214,9 +214,9 @@ class _WireframeEncoder {
         }
         return;
       }
-      currentDrawInstanceFrame = item.instanceFrame;
+      item.beginInstanceDraw();
       bindDraw(item.worldTransform);
-      currentDrawInstanceFrame = null;
+      RenderItem.endInstanceDraw();
       final packed = packInstanceTransforms(
         item.instancePackTransform,
         instances,

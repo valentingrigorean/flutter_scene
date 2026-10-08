@@ -17,6 +17,8 @@ import 'package:flutter_scene/src/components/reflection_probe_component.dart';
 import 'package:flutter_scene/src/components/semantics_component.dart';
 import 'package:flutter_scene/src/components/spot_light_component.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart';
+import 'package:flutter_scene/src/instance_band.dart';
+import 'package:flutter_scene/src/instanced_mesh.dart';
 import 'package:flutter_scene/src/light.dart' show ShadowCasterFaces;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart' show ShadowCastingMode;
@@ -282,6 +284,43 @@ class RenderItem {
   @internal
   Matrix4? get instanceFrame => nodeSpaceInstances ? worldTransform : null;
 
+  /// The mesh whose rows this item draws from the records they share, or
+  /// null when the item packs its own (see [InstancedMesh.sharing]).
+  @internal
+  InstancedMesh? sharedRows;
+
+  /// The rows a draw of [sharedRows] takes, as pairs of a first row and a
+  /// row count, or null for every row.
+  @internal
+  Uint32List? instanceRanges;
+
+  /// The transform a vertex takes before its row's record, or null for none.
+  @internal
+  Matrix4? instanceLocal;
+
+  /// The band each row is tested against, or null for none.
+  @internal
+  InstanceBand? instanceBand;
+
+  /// States this item's instance frame, local transform and band for the
+  /// unskinned `FrameInfo` of the draws bound next. Pair with
+  /// [endInstanceDraw].
+  @internal
+  void beginInstanceDraw() {
+    if (!nodeSpaceInstances) return;
+    currentDrawInstanceFrame = worldTransform;
+    currentDrawInstanceLocal = instanceLocal;
+    currentDrawInstanceBand = instanceBand;
+  }
+
+  /// Clears what [beginInstanceDraw] stated.
+  @internal
+  static void endInstanceDraw() {
+    currentDrawInstanceFrame = null;
+    currentDrawInstanceLocal = null;
+    currentDrawInstanceBand = null;
+  }
+
   /// Indices accepted by the current view, or null when every instance passes.
   List<int>? visibleInstanceIndices;
 
@@ -338,7 +377,7 @@ class RenderItem {
 
   void _packInstances(List<int>? rows) {
     _depthFitInstanceBounds = null;
-    final instances = instanceTransforms;
+    final instances = sharedRows == null ? instanceTransforms : null;
     final bounds = geometry.localBounds;
     final colors = instanceColors;
     if (instances == null) {

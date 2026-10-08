@@ -3,8 +3,8 @@ import 'package:flutter_scene/src/geometry/geometry.dart'
     show
         Geometry,
         bindUnskinnedFrameInfo,
-        currentDrawInstanceFrame,
-        positionOnlyLayoutOverRecords;
+        positionOnlyLayoutOverRecords,
+        setCurrentViewInstanceBand;
 import 'package:flutter_scene/src/geometry/vertex_layout.dart'
     show VertexLayoutDescriptor;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
@@ -18,6 +18,7 @@ import 'package:flutter_scene/src/render/instance_batching.dart';
 import 'package:flutter_scene/src/fmat/fmat_ast.dart' show DepthSurfaceKind;
 import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
+import 'package:flutter_scene/src/render/shared_instance_rows.dart';
 import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
 import 'package:vector_math/vector_math.dart';
 
@@ -265,6 +266,7 @@ class ShadowEncoder {
        _filter = filter,
        _casterChannelMask = casterChannelMask {
     frustum = Frustum.matrix(_lightSpaceMatrix);
+    setCurrentViewInstanceBand(_cameraPosition, _noViewDirection);
     _renderPass.setDepthWriteEnable(true);
     _renderPass.setColorBlendEnable(false);
     _renderPass.setDepthCompareOperation(gpu.CompareFunction.lessEqual);
@@ -300,6 +302,8 @@ class ShadowEncoder {
   // bends shadow casters the same way as the color pass. The depth fragment
   // shader ignores it, so it is harmless for materials without a vertex stage.
   final Vector3 _cameraPosition;
+
+  static final Vector3 _noViewDirection = Vector3.zero();
 
   // The forward handed to a surface depth fragment; a shadow pass has no
   // view axis, and no cutout decision depends on it.
@@ -549,9 +553,31 @@ class ShadowEncoder {
         }
         return;
       }
-      currentDrawInstanceFrame = item.instanceFrame;
+      item.beginInstanceDraw();
       _bindDraw(item.worldTransform);
-      currentDrawInstanceFrame = null;
+      RenderItem.endInstanceDraw();
+      final shared = item.sharedRows;
+      if (shared != null) {
+        final rows = sharedInstanceRowsOf(shared);
+        _renderPass.setWindingOrder(
+          item.windingFlipped != rows.flipped
+              ? gpu.WindingOrder.counterClockwise
+              : gpu.WindingOrder.clockwise,
+        );
+        final ranges = item.instanceRanges;
+        final draws = rows.drawCountOf(ranges);
+        for (var draw = 0; draw < draws; draw++) {
+          final count = rows.bind(_renderPass, ranges, draw, instanceSlot);
+          if (count == 0) continue;
+          drawOrRejectPipeline(
+            _renderPass,
+            geometry,
+            _boundPipeline,
+            instanceCount: count,
+          );
+        }
+        return;
+      }
       final packedWorldData = item.instanceWorldData;
       final packedWinding = item.instanceWorldWindingFlipped;
       if ((retainsRecords ||
