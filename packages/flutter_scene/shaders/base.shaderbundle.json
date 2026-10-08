@@ -119,6 +119,10 @@
     "type": "fragment",
     "file": "shaders/flutter_scene_linear_depth_probe.frag"
   },
+  "StoredDepthProbeFragment": {
+    "type": "fragment",
+    "file": "shaders/flutter_scene_stored_depth_probe.frag"
+  },
   "MaskFragment": {
     "type": "fragment",
     "file": "shaders/flutter_scene_mask.frag"

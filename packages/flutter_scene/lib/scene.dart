@@ -278,6 +278,8 @@ export 'src/render/depth_raster.dart' show DepthRaster, currentDrawDepthRaster;
 export 'src/render/linear_depth_probe.dart'
     show debugSplitLinearDepth, linearDepthIsSplit;
 export 'src/render/mip_sampling_probe.dart' show mipChainsAreSampled;
+export 'src/render/stored_depth_probe.dart'
+    show debugStoredDepthUnsampled, storedDepthIsSampled;
 export 'src/render/render_graph_capture.dart'
     show
         CapturedDraw,
