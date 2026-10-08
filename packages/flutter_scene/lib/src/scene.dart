@@ -10,6 +10,7 @@ import 'package:flutter_scene/src/hot_reload/hot_reload_coordinator.dart';
 import 'package:flutter_scene/src/coplanar_overlaps.dart'
     as coplanar
     show CoplanarOverlap, CoplanarOverlapScan, describeCoplanarOverlaps;
+import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/depth_conflicts.dart'
     as depth_conflicts
     show DepthConflictReport, probeDepthConflicts;
@@ -622,6 +623,24 @@ base class Scene implements SceneGraph {
   /// Kept in sync by the node graph as mesh-bearing nodes are added and
   /// removed. Engine-internal; not part of the stable public API.
   final RenderScene renderScene = RenderScene();
+
+  /// The point this scene draws from, as `[x, y, z]` in scene axes.
+  ///
+  /// A scene far larger than a 32-bit float resolves gives each piece an
+  /// anchor (`Node.setAnchor`) and moves this point along with the camera.
+  /// An anchored node draws at its transforms plus its anchors minus this
+  /// point, subtracted in 64-bit floats for each draw, so every position
+  /// the GPU reads stays small. A node with no anchor on its chain, a
+  /// camera and a light are stated from this point itself.
+  ///
+  /// Moving it writes no node transform, bound, instance record or cached
+  /// directional shadow tile.
+  Float64List get drawOrigin => Float64List.fromList(renderScene.drawOrigin.at);
+
+  /// Moves [drawOrigin].
+  void setDrawOrigin(double x, double y, double z) {
+    if (renderScene.drawOrigin.moveTo(x, y, z)) markSceneDrawChanged();
+  }
 
   // Builds the per-frame data texture carrying the scene's point, spot, and
   // extra directional lights. Rebuilt once per frame in [render].
@@ -2623,6 +2642,20 @@ base class Scene implements SceneGraph {
     );
   }
 
+  // The view transform of the frame before, [previous], as it reads a
+  // position stated from this frame's draw origin.
+  Matrix4? _fromThisOrigin(Matrix4? previous) {
+    final origin = renderScene.drawOrigin;
+    if (previous == null || !origin.moved) return previous;
+    return previous.clone()..multiply(
+      Matrix4.translationValues(
+        origin.at[0] - origin.previous[0],
+        origin.at[1] - origin.previous[1],
+        origin.at[2] - origin.previous[2],
+      ),
+    );
+  }
+
   // Refreshes whether any static shadow caster is visible, and the revision
   // of the static shadow content, when the render scene changed since the
   // last refresh, and returns whether any casts.
@@ -2652,7 +2685,6 @@ base class Scene implements SceneGraph {
         return;
       }
       casts = true;
-      final t = item.worldTransform.storage;
       signature += Object.hash(
         identityHashCode(item.geometry),
         identityHashCode(item.instanceTransforms),
@@ -2662,9 +2694,6 @@ base class Scene implements SceneGraph {
         identityHashCode(item.material),
         // A caster's channels decide which lights it casts into.
         item.lightChannelMask,
-        t[12],
-        t[13],
-        t[14],
       );
     });
     if (!casts) return DirectionalShadowCache.noCasters;
@@ -3090,6 +3119,7 @@ base class Scene implements SceneGraph {
 
     _sharedShadowAtlas = null;
     _sharedShadowAnchor = null;
+    renderScene.drawOrigin.frameDrawn();
     renderStats.endFrame(pipelineCacheSize: pipelineCacheSize);
     rendererSubmissions.endFrame();
 
@@ -3946,6 +3976,7 @@ base class Scene implements SceneGraph {
             light: light,
             lightDirection: lightDirection ?? light.direction,
             idealCascades: cascades,
+            origin: renderScene.drawOrigin.at,
             contentRevision: _staticShadowContentRevision,
             staticSignatureIn: (matrix) =>
                 _staticShadowSignatureIn(matrix, light.shadowCasterChannelMask),
@@ -4240,7 +4271,7 @@ base class Scene implements SceneGraph {
       }
       if (enableTaa && temporalAntiAliasing.objectMotion) {
         final prevViewProj =
-            taaState!.previousViewTransform ??
+            _fromThisOrigin(taaState!.previousViewTransform) ??
             (currentJitteredViewProjection ??
                 camera.getViewTransform(pixelSize));
         graph.addPass(
@@ -4531,7 +4562,8 @@ base class Scene implements SceneGraph {
     if (enableTaa) {
       final unjitteredViewProj = camera.getViewTransform(pixelSize);
       final prevViewProj =
-          taaState!.previousViewTransform ?? unjitteredViewProj;
+          _fromThisOrigin(taaState!.previousViewTransform) ??
+          unjitteredViewProj;
       final cameraForward = camera.forward;
       final cameraRight = camera.up.cross(cameraForward)..normalize();
       final cameraUp = cameraForward.cross(cameraRight)..normalize();

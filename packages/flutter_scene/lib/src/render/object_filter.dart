@@ -310,7 +310,7 @@ class _ObjectMaskEncoder {
     if (instances != null) {
       if (dataSlot != null) {
         item.beginInstanceDraw();
-        bindDraw(item.worldTransform);
+        bindDraw(item.drawTransform);
         RenderItem.endInstanceDraw();
         final packed = packInstanceData(
           item.instancePackTransform,
@@ -335,7 +335,7 @@ class _ObjectMaskEncoder {
       }
       if (geometry.instancedVertexLayout == null) {
         for (final instanceTransform in instances) {
-          bindDraw(item.worldTransform * instanceTransform);
+          bindDraw(item.drawTransform * instanceTransform);
           final flip =
               item.windingFlipped != (instanceTransform.determinant() < 0);
           _renderPass.setWindingOrder(
@@ -348,7 +348,7 @@ class _ObjectMaskEncoder {
         return;
       }
       item.beginInstanceDraw();
-      bindDraw(item.worldTransform);
+      bindDraw(item.drawTransform);
       RenderItem.endInstanceDraw();
       final packed = packInstanceTransforms(
         item.instancePackTransform,
@@ -369,7 +369,9 @@ class _ObjectMaskEncoder {
       return;
     }
 
-    bindDraw(item.worldTransform);
+    item.beginInstanceDraw();
+    bindDraw(item.drawTransform);
+    RenderItem.endInstanceDraw();
     // Only bind a model-transform instance buffer when the geometry expects one
     // at the slot after its vertex streams. A geometry that supplies its own
     // per-instance buffer (a billboard batch) sets this false; binding here

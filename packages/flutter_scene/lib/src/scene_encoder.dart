@@ -437,14 +437,14 @@ List<SceneTranslucentDraw> sceneTranslucentDraws(
     if (bounds == null) return true;
     world
       ..copyFrom(bounds)
-      ..transform(node.globalTransform);
+      ..transform(node.drawTransform);
     return !node.frustumCulled || frustum.intersectsWithAabb3(world);
   }
 
   void visit(Node node) {
     if (!node.visible) return;
     if (node.layers & layerMask != 0) {
-      final transform = node.globalTransform;
+      final transform = node.drawTransform;
       final bias = node.sortDepthBias;
       for (final component in node.getComponents<MeshComponent>()) {
         for (final primitive in component.mesh.primitives) {
@@ -1403,7 +1403,7 @@ base class SceneEncoder {
       target.add(
         _obtainTranslucentRecord(
           item,
-          item.worldTransform,
+          item.drawTransform,
           geometry,
           material,
           fade,
@@ -1427,7 +1427,7 @@ base class SceneEncoder {
       target.add(
         _obtainTranslucentRecord(
           item,
-          item.worldTransform,
+          item.drawTransform,
           geometry,
           material,
           fade,
@@ -1530,7 +1530,7 @@ base class SceneEncoder {
 
   double _depthOf(RenderItem item, [Geometry? geometry]) {
     return sceneSortDepth(
-      item.worldTransform,
+      item.drawTransform,
       geometry?.localBounds,
       _cameraPosition,
       _cameraForward,
@@ -1978,15 +1978,22 @@ base class SceneEncoder {
     );
     try {
       if (selection.instanceCount == 0) return;
-      _encodeSingle(
-        pipeline,
-        worldTransform,
-        geometry,
-        material,
-        windingFlipped,
-        fade,
-        item: item,
-      );
+      // The record an item holds leaves its anchor out, so the instance
+      // frame adds the anchor minus the draw origin.
+      item.beginInstanceDraw();
+      try {
+        _encodeSingle(
+          pipeline,
+          worldTransform,
+          geometry,
+          material,
+          windingFlipped,
+          fade,
+          item: item,
+        );
+      } finally {
+        RenderItem.endInstanceDraw();
+      }
     } finally {
       endMeshDraw(geometry);
     }
@@ -2148,7 +2155,7 @@ base class SceneEncoder {
           sortBackToFrontFrom: sortBackToFrontFrom == null || !nodeSpace
               ? sortBackToFrontFrom
               : Matrix4.inverted(
-                  item.worldTransform,
+                  item.drawTransform,
                 ).transformed3(sortBackToFrontFrom),
           instanceLimit: selection.instanceCount,
           fallback:
@@ -2202,7 +2209,7 @@ base class SceneEncoder {
           final instanceTransform = instances[row];
           _bindGeometry(
             geometry,
-            item.worldTransform * instanceTransform,
+            item.drawTransform * instanceTransform,
             material,
             materialVertex,
           );
@@ -2413,7 +2420,7 @@ base class SceneEncoder {
     }
     _encode(
       pipeline,
-      item.worldTransform,
+      item.drawTransform,
       record.geometry,
       record.material,
       record.windingFlipped,

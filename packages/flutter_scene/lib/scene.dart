@@ -299,7 +299,8 @@ export 'src/render/debug_view.dart'
         SurfaceDebugGroup;
 export 'src/render/instance_record_ring.dart'
     show InstanceRecordBuffer, InstanceRecordDevice, debugInstanceRecordDevice;
-export 'src/render/render_scene.dart' show RenderItem, RenderScene;
+export 'src/render/render_scene.dart'
+    show RenderItem, RenderScene, currentDrawAnchor, currentDrawOrigin;
 export 'src/render/shared_instance_rows.dart'
     show
         InstanceRecordFrame,

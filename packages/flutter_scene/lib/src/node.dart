@@ -598,6 +598,90 @@ base class Node implements SceneGraph, PrePassNode {
     }
   }
 
+  Float64List? _anchor;
+  final Float64List _worldAnchor = Float64List(3);
+  bool _worldAnchored = false;
+
+  /// The fixed point this node's subtree is stated from, as `[x, y, z]` in
+  /// scene axes, or null for none.
+  ///
+  /// A scene that spans more than a 32-bit float resolves keeps each piece
+  /// near a point of its own: the piece's transforms stay small and exact,
+  /// and its anchor holds the large part in 64-bit floats. An anchored
+  /// subtree draws at its transforms plus its anchors minus
+  /// [Scene.drawOrigin], subtracted per draw, so moving the draw origin
+  /// writes no node, bound or instance record. Anchors add along the parent
+  /// chain and no ancestor's rotation or scale applies to them.
+  ///
+  /// [globalTransform] leaves the anchor out. A node with no anchor on its
+  /// chain is stated from the draw origin itself.
+  Float64List? get anchor => _anchor;
+
+  /// Sets [anchor], or clears it when [x] is null.
+  void setAnchor(double? x, [double y = 0.0, double z = 0.0]) {
+    final held = _anchor;
+    if (x == null) {
+      if (held == null) return;
+      _anchor = null;
+    } else {
+      if (held != null && held[0] == x && held[1] == y && held[2] == z) return;
+      (_anchor ??= Float64List(3))
+        ..[0] = x
+        ..[1] = y
+        ..[2] = z;
+    }
+    markTransformDirty();
+  }
+
+  /// Whether this node or an ancestor states an [anchor].
+  @internal
+  bool get worldAnchored {
+    globalTransform;
+    return _worldAnchored;
+  }
+
+  /// The sum of the anchors of this node and its ancestors, valid while
+  /// [worldAnchored].
+  @internal
+  Float64List get worldAnchor {
+    globalTransform;
+    return _worldAnchor;
+  }
+
+  /// The point [globalTransform] is stated from: the sum of the anchors of
+  /// this node and its ancestors as `[x, y, z]`, or null where none states
+  /// one. The list is the node's own; do not write to it.
+  Float64List? get globalAnchor => worldAnchored ? _worldAnchor : null;
+
+  /// Where this node draws: [globalTransform] moved by its [globalAnchor]
+  /// less the draw origin of the scene it is mounted in, or
+  /// [globalTransform] itself where no anchor is stated or the node is not
+  /// mounted. A reader that places an anchored node on the CPU, such as a
+  /// sort or a cull of its own, reads this and never [globalTransform].
+  Matrix4 get drawTransform {
+    final placed = globalTransform;
+    final scene = _renderScene;
+    if (!_worldAnchored || scene == null) return placed;
+    final origin = scene.drawOrigin.at;
+    return placed.clone()..setTranslationRaw(
+      placed.storage[12] + (_worldAnchor[0] - origin[0]),
+      placed.storage[13] + (_worldAnchor[1] - origin[1]),
+      placed.storage[14] + (_worldAnchor[2] - origin[2]),
+    );
+  }
+
+  void _refreshWorldAnchor(Node? parent) {
+    final own = _anchor;
+    final inherited = parent != null && parent._worldAnchored;
+    _worldAnchored = inherited || own != null;
+    if (!_worldAnchored) return;
+    final from = parent?._worldAnchor;
+    for (var axis = 0; axis < 3; axis++) {
+      _worldAnchor[axis] =
+          (inherited ? from![axis] : 0.0) + (own == null ? 0.0 : own[axis]);
+    }
+  }
+
   /// The world-space transform of this node, with every ancestor's
   /// transform applied.
   ///
@@ -622,6 +706,7 @@ base class Node implements SceneGraph, PrePassNode {
       // parent._windingFlipped is current.
       _windingFlipped = selfFlip != parent._windingFlipped;
     }
+    _refreshWorldAnchor(parent);
     _worldTransformDirty = false;
     _worldTransformVersion++;
     assert(_debugSnapshotLocalTransform());

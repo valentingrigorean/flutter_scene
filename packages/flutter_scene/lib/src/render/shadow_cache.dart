@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:vector_math/vector_math.dart';
@@ -179,6 +180,29 @@ class DirectionalShadowCache {
   /// pressure, leaving the cached framebuffer attached to a released texture.
   gpu.Texture? tileDepth;
 
+  // The draw origin the entries are stated from.
+  final Float64List _origin = Float64List(3);
+
+  // States the entries from [origin], the scene's draw origin, so a tile
+  // drawn from another origin keeps its texels: its matrix takes the move and
+  // its center gives it back.
+  void _drawFrom(Float64List origin) {
+    final x = origin[0] - _origin[0];
+    final y = origin[1] - _origin[1];
+    final z = origin[2] - _origin[2];
+    if (x == 0.0 && y == 0.0 && z == 0.0) return;
+    _origin.setAll(0, origin);
+    final moved = Matrix4.translationValues(x, y, z);
+    for (final entry in _entries) {
+      entry.matrix.multiply(moved);
+      entry.center.setValues(
+        entry.center.x - x,
+        entry.center.y - y,
+        entry.center.z - z,
+      );
+    }
+  }
+
   /// Decides which tiles to re-render for this frame's [idealCascades] and
   /// returns the effective cascades to sample with.
   ///
@@ -200,9 +224,11 @@ class DirectionalShadowCache {
     required Vector3 lightDirection,
     required List<ShadowCascade> idealCascades,
     required int contentRevision,
+    Float64List? origin,
     required int Function(Matrix4 lightSpaceMatrix) staticSignatureIn,
     bool Function(Matrix4 lightSpaceMatrix, List<Node> casters)? castersIn,
   }) {
+    if (origin != null) _drawFrom(origin);
     final resolution = light.shadowMapResolution;
     final dir = lightDirection.normalized();
     final paramsChanged =

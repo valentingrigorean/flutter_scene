@@ -128,9 +128,16 @@ class InstancedMeshComponent extends Component {
         (item.shadowStatic || node.shadowStatic) &&
         (item.castsShadows || node.shadowCastingMode != ShadowCastingMode.off);
     item.visible = visible;
+    var anchorChanged = false;
+    var anchoredChanged = false;
     if (worldTransformVersion != _worldTransformVersion) {
       item.worldTransform.setFrom(worldTransform);
       item.worldTransformRevision++;
+      final anchoredWas = item.anchored;
+      anchorChanged = item.takeAnchor(
+        node.worldAnchored ? node.worldAnchor : null,
+      );
+      anchoredChanged = anchoredWas != item.anchored;
     }
     final windingWas = item.windingFlipped;
     item.refreshWinding(node.windingFlipped);
@@ -187,9 +194,9 @@ class InstancedMeshComponent extends Component {
     // BVH membership and needs a rebuild; a plain move only needs a
     // refit.
     final renderScene = node.internalRenderScene;
-    if (frustumCulledChanged || wasBounded != isBounded) {
+    if (frustumCulledChanged || wasBounded != isBounded || anchoredChanged) {
       renderScene?.markBvhStructureDirty(item);
-    } else if (boundsChanged && item.frustumCulled) {
+    } else if ((boundsChanged || anchorChanged) && item.frustumCulled) {
       renderScene?.markBvhBoundsDirty();
     }
     _worldTransformVersion = worldTransformVersion;

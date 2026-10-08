@@ -211,8 +211,101 @@ class RenderItem {
     drawnGeometry.setMorphWeights(weights);
   }
 
-  /// World-space transform, refreshed each frame from the owning node.
+  /// The owning node's transform, refreshed each frame from it. It leaves
+  /// out the node's anchor (see [anchored]); a draw binds [drawTransform].
   final Matrix4 worldTransform = Matrix4.identity();
+
+  /// Whether the owning node is stated from an anchor (`Node.anchor`).
+  @internal
+  bool anchored = false;
+
+  /// The anchor [worldTransform] is stated from, valid while [anchored].
+  @internal
+  final Float64List anchor = Float64List(3);
+
+  /// The draw origin of the scene that holds this item, or null outside one.
+  @internal
+  DrawOrigin? drawOrigin;
+
+  /// What a draw adds to a position in [worldTransform]'s space along
+  /// [axis]: the anchor minus the draw origin, or 0 for an item with no
+  /// anchor.
+  @internal
+  double drawShift(int axis) {
+    final origin = drawOrigin;
+    if (!anchored || origin == null) return 0.0;
+    return anchor[axis] - origin.at[axis];
+  }
+
+  /// Takes the anchor of the owning node: [stated] where it has one on its
+  /// chain. Returns whether the item's place among the scene's bounds
+  /// changed.
+  @internal
+  bool takeAnchor(Float64List? stated) {
+    final was = anchored;
+    if (stated == null) {
+      anchored = false;
+      return was;
+    }
+    if (was &&
+        anchor[0] == stated[0] &&
+        anchor[1] == stated[1] &&
+        anchor[2] == stated[2]) {
+      return false;
+    }
+    anchored = true;
+    anchor.setAll(0, stated);
+    _drawTransformOrigin = -1;
+    _drawnBoundsOrigin = -1;
+    return true;
+  }
+
+  final Matrix4 _drawTransform = Matrix4.identity();
+  int _drawTransformOrigin = -1;
+  int _drawTransformRevision = -1;
+
+  /// [worldTransform] as a draw binds it: moved by the anchor minus the
+  /// scene's draw origin, which is [worldTransform] itself for an item with
+  /// no anchor.
+  @internal
+  Matrix4 get drawTransform {
+    final origin = drawOrigin;
+    if (!anchored || origin == null) return worldTransform;
+    if (_drawTransformOrigin != origin.revision ||
+        _drawTransformRevision != worldTransformRevision) {
+      _drawTransformOrigin = origin.revision;
+      _drawTransformRevision = worldTransformRevision;
+      _shifted(worldTransform, origin.at, _drawTransform);
+    }
+    return _drawTransform;
+  }
+
+  final Matrix4 _previousDrawTransform = Matrix4.identity();
+
+  /// [previousWorldTransform] as the frame before drew it, from the draw
+  /// origin of that frame.
+  @internal
+  Matrix4 get previousDrawTransform {
+    final origin = drawOrigin;
+    if (!anchored || origin == null) return previousWorldTransform;
+    return _shifted(
+      previousWorldTransform,
+      origin.previous,
+      _previousDrawTransform,
+    );
+  }
+
+  Matrix4 _shifted(Matrix4 from, Float64List origin, Matrix4 into) {
+    into.setFrom(from);
+    final storage = into.storage;
+    final placed = from.storage;
+    storage[12] = placed[12] + (anchor[0] - origin[0]);
+    storage[13] = placed[13] + (anchor[1] - origin[1]);
+    storage[14] = placed[14] + (anchor[2] - origin[2]);
+    return into;
+  }
+
+  static final Matrix4 _instanceFrameScratch = Matrix4.identity();
 
   /// The previous frame's world-space transform, for motion vector rendering.
   final Matrix4 previousWorldTransform = Matrix4.identity();
@@ -248,6 +341,9 @@ class RenderItem {
   // Whether the scene has placed the item since it was added or its
   // membership changed.
   bool _placed = false;
+
+  // Whether the tree holds this item's box in its anchor's space.
+  bool _treeAnchored = false;
 
   /// Whether this item casts into the cached static shadow tiles: a visible
   /// static caster.
@@ -340,8 +436,20 @@ class RenderItem {
   /// [endInstanceDraw].
   @internal
   void beginInstanceDraw() {
-    if (!nodeSpaceInstances) return;
-    currentDrawInstanceFrame = worldTransform;
+    if (anchored && drawOrigin != null) {
+      _currentDrawAnchor = anchor;
+      _currentDrawOrigin = drawOrigin!.at;
+    }
+    if (!nodeSpaceInstances) {
+      // Packed records hold [worldTransform], so the frame adds the shift
+      // alone.
+      if (anchored && drawOrigin != null) {
+        currentDrawInstanceFrame = _instanceFrameScratch
+          ..setTranslationRaw(drawShift(0), drawShift(1), drawShift(2));
+      }
+      return;
+    }
+    currentDrawInstanceFrame = drawTransform;
     currentDrawInstanceLocal = instanceLocal;
     currentDrawInstanceBand = instanceBand;
   }
@@ -349,6 +457,8 @@ class RenderItem {
   /// Clears what [beginInstanceDraw] stated.
   @internal
   static void endInstanceDraw() {
+    _currentDrawAnchor = null;
+    _currentDrawOrigin = null;
     currentDrawInstanceFrame = null;
     currentDrawInstanceLocal = null;
     currentDrawInstanceBand = null;
@@ -714,6 +824,7 @@ class RenderItem {
     if (!cullInstances || instanceTransforms == null) return null;
     final cellBounds = _worldCellBounds();
     if (cellBounds == null) return null;
+    _loadCellShift();
 
     final aggregate = worldBounds;
     if (aggregate != null &&
@@ -831,6 +942,10 @@ class RenderItem {
     if (whole >= best || instanceTransforms == null) return whole;
     final packed = _worldCellBounds();
     if (packed == null) return whole;
+    _loadCellShift();
+    final eyeX = eye.x - _cellShiftX;
+    final eyeY = eye.y - _cellShiftY;
+    final eyeZ = eye.z - _cellShiftZ;
     var nearest = double.infinity;
     for (var offset = 0; offset < packed.length; offset += 6) {
       if (_outsidePlane(packed, offset, frustum.plane0) ||
@@ -848,9 +963,9 @@ class RenderItem {
         packed[offset + 3],
         packed[offset + 4],
         packed[offset + 5],
-        eye.x,
-        eye.y,
-        eye.z,
+        eyeX,
+        eyeY,
+        eyeZ,
         forward.x,
         forward.y,
         forward.z,
@@ -888,7 +1003,9 @@ class RenderItem {
       var near = 0.0;
       var far = double.infinity;
       for (var axis = 0; axis < 3 && near <= far; axis++) {
-        final o = origin[axis];
+        // The cells sit in the space of [worldTransform], which leaves the
+        // anchor out.
+        final o = origin[axis] - (cells == null ? 0.0 : drawShift(axis));
         final d = direction[axis];
         final lo = packed[offset + axis];
         final hi = packed[offset + axis + 3];
@@ -906,11 +1023,23 @@ class RenderItem {
     return nearest.isFinite ? nearest : null;
   }
 
+  // What a draw adds to a cell's bounds, which sit in the space of
+  // [worldTransform]: the planes of a test move by it, so no cell does.
+  static double _cellShiftX = 0.0;
+  static double _cellShiftY = 0.0;
+  static double _cellShiftZ = 0.0;
+
+  void _loadCellShift() {
+    _cellShiftX = drawShift(0);
+    _cellShiftY = drawShift(1);
+    _cellShiftZ = drawShift(2);
+  }
+
   static bool _outsidePlane(Float32List bounds, int offset, Plane plane) {
     final normal = plane.normal;
-    final x = bounds[offset + (normal.x < 0 ? 0 : 3)];
-    final y = bounds[offset + (normal.y < 0 ? 1 : 4)];
-    final z = bounds[offset + (normal.z < 0 ? 2 : 5)];
+    final x = bounds[offset + (normal.x < 0 ? 0 : 3)] + _cellShiftX;
+    final y = bounds[offset + (normal.y < 0 ? 1 : 4)] + _cellShiftY;
+    final z = bounds[offset + (normal.z < 0 ? 2 : 5)] + _cellShiftZ;
     return normal.x * x + normal.y * y + normal.z * z + plane.constant < 0;
   }
 
@@ -937,12 +1066,94 @@ class RenderItem {
   Aabb3? get cullBounds =>
       instanceTransforms != null ? instanceBounds : geometry.localBounds;
 
-  /// World-space AABB ([cullBounds] transformed by [worldTransform]), or
-  /// `null` when the item is unbounded.
+  /// The AABB of [cullBounds] as this item draws it, or `null` when the item
+  /// is unbounded: [cullBounds] transformed by [worldTransform], moved by
+  /// the anchor minus the scene's draw origin for an anchored item.
   ///
-  /// Refreshed each frame by [refreshWorldBounds] and consumed by the
-  /// scene's spatial structure.
-  Aabb3? worldBounds;
+  /// Refreshed by [refreshWorldBounds]. A move of the draw origin writes no
+  /// bound: an anchored item restates this box when it is next read.
+  Aabb3? get worldBounds {
+    final placed = _placedBounds;
+    final origin = drawOrigin;
+    if (placed == null || !anchored || origin == null) return placed;
+    final drawn = _drawnBounds ??= Aabb3();
+    if (_drawnBoundsOrigin != origin.revision ||
+        _drawnBoundsRevision != _placedBoundsRevision) {
+      _drawnBoundsOrigin = origin.revision;
+      _drawnBoundsRevision = _placedBoundsRevision;
+      final x = anchor[0] - origin.at[0];
+      final y = anchor[1] - origin.at[1];
+      final z = anchor[2] - origin.at[2];
+      drawn.min.setValues(
+        placed.min.x + x,
+        placed.min.y + y,
+        placed.min.z + z,
+      );
+      drawn.max.setValues(
+        placed.max.x + x,
+        placed.max.y + y,
+        placed.max.z + z,
+      );
+    }
+    return drawn;
+  }
+
+  /// States the box [refreshWorldBounds] computes, in the space of
+  /// [worldTransform].
+  set worldBounds(Aabb3? value) {
+    _placedBounds = value;
+    _placedBoundsRevision++;
+  }
+
+  // [cullBounds] transformed by [worldTransform], which leaves an anchor
+  // out.
+  Aabb3? _placedBounds;
+  int _placedBoundsRevision = 0;
+  Aabb3? _drawnBounds;
+  int _drawnBoundsOrigin = -1;
+  int _drawnBoundsRevision = -1;
+
+  /// Writes the box the scene's spatial structure holds for this item into
+  /// [into], six floats from [offset]: [worldBounds] in the space no draw
+  /// origin moves, which is the anchor's for an anchored item and the draw
+  /// origin's own otherwise. The box grows by the 32-bit rounding of a
+  /// coordinate that far from zero, so it never leaves out a point of the
+  /// item.
+  @internal
+  void writeTreeBounds(Float32List into, int offset) {
+    final placed = _placedBounds!;
+    final origin = drawOrigin;
+    var x = 0.0, y = 0.0, z = 0.0;
+    if (anchored) {
+      x = anchor[0];
+      y = anchor[1];
+      z = anchor[2];
+    } else if (origin != null) {
+      x = origin.at[0];
+      y = origin.at[1];
+      z = origin.at[2];
+    }
+    if (x == 0.0 && y == 0.0 && z == 0.0) {
+      into[offset] = placed.min.x;
+      into[offset + 1] = placed.min.y;
+      into[offset + 2] = placed.min.z;
+      into[offset + 3] = placed.max.x;
+      into[offset + 4] = placed.max.y;
+      into[offset + 5] = placed.max.z;
+      return;
+    }
+    _writePadded(into, offset, placed.min.x + x, -1);
+    _writePadded(into, offset + 1, placed.min.y + y, -1);
+    _writePadded(into, offset + 2, placed.min.z + z, -1);
+    _writePadded(into, offset + 3, placed.max.x + x, 1);
+    _writePadded(into, offset + 4, placed.max.y + y, 1);
+    _writePadded(into, offset + 5, placed.max.z + z, 1);
+  }
+
+  // Four steps of a 32-bit float at [value], outward.
+  static void _writePadded(Float32List into, int at, double value, int side) {
+    into[at] = value + side * (value.abs() * 4.8e-7 + 1e-30);
+  }
 
   // Reused across [refreshWorldBounds] calls so a steady-state refresh
   // allocates nothing.
@@ -956,16 +1167,17 @@ class RenderItem {
   bool refreshWorldBounds() {
     final local = cullBounds;
     if (local == null) {
-      if (worldBounds == null) return false;
-      worldBounds = null;
+      if (_placedBounds == null) return false;
+      _placedBounds = null;
       return true;
     }
     _worldBoundsScratch
       ..copyFrom(local)
       ..transform(worldTransform);
-    final current = worldBounds;
+    final current = _placedBounds;
     if (current == null) {
-      worldBounds = Aabb3.copy(_worldBoundsScratch);
+      _placedBounds = Aabb3.copy(_worldBoundsScratch);
+      _placedBoundsRevision++;
       return true;
     }
     if (current.min == _worldBoundsScratch.min &&
@@ -973,8 +1185,57 @@ class RenderItem {
       return false;
     }
     current.copyFrom(_worldBoundsScratch);
+    _placedBoundsRevision++;
     return true;
   }
+}
+
+/// The anchor of the item being bound, as `[x, y, z]`, or null for an item
+/// with no anchor (see `Node.setAnchor`).
+///
+/// A [Geometry] that binds its own uniforms reads this and
+/// [currentDrawOrigin] in `bind` to keep a retained block: it holds the
+/// anchor in the block of the draw and the origin in a block every draw of
+/// the frame shares, and its vertex stage adds their difference to a position
+/// placed by the item's held record. The model transform `bind` receives
+/// holds that difference already, for a geometry that writes it per draw.
+Float64List? get currentDrawAnchor => _currentDrawAnchor;
+Float64List? _currentDrawAnchor;
+
+/// The draw origin of the scene whose item is being bound, as `[x, y, z]`,
+/// or null for an item with no anchor. See [currentDrawAnchor].
+Float64List? get currentDrawOrigin => _currentDrawOrigin;
+Float64List? _currentDrawOrigin;
+
+/// The point a scene draws from, see `Scene.drawOrigin`.
+@internal
+class DrawOrigin {
+  /// The origin of the frame being drawn.
+  final Float64List at = Float64List(3);
+
+  /// The origin of the frame drawn before.
+  final Float64List previous = Float64List(3);
+
+  /// Counts the moves of [at].
+  int revision = 0;
+
+  /// Moves [at], and returns whether it changed.
+  bool moveTo(double x, double y, double z) {
+    if (at[0] == x && at[1] == y && at[2] == z) return false;
+    at
+      ..[0] = x
+      ..[1] = y
+      ..[2] = z;
+    revision++;
+    return true;
+  }
+
+  /// Whether the frame drawn before drew from another point.
+  bool get moved =>
+      at[0] != previous[0] || at[1] != previous[1] || at[2] != previous[2];
+
+  /// States that a frame drew from [at].
+  void frameDrawn() => previous.setAll(0, at);
 }
 
 /// The retained render layer for a `Scene`: every [RenderItem], plus a
@@ -1264,7 +1525,7 @@ class RenderScene {
   /// camera by one frame.
   Camera? get listenerCamera => primaryCamera ?? _lastViewCamera;
 
-  Bvh _bvh = Bvh.build([]);
+  late Bvh _bvh = Bvh.build([])..origin = drawOrigin.at;
   int _structureRevision = 0;
   int _staticShadowRevision = 0;
 
@@ -1331,7 +1592,16 @@ class RenderScene {
   // A bounded item moved; the BVH refits.
   bool _boundsDirty = false;
 
+  /// The point this scene draws from, see `Scene.drawOrigin`.
+  final DrawOrigin drawOrigin = DrawOrigin();
+
+  // The draw origin the tree's boxes of items with no anchor were written
+  // from, and how many such items the tree holds.
+  int _treeOrigin = 0;
+  int _unanchoredInTree = 0;
+
   void add(RenderItem item) {
+    item.drawOrigin = drawOrigin;
     item.sceneSlot = items.length;
     items.add(item);
     _unplaced.add(item);
@@ -1362,6 +1632,7 @@ class RenderScene {
   // Takes [item] out of the tree or of the always visible.
   void _displace(RenderItem item) {
     item._placed = false;
+    if (item.bvhNode >= 0 && !item._treeAnchored) _unanchoredInTree--;
     _bvh.remove(item);
     final slot = item._alwaysVisibleSlot;
     if (slot < 0) return;
@@ -1377,6 +1648,8 @@ class RenderScene {
     if (item._placed || item.sceneSlot < 0) return;
     item._placed = true;
     if (item.frustumCulled && item.worldBounds != null) {
+      item._treeAnchored = item.anchored;
+      if (!item.anchored) _unanchoredInTree++;
       _bvh.insert(item);
     } else {
       item._alwaysVisibleSlot = _alwaysVisible.length;
@@ -1414,6 +1687,8 @@ class RenderScene {
       _boundsDirty = false;
       _unplaced.clear();
       _alwaysVisible.clear();
+      _unanchoredInTree = 0;
+      _treeOrigin = drawOrigin.revision;
       final bounded = <RenderItem>[];
       for (final item in items) {
         item
@@ -1421,13 +1696,15 @@ class RenderScene {
           ..bvhNode = -1
           .._alwaysVisibleSlot = -1;
         if (item.frustumCulled && item.worldBounds != null) {
+          item._treeAnchored = item.anchored;
+          if (!item.anchored) _unanchoredInTree++;
           bounded.add(item);
         } else {
           item._alwaysVisibleSlot = _alwaysVisible.length;
           _alwaysVisible.add(item);
         }
       }
-      _bvh = Bvh.build(bounded);
+      _bvh = Bvh.build(bounded)..origin = drawOrigin.at;
       return;
     }
     if (_unplaced.isNotEmpty) {
@@ -1435,6 +1712,12 @@ class RenderScene {
         _place(item);
       }
       _unplaced.clear();
+    }
+    // A box of an item with no anchor is stated from the draw origin, so it
+    // is written again once the origin moves. An anchored item's holds.
+    if (_treeOrigin != drawOrigin.revision) {
+      _treeOrigin = drawOrigin.revision;
+      if (_unanchoredInTree > 0) _boundsDirty = true;
     }
     if (_boundsDirty) {
       _boundsDirty = false;

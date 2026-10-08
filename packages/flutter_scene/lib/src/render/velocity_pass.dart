@@ -226,8 +226,8 @@ class VelocityPass extends RenderGraphPass {
       );
 
       if (isSkinned) {
-        skinnedModelInfo.setRange(0, 16, item.worldTransform.storage);
-        skinnedModelInfo.setRange(16, 32, item.previousWorldTransform.storage);
+        skinnedModelInfo.setRange(0, 16, item.drawTransform.storage);
+        skinnedModelInfo.setRange(16, 32, item.previousDrawTransform.storage);
         skinnedModelInfo[32] = item.jointsTextureWidth.toDouble();
         skinnedModelInfo[33] = item.jointsTextureWidth.toDouble();
         skinnedModelInfo[34] = 1.0;
@@ -254,11 +254,11 @@ class VelocityPass extends RenderGraphPass {
           ..useVertexAttributes(VertexAttributeSchema.none)
           ..bindGeometryBuffers(renderPass);
       } else {
-        unskinnedModelInfo.setRange(0, 16, item.worldTransform.storage);
+        unskinnedModelInfo.setRange(0, 16, item.drawTransform.storage);
         unskinnedModelInfo.setRange(
           16,
           32,
-          item.previousWorldTransform.storage,
+          item.previousDrawTransform.storage,
         );
         unskinnedModelInfo.setRange(32, 36, currentDrawDepthOffset);
         unskinnedModelInfo[36] = item.material.depthBias;
@@ -277,7 +277,7 @@ class VelocityPass extends RenderGraphPass {
             vertexShader,
           );
         }
-        bindSingleInstanceData(renderPass, item.worldTransform, slot: 1);
+        bindSingleInstanceData(renderPass, item.drawTransform, slot: 1);
       }
 
       item.geometry.draw(renderPass);

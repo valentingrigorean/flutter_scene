@@ -33,6 +33,12 @@ class Bvh {
     this._itemCount,
   ) : _root = _nodeCount - 1;
 
+  /// The draw origin of the scene whose items the tree holds. A box of the
+  /// tree is stated from a point no draw origin moves
+  /// ([RenderItem.writeTreeBounds]) and a query from the draw origin, so
+  /// each query moves by it.
+  Float64List origin = Float64List(3);
+
   /// How many times [Bvh.build] sorted a set of items into a tree.
   @visibleForTesting
   static int debugBuildCount = 0;
@@ -52,11 +58,12 @@ class Bvh {
     var maxX = -double.infinity,
         maxY = -double.infinity,
         maxZ = -double.infinity;
+    final box = Float32List(6);
     for (var i = 0; i < n; i++) {
-      final b = items[i].worldBounds!;
-      final cx = (b.min.x + b.max.x) * 0.5;
-      final cy = (b.min.y + b.max.y) * 0.5;
-      final cz = (b.min.z + b.max.z) * 0.5;
+      items[i].writeTreeBounds(box, 0);
+      final cx = (box[0] + box[3]) * 0.5;
+      final cy = (box[1] + box[4]) * 0.5;
+      final cz = (box[2] + box[5]) * 0.5;
       centroids[i * 3] = cx;
       centroids[i * 3 + 1] = cy;
       centroids[i * 3 + 2] = cz;
@@ -122,14 +129,7 @@ class Bvh {
         final node = nodeCount++;
         nodeItems[node] = item;
         item.bvhNode = node;
-        final b = item.worldBounds!;
-        final o = node * 6;
-        bounds[o] = b.min.x;
-        bounds[o + 1] = b.min.y;
-        bounds[o + 2] = b.min.z;
-        bounds[o + 3] = b.max.x;
-        bounds[o + 4] = b.max.y;
-        bounds[o + 5] = b.max.z;
+        item.writeTreeBounds(bounds, node * 6);
         children[node * 2] = -1;
         return node;
       }
@@ -186,16 +186,6 @@ class Bvh {
     return node;
   }
 
-  void _setLeafBounds(int node, Aabb3 b) {
-    final o = node * 6;
-    _bounds[o] = b.min.x;
-    _bounds[o + 1] = b.min.y;
-    _bounds[o + 2] = b.min.z;
-    _bounds[o + 3] = b.max.x;
-    _bounds[o + 4] = b.max.y;
-    _bounds[o + 5] = b.max.z;
-  }
-
   // The bounds of [node] from its two children.
   void _joinChildren(int node) {
     final bounds = _bounds;
@@ -209,15 +199,16 @@ class Bvh {
     }
   }
 
-  // Half the surface area of the box of node [o] grown to hold [b].
-  double _grownArea(int o, Aabb3 b) {
+  // Half the surface area of the box of node [o] grown to hold the box of
+  // node [b].
+  double _grownArea(int o, int b) {
     final bounds = _bounds;
-    final minX = math.min(bounds[o], b.min.x);
-    final minY = math.min(bounds[o + 1], b.min.y);
-    final minZ = math.min(bounds[o + 2], b.min.z);
-    final dx = math.max(bounds[o + 3], b.max.x) - minX;
-    final dy = math.max(bounds[o + 4], b.max.y) - minY;
-    final dz = math.max(bounds[o + 5], b.max.z) - minZ;
+    final minX = math.min(bounds[o], bounds[b]);
+    final minY = math.min(bounds[o + 1], bounds[b + 1]);
+    final minZ = math.min(bounds[o + 2], bounds[b + 2]);
+    final dx = math.max(bounds[o + 3], bounds[b + 3]) - minX;
+    final dy = math.max(bounds[o + 4], bounds[b + 4]) - minY;
+    final dz = math.max(bounds[o + 5], bounds[b + 5]) - minZ;
     return dx * dy + dy * dz + dz * dx;
   }
 
@@ -234,12 +225,11 @@ class Bvh {
   /// the child whose box grows least to hold it.
   void insert(RenderItem item) {
     assert(item.bvhNode < 0);
-    final box = item.worldBounds!;
     final leaf = _takeNode();
     _items[leaf] = item;
     item.bvhNode = leaf;
     _children[leaf * 2] = -1;
-    _setLeafBounds(leaf, box);
+    item.writeTreeBounds(_bounds, leaf * 6);
     _itemCount++;
     if (_root < 0) {
       _root = leaf;
@@ -250,8 +240,8 @@ class Bvh {
     while (_children[sibling * 2] >= 0) {
       final left = _children[sibling * 2];
       final right = _children[sibling * 2 + 1];
-      final leftGrowth = _grownArea(left * 6, box) - _area(left * 6);
-      final rightGrowth = _grownArea(right * 6, box) - _area(right * 6);
+      final leftGrowth = _grownArea(left * 6, leaf * 6) - _area(left * 6);
+      final rightGrowth = _grownArea(right * 6, leaf * 6) - _area(right * 6);
       sibling = leftGrowth <= rightGrowth ? left : right;
     }
     final parent = _parents[sibling];
@@ -509,7 +499,9 @@ class Bvh {
     final planes = _planes;
     final rowsEnd = planeCount * 4;
     var stack = _stack;
-    final ex = eye.x, ey = eye.y, ez = eye.z;
+    final ex = eye.x + origin[0];
+    final ey = eye.y + origin[1];
+    final ez = eye.z + origin[2];
     final fx = forward.x, fy = forward.y, fz = forward.z;
     var top = 0;
     stack[top++] = _root;
@@ -586,7 +578,13 @@ class Bvh {
     _planes[o] = plane.normal.x;
     _planes[o + 1] = plane.normal.y;
     _planes[o + 2] = plane.normal.z;
-    _planes[o + 3] = plane.constant;
+    // A plane of the caller is stated from the draw origin and the boxes are
+    // not, so the constant moves by the origin along the normal.
+    _planes[o + 3] =
+        plane.constant -
+        (plane.normal.x * origin[0] +
+            plane.normal.y * origin[1] +
+            plane.normal.z * origin[2]);
   }
 
   /// Calls [visit] once for every item whose world AABB intersects [box].
@@ -595,8 +593,12 @@ class Bvh {
   /// so each item collects only the lights near it.
   void queryAabb(Aabb3 box, void Function(RenderItem) visit) {
     if (_root < 0) return;
-    final minX = box.min.x, minY = box.min.y, minZ = box.min.z;
-    final maxX = box.max.x, maxY = box.max.y, maxZ = box.max.z;
+    final minX = box.min.x + origin[0];
+    final minY = box.min.y + origin[1];
+    final minZ = box.min.z + origin[2];
+    final maxX = box.max.x + origin[0];
+    final maxY = box.max.y + origin[1];
+    final maxZ = box.max.z + origin[2];
     final bounds = _bounds;
     final children = _children;
     var stack = _stack;
@@ -650,7 +652,7 @@ class Bvh {
     for (var at = listed - 1; at >= 0; at--) {
       final node = order[at];
       if (children[node * 2] < 0) {
-        _setLeafBounds(node, _items[node]!.worldBounds!);
+        _items[node]!.writeTreeBounds(_bounds, node * 6);
       } else {
         _joinChildren(node);
       }
