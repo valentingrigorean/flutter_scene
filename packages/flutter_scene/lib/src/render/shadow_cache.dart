@@ -4,6 +4,7 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/light.dart';
+import 'package:flutter_scene/src/render/render_stats.dart';
 
 /// One cascade's cached static-caster shadow tile: the persistent texture the
 /// static geometry was rendered into, the light-space matrix it was rendered
@@ -29,9 +30,20 @@ class ShadowCascadeCacheEntry {
   /// Side length of the slack-enlarged orthographic box in world units.
   double boxSize = 0.0;
 
-  /// The static-content signature the tile was rendered with; a mismatch
-  /// marks the tile stale (refreshed amortized).
-  int renderedSignature = 0;
+  /// The signature of the static casters inside the tile's box when it was
+  /// rendered, [DirectionalShadowCache.noCasters] for a tile that holds none;
+  /// a mismatch with [signature] marks the tile stale (refreshed amortized).
+  int renderedSignature = DirectionalShadowCache.noCasters;
+
+  /// The signature of the static casters inside the tile's box now, as of
+  /// [signatureRevision].
+  int signature = DirectionalShadowCache.noCasters;
+
+  /// The static content revision [signature] was read at.
+  int signatureRevision = -1;
+
+  /// The frame the tile last rendered in.
+  int renderedFrame = 0;
 
   /// The normalized light direction the tile was rendered with; a mismatch
   /// marks the tile stale (refreshed amortized).
@@ -39,14 +51,19 @@ class ShadowCascadeCacheEntry {
 
   /// Whether the tile has ever been rendered with the current parameters.
   bool hasContent = false;
+
+  /// Whether the tile's last render left out casters whose pipelines were
+  /// still building, so the next frame renders it again.
+  bool incomplete = false;
 }
 
 /// A static tile the shadow pass must (re)render this frame.
 class ShadowTileRefresh {
-  ShadowTileRefresh(this.cascadeIndex, this.entry);
+  ShadowTileRefresh(this.cascadeIndex, this.entry, this.reason);
 
   final int cascadeIndex;
   final ShadowCascadeCacheEntry entry;
+  final ShadowTileRefreshReason reason;
 }
 
 /// One frame's cached-shadow decisions: the cascades every consumer samples
@@ -79,11 +96,15 @@ class ShadowCachePlan {
 /// camera can move and turn inside the slack before a cascade must
 /// re-render, and their radius snaps up to a power of [radiusStep], so a zoom
 /// that changes every cascade's radius each frame keeps a tile until the
-/// ideal radius leaves that step. Stale tiles (a static caster appeared or vanished, or the light
-/// turned by up to [maxDirectionLagDegrees]) refresh at most
-/// [maxAmortizedRefreshes] per frame, nearest cascade first, so streaming
-/// worlds and a stepped sun never pay for every cascade at once. A stale tile
-/// keeps sampling through the matrix it was rendered with until it refreshes.
+/// ideal radius leaves that step. Stale tiles (a static caster appeared,
+/// changed or vanished inside the tile's box, or the light turned by up to
+/// [maxDirectionLagDegrees]) refresh at most [maxAmortizedRefreshes] per
+/// frame, nearest cascade first, so streaming worlds and a stepped sun never
+/// pay for every cascade at once. A stale tile keeps sampling through the
+/// matrix it was rendered with until it refreshes. A caster outside a tile's
+/// box leaves the tile as it is, and a tile that holds no caster moves to a
+/// box that holds none without a render, since its cleared content is the
+/// same in both.
 /// [DirectionalLight.invalidateStaticShadows] re-renders every tile in the
 /// next frame instead, into the textures the tiles already hold.
 class DirectionalShadowCache {
@@ -119,6 +140,9 @@ class DirectionalShadowCache {
     final step = (math.log(radius) / _logRadiusStep - 1e-9).ceil();
     return math.max(radius, math.pow(radiusStep, step).toDouble());
   }
+
+  /// The signature of a box that holds no static caster.
+  static const int noCasters = 0;
 
   /// Upper bound on stale-but-usable tile refreshes per frame.
   static const int maxAmortizedRefreshes = 1;
@@ -157,16 +181,25 @@ class DirectionalShadowCache {
   /// Decides which tiles to re-render for this frame's [idealCascades] and
   /// returns the effective cascades to sample with.
   ///
-  /// [staticSignature] fingerprints the static caster set; any change marks
-  /// every tile stale, as does a small turn of [lightDirection]. A larger turn
-  /// or a change to the shadow parameters re-renders every tile this frame,
+  /// [staticSignatureIn] fingerprints the static casters a tile rendered with
+  /// the given world to light-clip matrix draws, [noCasters] when it draws
+  /// none; the plan asks again for a tile's box only when [contentRevision]
+  /// changed or the box moved. A change inside a tile's box marks that tile
+  /// stale, as does a small turn of [lightDirection]. A larger turn or a
+  /// change to the shadow parameters re-renders every tile this frame,
   /// keeping the tile textures unless the resolution changed, and so does a
-  /// new [DirectionalLight.staticShadowRevision].
+  /// new [DirectionalLight.staticShadowRevision]. A tile that holds no caster
+  /// and whose next box holds none takes the box without a render. [frame]
+  /// counts the frames the scene renders: a tile stale for a caster change
+  /// waits until [DirectionalLight.staticShadowCasterRefreshInterval] frames
+  /// have passed since its last render.
   ShadowCachePlan plan({
     required DirectionalLight light,
     required Vector3 lightDirection,
     required List<ShadowCascade> idealCascades,
-    required int staticSignature,
+    required int contentRevision,
+    required int Function(Matrix4 lightSpaceMatrix) staticSignatureIn,
+    int frame = 0,
   }) {
     final resolution = light.shadowMapResolution;
     final dir = lightDirection.normalized();
@@ -189,6 +222,7 @@ class DirectionalShadowCache {
       }
       for (final entry in _entries) {
         entry.hasContent = false;
+        entry.incomplete = false;
       }
       while (_entries.length < idealCascades.length) {
         _entries.add(ShadowCascadeCacheEntry());
@@ -212,40 +246,67 @@ class DirectionalShadowCache {
       // slack box and is no smaller than the radius step below the tile's,
       // under which the tile wastes more resolution than a step.
       final directionCos = entry.direction.dot(dir);
-      final fits =
-          entry.hasContent &&
-          directionCos >= _minDirectionLagCos &&
-          ideal.radius >=
-              entry.radius / radiusStep * (1.0 - _radiusTolerance) &&
-          (center - entry.center).length + ideal.radius <=
-              entry.radius * slackFactor;
-      final stale =
-          entry.renderedSignature != staticSignature ||
-          entry.direction.distanceToSquared(dir) > 1e-10;
-      var refresh = false;
-      if (!fits || invalidated) {
-        // Unusable (first render, coverage drift, a large turn, a parameter
-        // change, or an invalidated light): must render this frame or the
-        // cascade has no shadows.
-        refresh = true;
-      } else if (stale && amortized < maxAmortizedRefreshes) {
-        // Usable but stale: refresh a bounded number per frame,
-        // nearest cascade first (this loop runs near-to-far).
-        refresh = true;
-        amortized++;
+      if (entry.hasContent && entry.signatureRevision != contentRevision) {
+        entry
+          ..signature = staticSignatureIn(entry.matrix)
+          ..signatureRevision = contentRevision;
       }
-      if (refresh) {
+      final signatureChanged = entry.renderedSignature != entry.signature;
+      final empty = entry.hasContent && entry.renderedSignature == noCasters;
+      var amortizes = false;
+      ShadowTileRefreshReason? reason;
+      if (!entry.hasContent) {
+        reason = entry.incomplete ? .incomplete : .uncached;
+      } else if (invalidated) {
+        reason = .invalidated;
+      } else if (directionCos < _minDirectionLagCos) {
+        reason = .turned;
+      } else if (ideal.radius <
+          entry.radius / radiusStep * (1.0 - _radiusTolerance)) {
+        reason = .radius;
+      } else if ((center - entry.center).length + ideal.radius >
+          entry.radius * slackFactor) {
+        reason = ideal.radius > entry.radius ? .radius : .drift;
+      } else if (signatureChanged ||
+          entry.direction.distanceToSquared(dir) > 1e-10) {
+        // Usable but stale: refresh a bounded number per frame, nearest
+        // cascade first (this loop runs near-to-far). An empty tile may
+        // still move for free.
+        amortizes = true;
+        final waits =
+            signatureChanged &&
+            frame - entry.renderedFrame <
+                light.staticShadowCasterRefreshInterval;
+        if (!waits && (amortized < maxAmortizedRefreshes || empty)) {
+          reason = signatureChanged ? .casters : .lightStep;
+        }
+      }
+      if (reason != null) {
         final radius = snappedRadius(ideal.radius);
-        entry.center.setFrom(center);
-        entry.radius = radius;
-        entry.boxSize = radius * slackFactor * 2.0;
-        entry.matrix.setFrom(
-          light.cascadeLightSpaceMatrix(dir, center, radius * slackFactor),
+        final matrix = light.cascadeLightSpaceMatrix(
+          dir,
+          center,
+          radius * slackFactor,
         );
-        entry.renderedSignature = staticSignature;
-        entry.direction.setFrom(dir);
-        entry.hasContent = true;
-        refreshes.add(ShadowTileRefresh(i, entry));
+        final signature = staticSignatureIn(matrix);
+        final renders = !(empty && signature == noCasters);
+        if (!renders || !amortizes || amortized < maxAmortizedRefreshes) {
+          if (renders && amortizes) amortized++;
+          entry.center.setFrom(center);
+          entry.radius = radius;
+          entry.boxSize = radius * slackFactor * 2.0;
+          entry.matrix.setFrom(matrix);
+          entry.signature = signature;
+          entry.signatureRevision = contentRevision;
+          entry.renderedSignature = signature;
+          entry.direction.setFrom(dir);
+          entry.hasContent = true;
+          entry.incomplete = false;
+          if (renders) {
+            entry.renderedFrame = frame;
+            refreshes.add(ShadowTileRefresh(i, entry, reason));
+          }
+        }
       }
       effective.add(
         ShadowCascade(

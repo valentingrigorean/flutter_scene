@@ -303,7 +303,8 @@ export 'src/render/render_stats.dart'
         RenderFrameStats,
         RenderPassStats,
         RenderStats,
-        RenderViewStats;
+        RenderViewStats,
+        ShadowTileRefreshReason;
 export 'src/shader_reflection/shader_diagnostics.dart'
     show ShaderCompileDiagnostic, parseShaderCompileErrors, shaderSourceWindow;
 export 'src/shader_reflection/shader_reflection.dart'

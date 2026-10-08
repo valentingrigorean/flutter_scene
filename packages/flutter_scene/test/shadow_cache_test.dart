@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
-import 'package:flutter_scene/scene.dart' show PerspectiveCamera;
+import 'package:flutter_scene/scene.dart'
+    show PerspectiveCamera, ShadowTileRefreshReason;
 import 'package:flutter_test/flutter_test.dart';
 // ignore: implementation_imports
 import 'package:flutter_scene/src/light.dart';
@@ -41,8 +42,113 @@ void main() {
         light: light,
         lightDirection: light.direction,
         idealCascades: ideal,
-        staticSignature: signature,
+        contentRevision: signature,
+        staticSignatureIn: (_) => signature,
       );
+
+  // Plans against point casters: a tile's signature covers the casters
+  // inside the box its matrix draws.
+  ShadowCachePlan planOver(
+    List<ShadowCascade> ideal,
+    List<Vector3> casters, {
+    required int revision,
+  }) => cache.plan(
+    light: light,
+    lightDirection: light.direction,
+    idealCascades: ideal,
+    contentRevision: revision,
+    staticSignatureIn: (matrix) {
+      var signature = DirectionalShadowCache.noCasters;
+      for (final (index, caster) in casters.indexed) {
+        final clip = matrix.transformed3(caster);
+        if (clip.x.abs() <= 1 && clip.y.abs() <= 1 && clip.z.abs() <= 1) {
+          signature += 1 << index;
+        }
+      }
+      return signature;
+    },
+  );
+
+  test('a caster that arrives outside a tile\'s box leaves the tile, and one '
+      'inside a box refreshes that tile alone', () {
+    final near = Vector3(0, 0, 5);
+    expect(planOver(idealCascades(), [near], revision: 1).refreshes.length, 2);
+
+    final outside = Vector3(500, 0, 0);
+    expect(
+      planOver(idealCascades(), [near, outside], revision: 2).refreshes,
+      isEmpty,
+    );
+
+    // Inside the far cascade's box and outside the near one's.
+    final far = Vector3(0, 0, 40);
+    final arrived = planOver(idealCascades(), [
+      near,
+      outside,
+      far,
+    ], revision: 3);
+    expect(arrived.refreshes.single.cascadeIndex, 1);
+    expect(arrived.refreshes.single.reason, ShadowTileRefreshReason.casters);
+    expect(
+      planOver(idealCascades(), [near, outside, far], revision: 3).refreshes,
+      isEmpty,
+    );
+  });
+
+  test('a tile stale for a caster change waits for the light\'s refresh '
+      'interval since its last render, and an invalidation does not', () {
+    light.staticShadowCasterRefreshInterval = 30;
+    ShadowCachePlan at(int frame, int signature) => cache.plan(
+      light: light,
+      lightDirection: light.direction,
+      idealCascades: idealCascades(),
+      contentRevision: signature,
+      staticSignatureIn: (_) => signature,
+      frame: frame,
+    );
+    expect(at(100, 1).refreshes.length, 2);
+    for (var frame = 101; frame < 130; frame++) {
+      expect(at(frame, frame).refreshes, isEmpty, reason: 'frame $frame');
+    }
+    expect(at(130, 130).refreshes.single.cascadeIndex, 0);
+    expect(at(131, 130).refreshes.single.cascadeIndex, 1);
+    expect(at(132, 130).refreshes, isEmpty);
+    expect(at(140, 140).refreshes, isEmpty);
+    light.invalidateStaticShadows();
+    expect(at(141, 140).refreshes.length, 2);
+  });
+
+  test('a tile that holds no caster follows its cascade to a box that holds '
+      'none without a render, and renders once a caster stands in its box', () {
+    expect(planOver(idealCascades(), [], revision: 1).refreshes.length, 2);
+
+    final offset = Vector3(40, 0, 0);
+    final moved = planOver(idealCascades(offset: offset), [], revision: 1);
+    expect(moved.refreshes, isEmpty);
+    for (final (index, cascade) in idealCascades(offset: offset).indexed) {
+      final effective = moved.cascades[index];
+      expect(
+        (cascade.center! - effective.center!).length + cascade.radius,
+        lessThanOrEqualTo(effective.boxSize / 2 + 1e-9),
+      );
+    }
+
+    light.invalidateStaticShadows();
+    expect(
+      planOver(idealCascades(offset: offset), [], revision: 1).refreshes,
+      isEmpty,
+    );
+
+    final arrived = planOver(idealCascades(offset: offset), [
+      Vector3(40, 0, 5),
+    ], revision: 2);
+    expect(arrived.refreshes, isNotEmpty);
+    expect(arrived.refreshes.first.cascadeIndex, 0);
+
+    // A tile that holds a caster renders to follow its cascade.
+    final back = planOver(idealCascades(), [Vector3(40, 0, 5)], revision: 2);
+    expect(back.refreshes.map((refresh) => refresh.cascadeIndex), contains(0));
+  });
 
   test('first frame refreshes every cascade', () {
     final p = plan(idealCascades());

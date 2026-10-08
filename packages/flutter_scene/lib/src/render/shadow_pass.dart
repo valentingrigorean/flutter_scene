@@ -484,7 +484,11 @@ class ShadowPass extends RenderGraphPass {
       rendererSubmissions.submit(commandBuffer);
       // A sliced warm-up skipped some of its casters, so render it again on
       // the next frame rather than reuse it.
-      if (deferredPipelineBuilds > deferred) entry.hasContent = false;
+      if (deferredPipelineBuilds > deferred) {
+        entry
+          ..hasContent = false
+          ..incomplete = true;
+      }
       context.blackboard.set(
         staticShadowTileBlackboardKey(refresh.cascadeIndex),
         entry.tile,
