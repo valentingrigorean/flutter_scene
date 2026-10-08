@@ -3912,6 +3912,11 @@ base class Scene implements SceneGraph {
             staticSignature: staticShadowSignature,
           );
       effectiveCascades = shadowCachePlan.cascades;
+      if (shadowCachePlan.refreshes.isNotEmpty) {
+        viewStats?.shadowTileRefreshes = [
+          for (final refresh in shadowCachePlan.refreshes) refresh.reason,
+        ];
+      }
     } else {
       _directionalShadowCache = null;
     }

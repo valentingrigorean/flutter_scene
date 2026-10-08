@@ -160,6 +160,37 @@ class RenderPassStats {
   };
 }
 
+/// Why a static shadow tile re-renders in a frame.
+/// {@category Debugging and profiling}
+enum ShadowTileRefreshReason {
+  /// The tile holds no content for the light's shadow parameters: its first
+  /// render, or the resolution, caster faces, caster channels or cascade
+  /// count changed.
+  uncached,
+
+  /// The tile's last render skipped casters whose pipelines were building.
+  incomplete,
+
+  /// `DirectionalLight.invalidateStaticShadows` was called.
+  invalidated,
+
+  /// The light turned past `DirectionalShadowCache.maxDirectionLagDegrees`.
+  turned,
+
+  /// The ideal radius left the tile's radius step.
+  radius,
+
+  /// The ideal sphere moved out of the tile's slack box.
+  drift,
+
+  /// The static caster set changed (amortized).
+  casters,
+
+  /// The light turned by less than
+  /// `DirectionalShadowCache.maxDirectionLagDegrees` (amortized).
+  lightStep,
+}
+
 /// One rendered view: a screen view (by index) or a render texture.
 /// {@category Debugging and profiling}
 class RenderViewStats {
@@ -184,6 +215,10 @@ class RenderViewStats {
   final List<RenderPassStats> passes = [];
   final RenderCounters counters = RenderCounters();
 
+  /// Why each static shadow tile of the directional light re-rendered in
+  /// this view, in cascade order; empty when every tile was reused.
+  List<ShadowTileRefreshReason> shadowTileRefreshes = const [];
+
   Map<String, Object?> toJson() => {
     'viewIndex': viewIndex,
     'width': width,
@@ -191,6 +226,10 @@ class RenderViewStats {
     'offscreen': offscreen,
     'cpuMicros': cpuMicros,
     'counters': counters.toJson(),
+    if (shadowTileRefreshes.isNotEmpty)
+      'shadowTileRefreshes': [
+        for (final reason in shadowTileRefreshes) reason.name,
+      ],
     'passes': [for (final pass in passes) pass.toJson()],
   };
 }

@@ -4,6 +4,7 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/light.dart';
+import 'package:flutter_scene/src/render/render_stats.dart';
 
 /// One cascade's cached static-caster shadow tile: the persistent texture the
 /// static geometry was rendered into, the light-space matrix it was rendered
@@ -39,14 +40,19 @@ class ShadowCascadeCacheEntry {
 
   /// Whether the tile has ever been rendered with the current parameters.
   bool hasContent = false;
+
+  /// Whether the tile's last render left out casters whose pipelines were
+  /// still building, so the next frame renders it again.
+  bool incomplete = false;
 }
 
 /// A static tile the shadow pass must (re)render this frame.
 class ShadowTileRefresh {
-  ShadowTileRefresh(this.cascadeIndex, this.entry);
+  ShadowTileRefresh(this.cascadeIndex, this.entry, this.reason);
 
   final int cascadeIndex;
   final ShadowCascadeCacheEntry entry;
+  final ShadowTileRefreshReason reason;
 }
 
 /// One frame's cached-shadow decisions: the cascades every consumer samples
@@ -189,6 +195,7 @@ class DirectionalShadowCache {
       }
       for (final entry in _entries) {
         entry.hasContent = false;
+        entry.incomplete = false;
       }
       while (_entries.length < idealCascades.length) {
         _entries.add(ShadowCascadeCacheEntry());
@@ -212,28 +219,29 @@ class DirectionalShadowCache {
       // slack box and is no smaller than the radius step below the tile's,
       // under which the tile wastes more resolution than a step.
       final directionCos = entry.direction.dot(dir);
-      final fits =
-          entry.hasContent &&
-          directionCos >= _minDirectionLagCos &&
-          ideal.radius >=
-              entry.radius / radiusStep * (1.0 - _radiusTolerance) &&
-          (center - entry.center).length + ideal.radius <=
-              entry.radius * slackFactor;
-      final stale =
-          entry.renderedSignature != staticSignature ||
-          entry.direction.distanceToSquared(dir) > 1e-10;
-      var refresh = false;
-      if (!fits || invalidated) {
-        // Unusable (first render, coverage drift, a large turn, a parameter
-        // change, or an invalidated light): must render this frame or the
-        // cascade has no shadows.
-        refresh = true;
-      } else if (stale && amortized < maxAmortizedRefreshes) {
-        // Usable but stale: refresh a bounded number per frame,
-        // nearest cascade first (this loop runs near-to-far).
-        refresh = true;
+      final signatureChanged = entry.renderedSignature != staticSignature;
+      ShadowTileRefreshReason? reason;
+      if (!entry.hasContent) {
+        reason = entry.incomplete ? .incomplete : .uncached;
+      } else if (invalidated) {
+        reason = .invalidated;
+      } else if (directionCos < _minDirectionLagCos) {
+        reason = .turned;
+      } else if (ideal.radius <
+          entry.radius / radiusStep * (1.0 - _radiusTolerance)) {
+        reason = .radius;
+      } else if ((center - entry.center).length + ideal.radius >
+          entry.radius * slackFactor) {
+        reason = ideal.radius > entry.radius ? .radius : .drift;
+      } else if ((signatureChanged ||
+              entry.direction.distanceToSquared(dir) > 1e-10) &&
+          amortized < maxAmortizedRefreshes) {
+        // Usable but stale: refresh a bounded number per frame, nearest
+        // cascade first (this loop runs near-to-far).
+        reason = signatureChanged ? .casters : .lightStep;
         amortized++;
       }
+      final refresh = reason != null;
       if (refresh) {
         final radius = snappedRadius(ideal.radius);
         entry.center.setFrom(center);
@@ -245,7 +253,8 @@ class DirectionalShadowCache {
         entry.renderedSignature = staticSignature;
         entry.direction.setFrom(dir);
         entry.hasContent = true;
-        refreshes.add(ShadowTileRefresh(i, entry));
+        entry.incomplete = false;
+        refreshes.add(ShadowTileRefresh(i, entry, reason));
       }
       effective.add(
         ShadowCascade(
