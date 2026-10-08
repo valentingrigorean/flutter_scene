@@ -118,6 +118,7 @@ import 'render/shadow_encoder.dart'
     show
         ShadowCasterFilter,
         ShadowEncoder,
+        shadowCasterAccepted,
         shadowCasterDraws,
         shadowCasterPipelineInputs;
 import 'render/shadow_pass.dart';
@@ -216,7 +217,7 @@ base class Scene implements SceneGraph {
   int _materialInputMaterialRevision = -1;
   int _renderMetadataStaticShadowRevision = -1;
   Set<RenderInput> _cachedWholeSceneMaterialInputs = const {};
-  int _cachedStaticShadowSignature = 0;
+  int _staticShadowContentRevision = 0;
   bool _cachedHasStaticShadowCasters = false;
 
   Scene() {
@@ -2623,8 +2624,9 @@ base class Scene implements SceneGraph {
     );
   }
 
-  // Refreshes the fingerprint of the static shadow casters when the render
-  // scene changed since the last refresh, and returns whether any casts.
+  // Refreshes whether any static shadow caster is visible, and the revision
+  // of the static shadow content, when the render scene changed since the
+  // last refresh, and returns whether any casts.
   bool _refreshStaticShadowMetadata() {
     final structureRevision = renderScene.structureRevision;
     final staticShadowRevision = renderScene.staticShadowRevision;
@@ -2632,36 +2634,54 @@ base class Scene implements SceneGraph {
         _renderMetadataStructureRevision != structureRevision ||
         _renderMetadataStaticShadowRevision != staticShadowRevision;
     if (refreshStaticShadows) {
-      var staticShadowSignature = _cachedStaticShadowSignature;
-      var hasStaticShadowCasters = _cachedHasStaticShadowCasters;
-      staticShadowSignature = 0;
-      hasStaticShadowCasters = false;
+      var hasStaticShadowCasters = false;
       for (final item in renderScene.items) {
         if (item.shadowStatic && item.castsShadows && item.visible) {
           hasStaticShadowCasters = true;
-          final t = item.worldTransform.storage;
-          staticShadowSignature =
-              0x3fffffff &
-              (staticShadowSignature * 31 +
-                  identityHashCode(item.geometry) +
-                  identityHashCode(item.instanceTransforms) +
-                  // Material identity matters to the depth pass (alpha-masked
-                  // casters render through the masked depth shader), so a
-                  // swapped material must invalidate cached static tiles.
-                  identityHashCode(item.material) +
-                  // A caster's channels decide which lights it casts into.
-                  item.lightChannelMask +
-                  t[12].hashCode * 3 +
-                  t[13].hashCode * 7 +
-                  t[14].hashCode * 13);
+          break;
         }
       }
-      _cachedStaticShadowSignature = staticShadowSignature;
       _cachedHasStaticShadowCasters = hasStaticShadowCasters;
+      _staticShadowContentRevision++;
       _renderMetadataStaticShadowRevision = staticShadowRevision;
       _renderMetadataStructureRevision = structureRevision;
     }
     return _cachedHasStaticShadowCasters;
+  }
+
+  // Fingerprints the static shadow casters the light draws into a tile
+  // rendered with [lightSpaceMatrix]: the casters the tile's frustum culls
+  // in, as the shadow pass culls them, whatever order the cull visits them
+  // in. [DirectionalShadowCache.noCasters] when the tile draws none.
+  int _staticShadowSignatureIn(Matrix4 lightSpaceMatrix, int channelMask) {
+    var signature = 0;
+    var casts = false;
+    renderScene.cull(Frustum.matrix(lightSpaceMatrix), (item) {
+      if (!shadowCasterAccepted(
+        item,
+        ShadowCasterFilter.staticOnly,
+        channelMask,
+      )) {
+        return;
+      }
+      casts = true;
+      final t = item.worldTransform.storage;
+      signature += Object.hash(
+        identityHashCode(item.geometry),
+        identityHashCode(item.instanceTransforms),
+        // Material identity matters to the depth pass (alpha-masked casters
+        // render through the masked depth shader), so a swapped material
+        // must invalidate cached static tiles.
+        identityHashCode(item.material),
+        // A caster's channels decide which lights it casts into.
+        item.lightChannelMask,
+        t[12],
+        t[13],
+        t[14],
+      );
+    });
+    if (!casts) return DirectionalShadowCache.noCasters;
+    return 0x40000000 | (signature & 0x3fffffff);
   }
 
   List<SpotLightComponent> _visibleSpotLights() => [
@@ -3879,9 +3899,7 @@ base class Scene implements SceneGraph {
           );
 
     // The retained metadata below fingerprints static shadow casters.
-    _refreshStaticShadowMetadata();
-    final staticShadowSignature = _cachedStaticShadowSignature;
-    final hasStaticShadowCasters = _cachedHasStaticShadowCasters;
+    final hasStaticShadowCasters = _refreshStaticShadowMetadata();
     // A display-referred surface pays for an extra layer and forces the
     // scene depth to be stored, so the frame checks for one up front.
     final displayReferredActive = sceneHasDisplayReferred(renderScene);
@@ -3909,7 +3927,9 @@ base class Scene implements SceneGraph {
             light: light,
             lightDirection: lightDirection ?? light.direction,
             idealCascades: cascades,
-            staticSignature: staticShadowSignature,
+            contentRevision: _staticShadowContentRevision,
+            staticSignatureIn: (matrix) =>
+                _staticShadowSignatureIn(matrix, light.shadowCasterChannelMask),
           );
       effectiveCascades = shadowCachePlan.cascades;
       if (shadowCachePlan.refreshes.isNotEmpty) {
