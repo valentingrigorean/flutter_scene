@@ -455,6 +455,10 @@ class InstancedMesh implements MeshDrawSource {
     return held._ring == null ? held._instances.length : held._recordCount;
   }
 
+  /// A copy of the transform of the instance at [index], whichever way the
+  /// mesh holds its rows: its own list, the rows it shares or records.
+  Matrix4 instanceTransformAt(int index) => instances[index].clone();
+
   /// Adds an instance placed by [transform] and returns its index.
   ///
   /// The matrix is copied, so later mutating [transform] does not affect

@@ -1386,7 +1386,8 @@ class RenderScene {
   int _structureRevision = 0;
   int _staticShadowRevision = 0;
 
-  // Changes when the spatial structure is rebuilt or refitted.
+  // Changes when the spatial structure is built or refitted, or an item is
+  // placed in it or taken out of it.
   int _spatialRevision = 0;
 
   /// Changes when render items are added or removed.
@@ -1482,6 +1483,7 @@ class RenderScene {
 
   // Takes [item] out of the tree or of the always visible.
   void _displace(RenderItem item) {
+    _spatialRevision++;
     item._placed = false;
     _bvh.remove(item);
     final slot = item._alwaysVisibleSlot;
@@ -1497,6 +1499,7 @@ class RenderScene {
   void _place(RenderItem item) {
     if (item._placed || item.sceneSlot < 0) return;
     item._placed = true;
+    _spatialRevision++;
     if (item.frustumCulled && item.worldBounds != null) {
       _bvh.insert(item);
     } else {
