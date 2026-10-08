@@ -24,6 +24,7 @@ import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart'
     show beginRetainedInstanceFrame;
 import 'package:flutter_scene/src/render/linear_depth_probe.dart';
+import 'package:flutter_scene/src/render/stored_depth_probe.dart';
 import 'package:flutter_scene/src/render/mip_sampling_probe.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/gpu/raster_sync.dart';
@@ -574,6 +575,7 @@ base class Scene implements SceneGraph {
         // rendering unblocks (environment radiance builds consult it).
         .then((_) => probePlatformMipSampling())
         .then((_) => probeFloat32ColorTargets())
+        .then((_) => probeStoredDepthRead())
         .then((_) => _buildDefaultEnvironmentBetweenFrames())
         .then((_) {
           _readyToRender = true;
@@ -2626,6 +2628,8 @@ base class Scene implements SceneGraph {
     final customDepth =
         customNormals ||
         customInputs.contains(RenderInput.depth) ||
+        (customInputs.contains(RenderInput.depthStored) &&
+            !(storedDepthIsSampled && effectiveAa != AntiAliasingMode.msaa)) ||
         bindSceneDepth ||
         (depthOfField.enabled && !debugActive);
     final irradianceField = projectionValid && globalIllumination.enabled;
@@ -3879,12 +3883,23 @@ base class Scene implements SceneGraph {
     // everything that wants the visible surface: custom passes that read
     // depth at any stage (a water composite fogs to the nearest surface, so
     // a translucent fish must be in it) and depth of field.
+    final enableMsaa = effectiveAa == AntiAliasingMode.msaa;
+    // A pass that asks for the stored depth samples the attachment the scene
+    // pass drew with, which holds those surfaces already. Where the view
+    // cannot sample it (four samples a texel under multisampling, a device
+    // that samples no depth attachment) the linear depth stands in for it.
+    final wantStoredDepth = _viewPasses(
+      view,
+    ).any((pass) => pass.inputs.contains(RenderInput.depthStored));
+    final sampleStoredDepth =
+        wantStoredDepth && storedDepthIsSampled && !enableMsaa;
+    final linearDepthForStored = wantStoredDepth && !sampleStoredDepth;
     final patchTranslucentDepth =
         wantDof ||
+        linearDepthForStored ||
         _viewPasses(
           view,
         ).any((pass) => pass.inputs.contains(RenderInput.depth));
-    final enableMsaa = effectiveAa == AntiAliasingMode.msaa;
     final enableFxaa = effectiveAa == AntiAliasingMode.fxaa && !debugActive;
     if (effectiveAa == AntiAliasingMode.smaa) {
       _repaintWhenLoaded(SmaaPass.request());
@@ -3935,6 +3950,7 @@ base class Scene implements SceneGraph {
       customInputs.addAll(pass.inputs);
     }
     if (wantGodRays) customInputs.addAll(_godRaysPass.inputs);
+    if (linearDepthForStored) customInputs.add(RenderInput.depth);
 
     // The view culls once, here: the kept items decide which attachments the
     // frame produces, and the scene pass draws from the same list. Most
@@ -4420,6 +4436,7 @@ base class Scene implements SceneGraph {
         // Depth binding needs the prepass, which needs a valid projection.
         bindSceneDepth: bindSceneDepth && projectionValid,
         publishSceneDepth: customInputs.contains(RenderInput.depthAttachment),
+        sampleSceneDepth: sampleStoredDepth,
         time: DateTime.now().millisecondsSinceEpoch.remainder(100000) / 1000.0,
         cullingPlanes: view.cullingPlanes,
         includeOffscreen: _warmUpIncludeOffscreen,

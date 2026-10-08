@@ -83,9 +83,9 @@ class ViewportBoundCamera extends Camera {
 DepthRaster depthRasterOf(Camera camera) =>
     camera is ViewportBoundCamera ? camera.raster : DepthRaster.standard;
 
-// The projection passes drawing for [camera] into a [dimensions] target
-// rasterize with.
-Matrix4 _rasterProjectionOf(Camera camera, ui.Size dimensions) =>
+/// The projection passes drawing for [camera] into a [dimensions] target
+/// rasterize with.
+Matrix4 rasterProjectionOf(Camera camera, ui.Size dimensions) =>
     camera is ViewportBoundCamera
     ? rasterProjectionMatrix(
         camera.projection.inner,
@@ -97,12 +97,12 @@ Matrix4 _rasterProjectionOf(Camera camera, ui.Size dimensions) =>
 /// The [pixelDepthSlope] of passes drawing for [camera] into a [dimensions]
 /// target.
 double pixelDepthSlopeOf(Camera camera, ui.Size dimensions) =>
-    pixelDepthSlope(_rasterProjectionOf(camera, dimensions), dimensions.height);
+    pixelDepthSlope(rasterProjectionOf(camera, dimensions), dimensions.height);
 
 /// The [pixelWorldScale] of passes drawing for [camera] into a [dimensions]
 /// target.
 double pixelWorldScaleOf(Camera camera, ui.Size dimensions) =>
-    pixelWorldScale(_rasterProjectionOf(camera, dimensions), dimensions.height);
+    pixelWorldScale(rasterProjectionOf(camera, dimensions), dimensions.height);
 
 /// The view-projection a pass drawing for [camera] into a [dimensions] target
 /// rasterizes with.
@@ -167,3 +167,14 @@ Frustum _finitePlanes(Frustum frustum) {
   }
   return frustum;
 }
+
+/// The terms that turn a window depth `d` rasterized with [projection] into
+/// planar view depth, `(y - d * w) / (d * z - x)`: `(a, b, c, e)` where clip
+/// z is `a * depth + b` and clip w is `c * depth + e`, the depth row and the
+/// w row of a projection that maps view x and y apart from depth.
+Vector4 storedDepthTermsOf(Matrix4 projection) => Vector4(
+  projection.entry(2, 2),
+  projection.entry(2, 3),
+  projection.entry(3, 2),
+  projection.entry(3, 3),
+);
