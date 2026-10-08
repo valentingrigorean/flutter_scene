@@ -435,7 +435,10 @@ class RenderItem {
     return into;
   }
 
-  static final Matrix4 _instanceFrameScratch = Matrix4.identity();
+  // The instance frame of this item's own draws: one object per item, so a
+  // pass that keeps the frame block of the previous draw by the identity of
+  // its instance frame binds one for each anchor.
+  Matrix4? _anchorFrame;
 
   /// The previous frame's world-space transform, for motion vector rendering.
   final Matrix4 previousWorldTransform = Matrix4.identity();
@@ -599,7 +602,7 @@ class RenderItem {
     if (!anchored || drawOrigin == null) return;
     _currentDrawAnchor = anchor;
     _currentDrawOrigin = drawOrigin!.at;
-    currentDrawInstanceFrame = _instanceFrameScratch
+    currentDrawInstanceFrame = (_anchorFrame ??= Matrix4.identity())
       ..setTranslationRaw(drawShift(0), drawShift(1), drawShift(2));
   }
 
