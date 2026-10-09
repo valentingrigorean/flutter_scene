@@ -711,6 +711,34 @@ void main() {
       expect(item.worldBounds!.max.y, 1000.5);
     });
 
+    test('an instance local transform that mirrors reverses the winding of '
+        'the draw, as a mirrored node does, and a mesh of the same rows with '
+        'no mirror keeps its own', () {
+      final rows = rowsOf(3);
+      final mirrored = InstancedMesh.sharing(
+        rows,
+        geometry: geometry(),
+        material: _StubMaterial(),
+      )..instanceLocal = Matrix4.diagonal3Values(1, 1, -1);
+      final plain = InstancedMesh.sharing(
+        rows,
+        geometry: geometry(),
+        material: _StubMaterial(),
+      )..instanceLocal = Matrix4.translation(Vector3(0, 1, 0));
+      final component = InstancedMeshComponent(mirrored);
+      final item = mounted(component);
+      expect(item.windingFlipped, isTrue);
+      expect(mounted(InstancedMeshComponent(plain)).windingFlipped, isFalse);
+
+      component.node.localTransform = Matrix4.diagonal3Values(-1, 1, 1);
+      component.refreshRenderItem();
+      expect(item.windingFlipped, isFalse);
+
+      mirrored.instanceLocal = null;
+      component.refreshRenderItem();
+      expect(item.windingFlipped, isTrue);
+    });
+
     test('ranges, a band, a band field and a local transform stated on a '
         'static shadow caster each redraw the cached shadows', () {
       final mesh = InstancedMesh.sharing(

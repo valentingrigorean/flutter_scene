@@ -167,8 +167,8 @@ class InstancedMeshComponent extends Component {
     }
     if (boundsChangedByInput || recordSpaceChanged) {
       final recordsHold =
-          worldTransformVersion == _worldTransformVersion ||
-          (nodeSpace && windingWas == item.windingFlipped);
+          windingWas == item.windingFlipped &&
+          (nodeSpace || worldTransformVersion == _worldTransformVersion);
       final rows =
           recordsHold &&
               !recordSpaceChanged &&
