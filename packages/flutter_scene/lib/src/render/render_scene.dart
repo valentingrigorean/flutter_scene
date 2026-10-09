@@ -254,10 +254,14 @@ class RenderItem {
   /// Returns the winding parity for [drawnGeometry].
   ///
   /// A selected level of detail can use a different source convention from
-  /// the item's base geometry.
+  /// the item's base geometry. The transform a vertex of node-space instance
+  /// records takes before its record (`InstancedMesh.instanceLocal`) counts
+  /// with the node's: a part an imported model mirrors under its root draws
+  /// its front faces whether the model is one node or the rows of a batch.
   @internal
   bool windingFor(Geometry drawnGeometry) =>
-      nodeWindingFlipped != drawnGeometry.sourceWindingFlipped;
+      (nodeWindingFlipped != drawnGeometry.sourceWindingFlipped) !=
+      (nodeSpaceInstances && (instanceSource?.localMirrored ?? false));
 
   /// Mirrors the owning node's `shadowStatic` promise, refreshed each frame.
   /// Static casters render into cached shadow tiles; dynamic casters render

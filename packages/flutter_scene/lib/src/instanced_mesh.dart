@@ -123,10 +123,17 @@ class InstancedMesh implements MeshDrawSource {
   Matrix4? _instanceLocal;
   set instanceLocal(Matrix4? value) {
     _instanceLocal = value;
+    _localMirrored = value != null && value.determinant() < 0;
     _spunLocal = _spunLocalOf(value, _spin);
     _boundsRevision = -1;
     _drawStateChanged();
   }
+
+  /// Whether [instanceLocal] mirrors, which reverses the winding of every row
+  /// this mesh draws whatever its records state.
+  @internal
+  bool get localMirrored => _localMirrored;
+  bool _localMirrored = false;
 
   /// The transform the vertex stage applies before a row's record and the
   /// turns of [spin]: [instanceLocal], taken into the spin's space when it
