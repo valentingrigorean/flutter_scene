@@ -90,7 +90,16 @@ void main() {
   mat4 node_record =
       frame_info.instance_frame * mat4(model_transform_0, model_transform_1,
                                        model_transform_2, model_transform_3);
-  if (!InstanceBandHolds(node_record, model_transform_3.xyz)) {
+  // A material whose Vertex() draws a row away from its record defines
+  // INSTANCE_BAND_OFFSET, the world-space offset to where the row is drawn,
+  // so the band tests the row there.
+#ifdef INSTANCE_BAND_OFFSET
+  mat4 band_record = node_record;
+  band_record[3].xyz += INSTANCE_BAND_OFFSET;
+#else
+#define band_record node_record
+#endif
+  if (!InstanceBandHolds(band_record, model_transform_3.xyz)) {
     // Outside the clip volume, so the row rasterizes no fragment.
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;

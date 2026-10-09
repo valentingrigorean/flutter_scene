@@ -1,6 +1,8 @@
 // InstanceBand: the per-row test a draw of an instanced mesh keeps rows by.
 // The Dart test mirrors the vertex stage's (shaders/instance_band.glsl).
 
+import 'dart:io';
+
 import 'package:flutter_scene/scene.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
@@ -77,6 +79,27 @@ void main() {
       }
       expect(kept, inInclusiveRange(400, 600), reason: 'base $base');
       expect(seen.length, greaterThan(1500), reason: 'base $base');
+    }
+  });
+
+  test('the vertex stage tests the band where a material draws the row: the '
+      'record moved by the offset the material defines', () {
+    for (final body in [
+      'flutter_scene_unskinned_body.glsl',
+      'flutter_scene_unskinned_depth_body.glsl',
+    ]) {
+      final source = File('shaders/$body').readAsStringSync();
+      final hook = source.indexOf('#ifdef INSTANCE_BAND_OFFSET');
+      final test = source.indexOf('InstanceBandHolds(band_record,');
+      expect(hook, greaterThan(0), reason: body);
+      expect(test, greaterThan(hook), reason: body);
+      expect(
+        source,
+        contains('band_record[3].xyz += INSTANCE_BAND_OFFSET;'),
+        reason: body,
+      );
+      expect(source, contains('#define band_record node_record'), reason: body);
+      expect(source, isNot(contains('InstanceBandHolds(node_record,')));
     }
   });
 }
