@@ -391,10 +391,14 @@ highp vec3 EvaluateAnalyticLight(MaterialInputs material, vec3 light_vector,
 // The daylight (x) and night (y) shares of this fragment under the
 // directional light's SunHorizon: the sun's elevation above the fragment's own
 // horizon, whose up runs from the sphere's center through the fragment, over
-// the twilight angle. Without a horizon the fragment is in full daylight and no
-// night, (1, 0), which leaves every term below as it was.
-vec2 SunHorizonShares() {
-  vec2 shares = vec2(1.0, 0.0);
+// the twilight angle. The third share is how much of the light's
+// shadow_ambient_strength the fragment takes: none up to the twilight angle,
+// where the sun's own light is still rising and a shadow removes that light
+// alone, and all of it from twice that angle. Without a horizon the fragment is
+// in full daylight and no night, (1, 0, 1), which leaves every term below as it
+// was.
+vec3 SunHorizonShares() {
+  vec3 shares = vec3(1.0, 0.0, 1.0);
 #ifndef FLUTTER_SCENE_NO_DIRECTIONAL_LIGHT
   if (frag_info.has_directional_light > 0.5 &&
       frag_info.sun_horizon.w > 0.0) {
@@ -402,7 +406,8 @@ vec2 SunHorizonShares() {
     highp vec3 toward_sun =
         -normalize(frag_info.directional_light_direction.xyz);
     highp float elevation = asin(clamp(dot(up, toward_sun), -1.0, 1.0));
-    shares = clamp(vec2(elevation, -elevation) / frag_info.sun_horizon.w,
+    highp float over_twilight = elevation / frag_info.sun_horizon.w;
+    shares = clamp(vec3(over_twilight, -over_twilight, over_twilight - 1.0),
                    0.0, 1.0);
   }
 #endif
@@ -413,7 +418,7 @@ highp vec4 EvaluateLighting(MaterialInputs material) {
   ApplyClipVolume();
   // The sun and the image-based ambient at this fragment's own sun elevation
   // (SunHorizonShares); the scene-wide values when the light has no horizon.
-  vec2 horizon_shares = SunHorizonShares();
+  vec3 horizon_shares = SunHorizonShares();
   float lit_environment_intensity =
       frag_info.environment_intensity *
       mix(1.0, frag_info.sun_horizon_light.a, horizon_shares.y);
@@ -795,7 +800,7 @@ highp vec4 EvaluateLighting(MaterialInputs material) {
   // contains the sun's energy, so the ambient alone otherwise reads as fully
   // lit inside shadows.
   float ambient_shadow = mix(1.0, sun_visibility,
-                             frag_info.radiance_blend.y * horizon_shares.x);
+                             frag_info.radiance_blend.y * horizon_shares.z);
 
   highp vec3 ambient =
       (indirect_diffuse * diffuse_occlusion +

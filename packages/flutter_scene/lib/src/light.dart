@@ -112,8 +112,9 @@ enum DirectionalShadowFilter {
 /// The light's radiance is multiplied by the daylight share and tinted by
 /// `mix(lowSunColor, 1, daylight)`; the image-based ambient is multiplied by
 /// `mix(1, nightEnvironmentScale, night)`; and the light's
-/// [DirectionalLight.shadowAmbientStrength] by the daylight share, so the
-/// sun's occlusion of the ambient fades out as the sun sets.
+/// [DirectionalLight.shadowAmbientStrength] by `clamp(e / twilight - 1, 0, 1)`,
+/// so a shadow removes the sun's light alone while that light still rises, up
+/// to [twilight], and darkens the ambient in full from twice that elevation.
 /// {@category Lighting and environment}
 class SunHorizon {
   /// Creates a [SunHorizon] around [center].
