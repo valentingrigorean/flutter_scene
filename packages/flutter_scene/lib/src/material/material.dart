@@ -662,14 +662,13 @@ abstract class Material {
   /// missing from the prepass and screen-space effects sample the wrong
   /// (farther) surface where a front face is actually drawn.
   ///
-  /// Double-sided is honored only for opaque materials. A translucent material
-  /// is always back-face culled: drawing both sides would blend the overlapping
-  /// front and back surfaces in triangle-index order rather than depth order
-  /// (the translucent pass has no per-fragment sorting), which seams thick
-  /// double-sided glass.
+  /// A double-sided material draws both faces, opaque or translucent. The
+  /// translucent pass draws a double-sided mesh twice at its place in the
+  /// back-to-front order, its back faces and then its front faces, so the
+  /// near side blends over the far side rather than in triangle-index order.
   @internal
   gpu.CullMode get renderCullMode =>
-      (!doubleSided || !isOpaque()) ? gpu.CullMode.backFace : gpu.CullMode.none;
+      doubleSided ? gpu.CullMode.none : gpu.CullMode.backFace;
 
   /// Whether this translucent material draws in the opaque pass, at its
   /// node's [Node.renderOrder] among the opaque draws, rather than in the

@@ -1227,6 +1227,9 @@ base class SceneEncoder {
   gpu.RenderPipeline? _boundPipeline;
   Material? _boundMaterial;
   bool _boundMaterialFallback = false;
+  gpu.CullMode? _boundMaterialFaceCull;
+  // The faces one draw of a blended double-sided record keeps.
+  gpu.CullMode? _faceCull;
   gpu.Shader? _boundMaterialVertex;
   gpu.Shader? _boundFrameInfoShader;
   Matrix4? _boundFrameInfoFrame;
@@ -1786,6 +1789,7 @@ base class SceneEncoder {
     if (identical(_boundMaterial, material) &&
         identical(_boundMaterialVertex, materialVertex) &&
         _boundMaterialFallback == fallback &&
+        _boundMaterialFaceCull == _faceCull &&
         _boundMaterialFade == fade &&
         _boundMaterialLightOffset == lightOffset &&
         _boundMaterialLightCount == lightCount &&
@@ -1803,6 +1807,9 @@ base class SceneEncoder {
       material.lodFade = fade;
       material.bind(_renderPass, _transientsBuffer, _lighting);
     }
+    final faceCull = _faceCull;
+    if (faceCull != null) _renderPass.setCullMode(faceCull);
+    _boundMaterialFaceCull = faceCull;
     _boundWindingOrder = null;
     if (materialVertex != null) {
       material.bindVertexStage(_renderPass, materialVertex, _transientsBuffer);
@@ -2707,6 +2714,51 @@ base class SceneEncoder {
     );
   }
 
+  /// Encodes a blended [record]. A double-sided material that culls no face
+  /// draws its back faces and then its front faces, so the near side of the
+  /// mesh blends over its far side.
+  void _encodeBlended(_TranslucentRecord record) {
+    if (!record.material.doubleSided ||
+        record.material.renderCullMode != gpu.CullMode.none) {
+      _encodeBlendedFaces(record);
+      return;
+    }
+    try {
+      _faceCull = gpu.CullMode.frontFace;
+      _encodeBlendedFaces(record);
+      _faceCull = gpu.CullMode.backFace;
+      _encodeBlendedFaces(record);
+    } finally {
+      _faceCull = null;
+    }
+  }
+
+  void _encodeBlendedFaces(_TranslucentRecord record) {
+    if (record.item.instanceTransforms != null) {
+      _encodeInstanced(
+        record.pipeline,
+        record.geometry,
+        record.material,
+        record.item,
+        record.windingFlipped,
+        record.fade,
+        sortBackToFrontFrom: record.item.sortTransparentInstances
+            ? _cameraPosition
+            : null,
+      );
+    } else {
+      _encode(
+        record.pipeline,
+        record.worldTransform,
+        record.geometry,
+        record.material,
+        record.windingFlipped,
+        record.fade,
+        item: record.item,
+      );
+    }
+  }
+
   void _flushTranslucentThrough(int end, {gpu.RenderPass? translucentPass}) {
     _prepareTranslucent();
     if (_translucentCursor >= _translucentRecords.length) return;
@@ -2748,30 +2800,7 @@ base class SceneEncoder {
       record.material.setModelScaleFromTransform(record.item.worldTransform);
       record.item.applyJointsTexture(record.geometry);
       record.item.applyMorphWeights(record.geometry);
-      final instances = record.item.instanceTransforms;
-      if (instances != null) {
-        _encodeInstanced(
-          record.pipeline,
-          record.geometry,
-          record.material,
-          record.item,
-          record.windingFlipped,
-          record.fade,
-          sortBackToFrontFrom: record.item.sortTransparentInstances
-              ? _cameraPosition
-              : null,
-        );
-      } else {
-        _encode(
-          record.pipeline,
-          record.worldTransform,
-          record.geometry,
-          record.material,
-          record.windingFlipped,
-          record.fade,
-          item: record.item,
-        );
-      }
+      _encodeBlended(record);
     }
     encodeWatch?.stop();
     _translucentEncodeMicros += encodeWatch?.elapsedMicroseconds ?? 0;
@@ -2852,30 +2881,7 @@ base class SceneEncoder {
       record.material.setModelScaleFromTransform(record.item.worldTransform);
       record.item.applyJointsTexture(record.geometry);
       record.item.applyMorphWeights(record.geometry);
-      final instances = record.item.instanceTransforms;
-      if (instances != null) {
-        _encodeInstanced(
-          record.pipeline,
-          record.geometry,
-          record.material,
-          record.item,
-          record.windingFlipped,
-          record.fade,
-          sortBackToFrontFrom: record.item.sortTransparentInstances
-              ? _cameraPosition
-              : null,
-        );
-      } else {
-        _encode(
-          record.pipeline,
-          record.worldTransform,
-          record.geometry,
-          record.material,
-          record.windingFlipped,
-          record.fade,
-          item: record.item,
-        );
-      }
+      _encodeBlended(record);
     }
 
     _drawTransformOverride = null;
