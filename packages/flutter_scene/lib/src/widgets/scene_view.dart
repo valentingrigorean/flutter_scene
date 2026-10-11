@@ -113,6 +113,7 @@ class SceneView extends StatefulWidget {
     this.loadingBuilder,
     this.revealMinDuration = Duration.zero,
     this.warmUp = false,
+    this.warmUpAllShadingTiers = false,
     this.debugWidgetInput = false,
     this.children = const [],
   }) : environment = null,
@@ -159,6 +160,7 @@ class SceneView extends StatefulWidget {
     this.loadingBuilder,
     this.revealMinDuration = Duration.zero,
     this.warmUp = false,
+    this.warmUpAllShadingTiers = false,
     this.debugWidgetInput = false,
     this.children = const [],
   }) : scene = null,
@@ -171,7 +173,8 @@ class SceneView extends StatefulWidget {
        );
 
   /// The scene to render, owned and mutated by the application. Null when
-  /// the view owns its scene ([SceneView.declarative]).
+  /// the view owns its scene ([SceneView.declarative]), which it disposes
+  /// when it is disposed. An app-owned scene is the app's to dispose.
   final Scene? scene;
 
   /// Declarative scene widgets mounted at the scene root (via [SceneScope]).
@@ -277,6 +280,12 @@ class SceneView extends StatefulWidget {
   /// view even without a [loading] group or [loadingBuilder]. Populate the
   /// scene before warm-up runs (loads tracked by [loading] are awaited first).
   final bool warmUp;
+
+  /// With [warmUp], also compile the lit shader tier the scene is not using
+  /// yet (see [Scene.warmUp]'s `allShadingTiers`), so turning ambient
+  /// occlusion or another tier-switching feature on or off later does not
+  /// stall a frame. Lengthens warm-up.
+  final bool warmUpAllShadingTiers;
 
   /// Resolves the camera for a single-view frame.
   ///
@@ -452,6 +461,7 @@ class _SceneViewState extends State<SceneView>
     } else if (_ownedScene != null) {
       // Switched from the declarative form to an app-owned scene; drop the
       // owned scene so a later switch back starts fresh.
+      _ownedScene!.dispose();
       _ownedScene = null;
       _ownedDefaultEnvironment = null;
     }
@@ -533,6 +543,7 @@ class _SceneViewState extends State<SceneView>
       await _scene.warmUp(
         _warmUpViews(),
         sliceBudget: const Duration(milliseconds: 50),
+        allShadingTiers: widget.warmUpAllShadingTiers,
       );
       if (!mounted || generation != _revealGeneration) return;
     }
@@ -699,6 +710,7 @@ class _SceneViewState extends State<SceneView>
     _ticker?.dispose();
     _repaint.dispose();
     _elapsed.dispose();
+    _ownedScene?.dispose();
     super.dispose();
   }
 

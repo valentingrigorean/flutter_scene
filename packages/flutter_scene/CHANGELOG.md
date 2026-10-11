@@ -1,3 +1,28 @@
+## 0.24.4
+
+* Additive sprites and `.fmat` materials, bloom, and lens flares show over the content behind a scene with a transparent background, adding light to it. They were discarded wherever nothing opaque was drawn.
+* Billboard, `Sprite`, and particle sizes scale with their node, so scaling an effect node scales its sprites along with their spacing and speed. A non-uniform scale sizes them by its smallest axis, ignoring an axis flattened to a disc. `BillboardGeometry.scaleSizesWithNode` (and `ParticleEmitterComponent.scaleSizesWithNode`) keeps sizes in world units instead.
+* A billboard batch on a scaled node is no longer culled while still on screen.
+* Shadowed and punctual-lit materials no longer run every shadow cascade and filter for every pixel on Windows (ANGLE). A shadowed scene on a ROG Ally went from 93 ms to 41 ms a frame.
+* Lit materials with shadows and point or spot lights draw faster on mobile GPUs. Shadow filters only run their full kernel at shadow edges, lights that miss a pixel are skipped, and unused emissive and occlusion reads are dropped. A shadowed, point-lit scene on OpenGL ES on a Galaxy A16 went from 7.9 to 10.8 fps.
+
+## 0.24.3
+
+* A frame that re-presents its previous image while the GPU catches up no longer uploads joint matrices or light data first. On Vulkan each upload waited for the GPU backlog, so a GPU-bound scene with skinned meshes or moving lights blocked the UI thread for about a frame of GPU time (230 ms down to 40 ms at p95 on a Galaxy A16).
+* Meshes lit by point and spot lights batch into instanced draws again. Every item got its own light list, so any ranged light split every batch; items with identical lists now share one, and froxel-lit views ignore the lists.
+* Lit materials draw with a lean shader when the scene uses no irradiance field, rect area lights, environment cross-fade, parallax reflection box, ambient occlusion, or point-light shadows. It stops the full shader spilling registers on mobile GPUs (frames 1.5 to 1.8x faster on a Mali-G57) and adds about 250 KB compressed to each platform's shader bundle.
+* `Scene.warmUp` takes `allShadingTiers` (and `SceneView` takes `warmUpAllShadingTiers`), which also compiles the shader tier the scene is not using, so turning one of those features on or off later does not stall a frame.
+* `Camera.right`, `Camera.horizontalForward`, and `Camera.horizontalRight`, plus `Node.forward`, `Node.right`, and `Node.up`, give the world-space basis for movement and aiming without deriving it by hand.
+
+## 0.24.2
+
+* `Scene.dispose` drops the render targets and history textures a scene keeps across frames, so they no longer wait on the scene object being collected. A disposed scene throws a `StateError` on render.
+* `SceneView.declarative` disposes the scene it owns when it unmounts.
+* Temporal anti-aliasing's `objectMotion` works on the web. Its velocity shaders failed to link on WebGL2, so every frame threw.
+* An object that stops moving no longer keeps reporting its last step in the velocity buffer, so temporal anti-aliasing stops reprojecting it as if it still moved.
+* Scenes drawn in the same frame pace the GPU together, so a second `SceneView` (a portal or picture-in-picture view) no longer freezes on its last image while the first one renders. Regressed in 0.24.0.
+* Directional shadows fade to lit over the last tenth of `shadowMaxDistance` (at least `shadowFadeRange`), so distant shadows no longer switch off a strip at a time as the camera moves and the cached shadow tiles re-centre. Surfaces past the fade skip shadow sampling.
+
 ## 0.24.1
 
 * A translucent double-sided material draws both faces, as an opaque one does: the translucent pass draws the mesh at its place in the back-to-front order twice, its back faces and then its front faces, so a back face blends and the near side lies over the far side whatever the triangle order. `Material.renderCullMode` of a double-sided material is `CullMode.none` whatever its alpha mode, and a `.fmat` material that culls back faces and is double-sided culls none when it blends too.
@@ -31,6 +56,7 @@
 * Lit, unlit, and `.fmat` shaders build about twice as fast in browsers on Windows, close to 0.23, where a new material could stall its first frame for tens of seconds. Regressed in 0.24.0.
 * The surface debug views' material channels are compiled in only when the app sets `hooks: user_defines: flutter_scene: debug_views: true` (plus `flutter_scene_debug_views: true` under the app's name if its hook builds materials or engine assets). Without it a view shows the geometry and identity channels and prints how to turn the rest on.
 * `buildMaterials` and `buildEngineAssets` take `debugViews`.
+* Experimental WebGPU backend for web builds, enabled with `--dart-define=flutter_scene.webgpu=true` plus `flutter_scene_webgpu: true` under `hooks: user_defines:` for flutter_scene and the app. WebGL2 stays the default.
 
 ## 0.24.0
 

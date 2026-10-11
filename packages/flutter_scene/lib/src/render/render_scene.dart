@@ -5,6 +5,7 @@ import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter/foundation.dart' show ValueNotifier, internal;
 import 'package:flutter_scene/src/render/debug_view.dart';
+import 'package:flutter_scene/src/skin.dart';
 import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/components/camera_component.dart';
 import 'package:flutter_scene/src/components/directional_light_component.dart';
@@ -19,7 +20,6 @@ import 'package:flutter_scene/src/components/spot_light_component.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart';
 import 'package:flutter_scene/src/instance_band.dart';
 import 'package:flutter_scene/src/instanced_mesh.dart';
-import 'package:flutter_scene/src/skin.dart';
 import 'package:flutter_scene/src/vertex_spin.dart';
 import 'package:flutter_scene/src/light.dart' show ShadowCasterFaces;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
@@ -1456,6 +1456,20 @@ class RenderScene {
       }
     }
     return prePass.refresh(uploadSkin: uploadSkin);
+  }
+
+  /// Skins whose joint matrices this frame's pre-pass computed but has not
+  /// uploaded yet (see [flushJointUploads]).
+  final Set<Skin> pendingJointUploads = {};
+
+  /// Uploads the pending joint matrices. The scene calls this only once it
+  /// knows the frame draws, so a frame that re-presents its previous image
+  /// never waits on the uploads (each is a synchronous submit on Vulkan).
+  void flushJointUploads() {
+    for (final skin in pendingJointUploads) {
+      skin.flushJointsUpload();
+    }
+    pendingJointUploads.clear();
   }
 
   /// The directional lights contributed by mounted

@@ -238,25 +238,35 @@ class MeshComponent extends Component {
           _boundsVersions[index] == item.geometry.localBoundsVersion;
     }
     if (staticStateUnchanged) {
+      // Still since the last refresh, so last frame's motion is spent;
+      // otherwise a node that stops keeps reporting its final step.
+      for (final item in _renderItems) {
+        if (!item.isMoving) continue;
+        item.isMoving = false;
+        item.previousWorldTransform.setFrom(item.worldTransform);
+      }
       return;
     }
     final worldTransform = node.globalTransform;
     final transformChanged = worldTransformVersion != _worldTransformVersion;
     final windingFlipped = node.windingFlipped;
 
-    // A skinned node uploads its joint matrices once per frame. The texture
+    // A skinned node computes its joint matrices once per frame. The texture
     // rides on the render items, not the geometry, so nodes sharing one
     // skinned geometry (clones) each draw with their own skeleton; the
     // render passes apply it to the geometry per draw.
+    final renderScene = node.internalRenderScene;
     final uploadedSkin = uploadSkin && playback == null && !skinPosed
         ? skin
         : null;
     final jointsTexture = uploadedSkin?.getJointsTexture();
     final jointsTextureWidth = uploadedSkin?.getTextureWidth() ?? 0;
-    if (uploadedSkin != null) _skinPoseVersion = skinPoseVersion;
+    if (uploadedSkin != null) {
+      _skinPoseVersion = skinPoseVersion;
+      node.internalRenderScene?.pendingJointUploads.add(uploadedSkin);
+    }
     if (playback != null) _skinPoseVersion = -1;
 
-    final renderScene = node.internalRenderScene;
     final frustumCulled = node.frustumCulled;
     final layers = node.layers;
     final sortDepthBias = node.sortDepthBias;

@@ -21,7 +21,7 @@ highp float ShadowTapDepth(vec2 p, float ca, float sa, highp float radius,
                    vec2(1.0 - frag_info.shadow_texel_size));
   highp vec2 atlas_uv = vec2((float(cascade) + cuv.x) * inv_count, cuv.y);
   atlas_uv.y = 1.0 - atlas_uv.y;
-  return ShadowDepthOf(texture(shadow_map, atlas_uv));
+  return ShadowDepthOf(textureLod(shadow_map, atlas_uv, 0.0));
 }
 
 float ShadowTap(vec2 p, float ca, float sa, highp float radius, highp vec2 uv,
@@ -37,7 +37,7 @@ float ShadowTap(vec2 p, float ca, float sa, highp float radius, highp vec2 uv,
   // is v=0, so flip V to sample the matching row. This is intrinsic to the
   // top-down storage (not a backend Y-flip workaround), so it is unconditional.
   atlas_uv.y = 1.0 - atlas_uv.y;
-  highp float caster_depth = ShadowDepthOf(texture(shadow_map, atlas_uv));
+  highp float caster_depth = ShadowDepthOf(textureLod(shadow_map, atlas_uv, 0.0));
   return receiver_depth <= caster_depth ? 1.0 : 0.0;
 }
 
@@ -58,12 +58,12 @@ float ShadowTapBilinear(vec2 p, highp float radius, highp vec2 uv, int cascade,
   highp vec2 step_uv = vec2(frag_info.shadow_texel_size * inv_count,
                       frag_info.shadow_texel_size);
 
-  highp float d00 = ShadowDepthOf(texture(shadow_map, atlas_uv00));
+  highp float d00 = ShadowDepthOf(textureLod(shadow_map, atlas_uv00, 0.0));
   highp float d10 =
-      ShadowDepthOf(texture(shadow_map, atlas_uv00 + vec2(step_uv.x, 0.0)));
+      ShadowDepthOf(textureLod(shadow_map, atlas_uv00 + vec2(step_uv.x, 0.0), 0.0));
   highp float d01 =
-      ShadowDepthOf(texture(shadow_map, atlas_uv00 + vec2(0.0, step_uv.y)));
-  highp float d11 = ShadowDepthOf(texture(shadow_map, atlas_uv00 + step_uv));
+      ShadowDepthOf(textureLod(shadow_map, atlas_uv00 + vec2(0.0, step_uv.y), 0.0));
+  highp float d11 = ShadowDepthOf(textureLod(shadow_map, atlas_uv00 + step_uv, 0.0));
 
   float s00 = receiver_depth <= d00 ? 1.0 : 0.0;
   float s10 = receiver_depth <= d10 ? 1.0 : 0.0;
@@ -114,12 +114,9 @@ vec2 FixedShadowTap(int i) {
   return vec2(float(i - 14) - 1.0, 1.0);
 }
 
-// Samples one cascade's tile of the shadow atlas strip. `biased_world_pos` is
-// the world-space receiver after normal bias.
-float SampleCascade(int cascade, int count, highp mat4 cascade_matrix,
-                    highp float box, highp vec3 biased_world_pos) {
-  highp vec4 light_clip = cascade_matrix * vec4(biased_world_pos, 1.0);
-  highp vec3 proj = light_clip.xyz / light_clip.w;
+// Samples one cascade's tile of the shadow atlas strip. `proj` is the
+// normal-biased receiver projected into the cascade (NDC xy, depth z).
+float SampleCascade(int cascade, int count, highp vec3 proj, highp float box) {
   highp vec2 uv = proj.xy * 0.5 + 0.5;
   // The depth bias is world-space; convert it to this cascade's clip-z (its
   // orthographic depth range is 7 * box: the toward-sun reach + forward margin
@@ -141,7 +138,7 @@ float SampleCascade(int cascade, int count, highp mat4 cascade_matrix,
   // the grid as it is and skip the noise and its trigonometry.
   float ca = 1.0;
   float sa = 0.0;
-  if (filter_index < 2.5) {
+  if (filter_index < 2.5 && fixed_filter < 0.5) {
     highp float noise = fract(
         52.9829189 *
         fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
@@ -184,7 +181,29 @@ float SampleCascade(int cascade, int count, highp mat4 cascade_matrix,
   // TODO(flutter_scene): use file-scope const arrays once impellerc/SPIRV-Cross
   // emits valid ES 1.00 array constructors for them.
   float shadow = 0.0;
-  if (filter_index > 3.5) {
+  // Most fragments are fully lit or fully shadowed. Probe the kernel's center
+  // and corners first and run the full kernel only where they disagree (the
+  // penumbra), which cuts the shadow-map reads on texture-rate-bound GPUs.
+  // PCSS keeps its own path, since its blocker search sizes the kernel.
+  bool settled = false;
+  if (filter_index < 1.5) {
+    float probe =
+        ShadowTap(vec2(0.0), ca, sa, radius, uv, cascade, inv_count,
+                  receiver_depth) +
+        ShadowTap(vec2(-1.0, -1.0), ca, sa, radius, uv, cascade, inv_count,
+                  receiver_depth) +
+        ShadowTap(vec2(1.0, -1.0), ca, sa, radius, uv, cascade, inv_count,
+                  receiver_depth) +
+        ShadowTap(vec2(-1.0, 1.0), ca, sa, radius, uv, cascade, inv_count,
+                  receiver_depth) +
+        ShadowTap(vec2(1.0, 1.0), ca, sa, radius, uv, cascade, inv_count,
+                  receiver_depth);
+    settled = probe < 0.5 || probe > 4.5;
+    shadow = probe * 0.2;
+  }
+  if (settled) {
+    // The probes agree, so the kernel would too.
+  } else if (filter_index > 3.5) {
     // One 2x2 bilinear PCF tap at the receiver: 4 samples.
     shadow = ShadowTapBilinear(vec2(0.0), radius, uv, cascade, inv_count,
                                receiver_depth);
@@ -260,8 +279,7 @@ float CascadeBlendWeight(highp vec2 uv, highp float margin, highp float band) {
       float take = min(CascadeBlendWeight(uv, margin, band),                 \
                        1.0 - weight);                                        \
       if (take > 0.0) {                                                      \
-        shadow_sum += take * SampleCascade(IDX, count, cascade_matrix, box,  \
-                                           biased_world_pos);                \
+        shadow_sum += take * SampleCascade(IDX, count, proj, box);           \
         weight += take;                                                      \
       }                                                                      \
     }                                                                        \
@@ -277,17 +295,31 @@ float SampleShadow(highp vec3 world_pos, vec3 n) {
   // cascadeOverlap. At 0 every _TRY_CASCADE takes the full weight, so the
   // first containing cascade wins outright and the later ones are skipped.
   float band = frag_info.directional_light_color.w * 0.5;
+  // Fade to lit by view depth before the shadow distance, at least
+  // shadow_fade wide and a tenth of the distance. The tiles reach past it,
+  // and a cached tile re-centres in steps, so without this the shadows of
+  // distant surfaces would switch off a strip at a time as the camera moves.
+  highp float limit = frag_info.dielectric_f0.w;
+  float fade = 0.0;
+  if (limit > 0.0) {
+    highp float width = max(frag_info.shadow_fade, limit * 0.1);
+    fade = smoothstep(limit - width, limit, GetFragmentViewDepth());
+  }
+  float shadow_sum = 0.0;
+  float weight = 0.0;
+  // A fully faded fragment would discard its taps, so it skips them.
   // Unrolled with literal cascade indices: see _TRY_CASCADE. A single `return`
   // (no early return inside a loop) also avoids a nested-loop pattern that
   // crashes a Direct3D shader compiler.
-  float shadow_sum = 0.0;
-  float weight = 0.0;
-  _TRY_CASCADE(0)
-  _TRY_CASCADE(1)
-  _TRY_CASCADE(2)
-  _TRY_CASCADE(3)
+  if (fade < 1.0) {
+    _TRY_CASCADE(0)
+    _TRY_CASCADE(1)
+    _TRY_CASCADE(2)
+    _TRY_CASCADE(3)
+  }
   // Weight no cascade covered reads as lit.
-  return shadow_sum + (1.0 - weight);
+  float shadow = shadow_sum + (1.0 - weight);
+  return mix(shadow, 1.0, fade);
 }
 #undef _TRY_CASCADE
 #endif
@@ -377,8 +409,7 @@ float SpotShadowTap(highp vec2 uv, highp float tile, highp float total,
   return receiver <= ShadowDepthOf(textureLod(shadow_map, atlas_uv, 0.0)) ? 1.0 : 0.0;
 }
 
-// Number of ring taps around the center for the spot-shadow PCF.
-#define SPOT_PCF_RING 8
+
 
 // Spot-shadow visibility (1 lit .. 0 shadowed) for the shadow-casting spot in
 // row `light_row`, slot `slot`. Its world -> spot-clip matrix rides in the
@@ -407,19 +438,33 @@ float SampleSpotShadow(int light_row, int slot, highp vec3 world_pos,
   // Penumbra radius in tile-UV (resolution-independent). softness 0 = hard.
   highp float radius = frag_info.spot_shadow_params.w * 0.004;
 
-  float lit = SpotShadowTap(uv, tile, total, receiver);
-  // A per-fragment rotation hides the ring pattern as a smooth edge.
+  // A per-fragment rotation hides the ring pattern as a smooth edge. The ring
+  // is eight taps 45 degrees apart, so one cosine and sine place all of them.
   highp float noise = fract(
       52.9829189 *
       fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
   float base = noise * 6.28318530718;
-  for (int i = 0; i < SPOT_PCF_RING; i++) {
-    float a = base + float(i) * (6.28318530718 / float(SPOT_PCF_RING));
-    highp vec2 offset = vec2(cos(a), sin(a)) * radius;
-    lit += SpotShadowTap(uv + offset, tile, total, receiver);
+  highp vec2 a = vec2(cos(base), sin(base)) * radius;
+  highp vec2 b = vec2(a.x - a.y, a.x + a.y) * 0.70710678;
+  // The center and the four axis taps first. Most fragments are fully lit or
+  // fully shadowed, so the diagonal taps only run where these disagree.
+  float lit = SpotShadowTap(uv, tile, total, receiver) +
+              SpotShadowTap(uv + a, tile, total, receiver) +
+              SpotShadowTap(uv - a, tile, total, receiver) +
+              SpotShadowTap(uv + vec2(-a.y, a.x), tile, total, receiver) +
+              SpotShadowTap(uv + vec2(a.y, -a.x), tile, total, receiver);
+  if (lit < 0.5 || lit > 4.5) {
+    return lit * 0.2;
   }
-  return lit / float(SPOT_PCF_RING + 1);
+  lit += SpotShadowTap(uv + b, tile, total, receiver) +
+         SpotShadowTap(uv - b, tile, total, receiver) +
+         SpotShadowTap(uv + vec2(-b.y, b.x), tile, total, receiver) +
+         SpotShadowTap(uv + vec2(b.y, -b.x), tile, total, receiver);
+  return lit / 9.0;
 }
+
+// Number of ring taps around the center for the point-shadow PCF.
+#define POINT_PCF_RING 8
 
 // One shadow comparison tap for a point-light cube face: places the face-local
 // `uv` in quadrant (`qx`, `qy`) of atlas tile `tile` (faces render at half the
@@ -490,11 +535,11 @@ float SamplePointShadow(int light_row, highp float base_tile,
       52.9829189 *
       fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
   float base = noise * 6.28318530718;
-  for (int i = 0; i < SPOT_PCF_RING; i++) {
-    float angle = base + float(i) * (6.28318530718 / float(SPOT_PCF_RING));
+  for (int i = 0; i < POINT_PCF_RING; i++) {
+    float angle = base + float(i) * (6.28318530718 / float(POINT_PCF_RING));
     lit += PointShadowTap(uv + vec2(cos(angle), sin(angle)) * radius, tile, qx,
                           qy, total, half_texel, receiver);
   }
-  return lit / float(SPOT_PCF_RING + 1);
+  return lit / float(POINT_PCF_RING + 1);
 }
 #endif

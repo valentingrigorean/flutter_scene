@@ -4,7 +4,8 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/scheduler.dart' show Priority, SchedulerBinding;
+import 'package:flutter/scheduler.dart'
+    show Priority, SchedulerBinding, SchedulerPhase;
 import 'package:flutter/services.dart' show AssetBundle;
 import 'package:flutter_scene/src/hot_reload/hot_reload_coordinator.dart';
 import 'package:flutter_scene/src/coplanar_overlaps.dart'
@@ -857,15 +858,18 @@ base class Scene implements SceneGraph {
   /// Releases the render targets this scene keeps across frames: each view's
   /// output ring and transient attachment pool, and the history textures of
   /// temporal anti-aliasing, global illumination, auto exposure,
-  /// screen-space indirect light, cached shadows, probe captures, and planar
-  /// reflections.
+  /// screen-space indirect light, cached shadows, punctual lights, probe
+  /// captures, and planar reflections.
   ///
-  /// The textures become unreachable from the scene at this call rather than
-  /// when the scene itself is collected. The scene graph is left as it is. A
-  /// pending [captureRenderGraph] completes with a [StateError], and a later
-  /// [render], [renderViews], [warmUp], [captureRenderGraph],
-  /// [captureEnvironment], [bakeIrradianceField], or a bake stepper taken
-  /// before the call throws a [StateError]. Calling dispose again does nothing.
+  /// The textures become unreachable from the scene at this call, even if the
+  /// scene object lives on. The GPU memory itself frees once those textures
+  /// are collected. The scene graph is left as it is.
+  ///
+  /// A pending [captureRenderGraph] completes with a [StateError], and a
+  /// [warmUp] in progress stops. A later [render], [renderViews], [warmUp],
+  /// [captureRenderGraph], [captureEnvironment], [bakeIrradianceField], or a
+  /// bake stepper taken before the call throws a [StateError]. Calling dispose
+  /// again does nothing.
   void dispose() {
     if (_disposed) {
       return;
@@ -875,6 +879,7 @@ base class Scene implements SceneGraph {
     _taaState?.dispose();
     _taaState = null;
     _irradianceField.dispose();
+    _punctualLightBuffer.releaseTextures();
     _autoExposureState = null;
     _directionalShadowCache = null;
     _ssgiHistoryColor = null;
@@ -924,6 +929,7 @@ base class Scene implements SceneGraph {
     if (_autoExposureState != null) 'autoExposure',
     if (_directionalShadowCache != null) 'shadowCache',
     if (_ssgiHistoryColor != null) 'ssgi',
+    if (_punctualLightBuffer.debugHoldsTextures) 'punctualLights',
     if (_probeCapturePool != null) 'probe',
     if (_planarCaptureResources.isNotEmpty) 'planar',
   };
@@ -2234,17 +2240,26 @@ base class Scene implements SceneGraph {
   /// instead of blocking for the whole compile (Android declares an app
   /// that ignores input for ten seconds not responding). A single build
   /// longer than the budget still runs whole.
+  ///
+  /// Lit materials draw with a lean shader while the scene uses none of the
+  /// features it leaves out (ambient occlusion, rect area lights, the
+  /// irradiance field, environment cross-fades, parallax reflection boxes, and
+  /// point-light shadows), and with the full shader otherwise. Set
+  /// [allShadingTiers] to compile both now, so turning one of those features
+  /// on or off later does not stall a frame on its first draw. It roughly
+  /// doubles the lit pipelines warm-up compiles.
   /// {@category Assets and loading}
   Future<void> warmUp(
     List<RenderView> views, {
     bool includeOffscreen = false,
     Duration? sliceBudget,
     ui.Size? size,
+    bool allShadingTiers = false,
   }) async {
     _checkNotDisposed('warmUp');
     currentAnimationTime = animationTime;
     await initializeStaticResources();
-    if (views.isEmpty) {
+    if (views.isEmpty || _disposed) {
       return;
     }
     // A frame held for on-demand shaders compiles nothing.
@@ -2255,25 +2270,40 @@ base class Scene implements SceneGraph {
     // parked in `eglSwapBuffers` would freeze Dart for the whole swap. Await
     // it first so the compiles find it idle.
     await awaitRasterThread();
+    if (_disposed) return;
     // Encode one real frame into a discarded recording. The GPU passes (and so
     // the pipeline compilations and resource uploads) are submitted during
     // rendering; only the final canvas blit is thrown away. A small area is
     // enough because pipeline identity is resolution-independent.
     void encode() {
-      // A zero step, so warm-up frames never move the scene's clock before
-      // the first real frame (render then skips its wall-clock tick).
-      update(0.0);
       final recorder = ui.PictureRecorder();
       final canvas = ui.Canvas(recorder);
       _warmUpIncludeOffscreen = includeOffscreen;
       _warmUpSize = size == null || size.isEmpty ? null : size;
+      // The tier frames follow the first while its GPU work still runs, and a
+      // paced frame encodes nothing, so pacing is off while they encode.
+      final framesInFlight = maxGpuFramesInFlight;
+      if (allShadingTiers) maxGpuFramesInFlight = 0;
       try {
-        renderViews(
-          views,
-          canvas,
-          region: const ui.Rect.fromLTWH(0, 0, 64, 64),
-        );
+        // With allShadingTiers, the frame encodes once under each lit tier
+        // (one of them is the frame's own), so a later feature toggle that
+        // switches tiers finds its pipelines built.
+        for (final tier
+            in allShadingTiers ? const [true, false] : const [null]) {
+          shadingTierOverride = tier;
+          // A zero step, so warm-up frames never move the scene's clock
+          // before the first real frame (render then skips its wall-clock
+          // tick).
+          update(0.0);
+          renderViews(
+            views,
+            canvas,
+            region: const ui.Rect.fromLTWH(0, 0, 64, 64),
+          );
+        }
       } finally {
+        shadingTierOverride = null;
+        maxGpuFramesInFlight = framesInFlight;
         _warmUpIncludeOffscreen = false;
         _warmUpSize = null;
         recorder.endRecording().dispose();
@@ -2295,6 +2325,7 @@ base class Scene implements SceneGraph {
     for (var slice = 0; slice < 1000; slice++) {
       // Each slice compiles pipelines after a yield, so rendezvous again.
       if (slice > 0) await awaitRasterThread();
+      if (_disposed) return;
       final paced = _pacedFrameCount;
       withPipelineBuildBudget(sliceBudget, encode);
       if (_pacedFrameCount == paced && deferredPipelineBuilds == 0) {
@@ -2873,7 +2904,36 @@ base class Scene implements SceneGraph {
     uniformTransients.beginFrame();
     instanceTransients.beginFrame();
     beginRetainedInstanceFrame();
+    // Scenes painting in one display frame pace together, so one does not
+    // count another's work this frame as a frame behind and starve.
+    final scheduler = SchedulerBinding.instance;
+    rendererSubmissions.beginFrame(
+      scheduler.schedulerPhase == SchedulerPhase.persistentCallbacks
+          ? scheduler.currentSystemFrameTimeStamp
+          : null,
+    );
     final TransientWriter transientsBuffer = uniformTransients;
+
+    // A frame whose screen views will re-present their previous images skips
+    // the texture views too. Rendering them anyway keeps the GPU a frame
+    // behind, so the screen views would pace indefinitely.
+    final screenViews = [
+      for (final view in views)
+        if (view.target == null) view,
+    ];
+    final ordered = screenViews..sort((a, b) => a.order.compareTo(b.order));
+    final pacingFrame =
+        maxGpuFramesInFlight > 0 &&
+        _hasPresentedFrame &&
+        _pendingGraphCapture == null &&
+        _pendingFrameGraphCapture == null &&
+        views.any((view) => view.target == null) &&
+        rendererSubmissions.priorFramesInFlight >= maxGpuFramesInFlight &&
+        _everyScreenViewPresentsPrevious(ordered, drawArea, dpr);
+    // When every screen view can re-present, the frame holds before any
+    // per-frame upload: on Vulkan each texture upload is a synchronous submit
+    // that waits for the GPU backlog, which pacing exists to avoid.
+    final holdFrame = pacingFrame;
 
     // Advance the scene once per frame (not once per view): tick components
     // and animations and refresh the flat render list before the passes
@@ -2898,32 +2958,23 @@ base class Scene implements SceneGraph {
       return;
     }
 
-    // Composite lower-order screen views first.
-    final screenViews = [
-      for (final view in views)
-        if (view.target == null) view,
-    ];
-    final ordered = screenViews.length == 1
-        ? screenViews
-        : (screenViews..sort((a, b) => a.order.compareTo(b.order)));
+    if (holdFrame) {
+      _holdPace();
+      _presentHeldFrame(views, canvas, drawArea);
+      renderStats.endFrame(pipelineCacheSize: pipelineCacheSize);
+      rendererSubmissions.endFrame();
+      return;
+    }
 
-    // A frame whose screen views will all re-present their previous images
-    // skips the texture views too. Rendering them anyway keeps the GPU a frame
-    // behind, so the screen views would pace indefinitely. A screen view with
-    // no previous image of its size renders, and so do the texture views.
-    // A frame capture takes every view this frame renders, so it is taken
-    // after a held frame has returned and keeps the frame from pacing.
+    // The frame draws from here on, so the joint matrices the tick computed
+    // (here or in update()) upload now, not on frames held above.
+    renderScene.flushJointUploads();
     final frameCapture = _pendingFrameGraphCapture;
     _pendingFrameGraphCapture = null;
     final frameCaptures = frameCapture == null
         ? null
         : <RenderGraphCaptureResult>[];
-    final pacingFrame =
-        maxGpuFramesInFlight > 0 &&
-        _pendingGraphCapture == null &&
-        frameCapture == null &&
-        rendererSubmissions.framesInFlight >= maxGpuFramesInFlight &&
-        _everyScreenViewPresentsPrevious(ordered, drawArea, dpr);
+
     // A paced frame renders nothing, so the adaptive controller measures the
     // period between rendered frames rather than the vsync it ticks at.
     if (!pacingFrame) _tickAdaptiveQuality();
@@ -3411,14 +3462,9 @@ base class Scene implements SceneGraph {
     );
   }
 
-  // Renders one [view] into [drawArea] on [canvas], using that view's own
-  // swapchain texture and transient texture pool (so simultaneous views in a
-  // frame do not share render targets). The per-frame work (tick, spatial
-  // rebuild, environment resolve, host-buffer reset) is done once by the
-  // caller; this builds and submits one view's render graph and composites
-  // the result.
-  // Draws each screen view's previous image in place of a new frame, or
-  // nothing for a view that has not drawn one yet. Texture views keep theirs.
+  // Whether every screen view has a previous image at the size it would
+  // render this frame, so the whole frame can re-present (see
+  // _renderViewToCanvas, which paces per view by the same test).
   void _presentHeldFrame(
     List<RenderView> views,
     ui.Canvas canvas,
@@ -3532,7 +3578,9 @@ base class Scene implements SceneGraph {
     if (!captureThisView &&
         maxGpuFramesInFlight > 0 &&
         previous != null &&
-        rendererSubmissions.framesInFlight >= maxGpuFramesInFlight) {
+        previous.width == pixelSize.width.toInt() &&
+        previous.height == pixelSize.height.toInt() &&
+        rendererSubmissions.priorFramesInFlight >= maxGpuFramesInFlight) {
       _pacedFrameCount++;
       _holdPace();
       final srcRect = ui.Rect.fromLTWH(0, 0, pixelSize.width, pixelSize.height);
@@ -3845,6 +3893,11 @@ base class Scene implements SceneGraph {
     bool capturePlanarReflections = false,
   }) {
     currentAnimationTime = animationTime;
+    // The entry points check first with their own names; this catches a bake
+    // stepper taken before dispose.
+    if (_disposed) {
+      throw StateError('A disposed Scene cannot render');
+    }
     // A capture frame observes the pool from graph construction on, so
     // display-chain and custom-pass destinations acquired before execute are
     // attributed and identified by their descriptor debug names.
@@ -3889,16 +3942,18 @@ base class Scene implements SceneGraph {
     // pass drew with, which holds those surfaces already. Where the view
     // cannot sample it (four samples a texel under multisampling, a device
     // that samples no depth attachment) the linear depth stands in for it.
-    final wantStoredDepth = _viewPasses(view)
-        .any((pass) => pass.inputs.contains(RenderInput.depthStored));
+    final wantStoredDepth = _viewPasses(
+      view,
+    ).any((pass) => pass.inputs.contains(RenderInput.depthStored));
     final sampleStoredDepth =
         wantStoredDepth && storedDepthIsSampled && !enableMsaa;
     final linearDepthForStored = wantStoredDepth && !sampleStoredDepth;
     final patchTranslucentDepth =
         wantDof ||
         linearDepthForStored ||
-        _viewPasses(view)
-            .any((pass) => pass.inputs.contains(RenderInput.depth));
+        _viewPasses(
+          view,
+        ).any((pass) => pass.inputs.contains(RenderInput.depth));
     final enableFxaa = effectiveAa == AntiAliasingMode.fxaa && !debugActive;
     if (effectiveAa == AntiAliasingMode.smaa) {
       _repaintWhenLoaded(SmaaPass.request());
@@ -4049,8 +4104,9 @@ base class Scene implements SceneGraph {
         !(capturePlanarReflections &&
             !captureLinearColor &&
             renderScene.planarReflectorComponents.isNotEmpty) &&
-        !_viewPasses(view)
-            .any((pass) => pass.inputs.contains(RenderInput.shadowMap));
+        !_viewPasses(
+          view,
+        ).any((pass) => pass.inputs.contains(RenderInput.shadowMap));
     if (receiverCullingAllowed) {
       // Receivers past the last cascade never sample the atlas, so an
       // infinite far plane can stop there.

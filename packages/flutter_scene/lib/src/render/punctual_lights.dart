@@ -71,6 +71,7 @@ class PunctualLighting {
     required this.indexHeight,
     this.spotShadowCount = 0,
     this.pointShadowTileCount = 0,
+    this.rectAreaLightCount = 0,
     this.spotShadowDepthBias = 0.0,
     this.spotShadowNormalBias = 0.0,
     this.spotShadowSoftness = 0.0,
@@ -86,6 +87,7 @@ class PunctualLighting {
       indexHeight = 0,
       spotShadowCount = 0,
       pointShadowTileCount = 0,
+      rectAreaLightCount = 0,
       spotShadowDepthBias = 0.0,
       spotShadowNormalBias = 0.0,
       spotShadowSoftness = 0.0,
@@ -108,6 +110,9 @@ class PunctualLighting {
 
   /// Number of light rows in [paramsTexture].
   final int paramsCount;
+
+  /// How many of those rows are rect area lights.
+  final int rectAreaLightCount;
 
   /// Dimensions of [indexTexture], for the shader's fetch-coordinate math.
   final int indexWidth;
@@ -175,6 +180,14 @@ class _TextureRing {
       height,
       format: gpu.PixelFormat.r32g32b32a32Float,
     );
+  }
+
+  bool get isEmpty => _ring.every((texture) => texture == null);
+
+  /// Drops every texture, so the next [acquire] allocates again.
+  void clear() {
+    _ring.fillRange(0, _ring.length, null);
+    _contents.fillRange(0, _contents.length, null);
   }
 
   /// [acquire], then writes [data] unless the slot already holds exactly
@@ -415,6 +428,7 @@ class PunctualLightBuffer {
         indexHeight: 0,
         spotShadowCount: spotTileCount,
         pointShadowTileCount: pointTileCount,
+        rectAreaLightCount: areas.length,
         spotShadowDepthBias: spotShadows?.depthBias ?? 0.0,
         spotShadowNormalBias: spotShadows?.normalBias ?? 0.0,
         spotShadowSoftness: spotShadows?.softness ?? 0.0,
@@ -439,6 +453,7 @@ class PunctualLightBuffer {
       indexHeight: indexHeight,
       spotShadowCount: spotTileCount,
       pointShadowTileCount: pointTileCount,
+      rectAreaLightCount: areas.length,
       spotShadowDepthBias: spotShadows?.depthBias ?? 0.0,
       spotShadowNormalBias: spotShadows?.normalBias ?? 0.0,
       spotShadowSoftness: spotShadows?.softness ?? 0.0,
@@ -479,6 +494,20 @@ class PunctualLightBuffer {
     }
     return true;
   }
+
+  /// Drops every texture the buffer keeps across frames.
+  void releaseTextures() {
+    _paramsRing.clear();
+    _indexRing.clear();
+    _froxelRing.clear();
+    _cachedFroxels = null;
+    _froxelCacheEpoch = -1;
+  }
+
+  /// Whether any ring holds a texture.
+  @internal
+  bool get debugHoldsTextures =>
+      !_paramsRing.isEmpty || !_indexRing.isEmpty || !_froxelRing.isEmpty;
 
   final Vector3 _cachePosition = Vector3.zero();
   final Vector3 _cacheForward = Vector3.zero();

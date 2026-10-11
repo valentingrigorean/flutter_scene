@@ -292,6 +292,10 @@ class DirectionalLight {
   /// World-space width of the band at the far shadow cascade's edge
   /// over which shadowing fades back to lit, so the shadow distance
   /// limit is soft rather than a hard cutoff. `0` disables the fade.
+  /// World-space width over which shadowing fades back to lit before the
+  /// shadow distance, so its limit is soft rather than a hard cutoff. The
+  /// fade is at least a tenth of [shadowMaxDistance] deep, and the far
+  /// cascade's tile edge fades over this width too.
   double shadowFadeRange;
 
   /// World-space radius of the shadow penumbra. Larger values give a
@@ -305,7 +309,8 @@ class DirectionalLight {
   int shadowCascadeCount;
 
   /// View distance, in world units, out to which [computeCascades]
-  /// spreads the shadow cascades. Beyond it surfaces are unshadowed.
+  /// spreads the shadow cascades. Shadows fade out approaching it (see
+  /// [shadowFadeRange]) and surfaces beyond it are unshadowed.
   double shadowMaxDistance;
 
   /// Blends the cascade split spacing between logarithmic (`1.0`) and
@@ -1125,6 +1130,35 @@ class ShadowCascade {
   final double radius;
 }
 
+/// Forces the full lit entries everywhere, so parity tests can render the
+/// same frame with and without the lean tier.
+bool debugDisableLeanLighting = false;
+
+/// Whether a frame with these features may draw with the lean lit entries:
+/// every feature `FLUTTER_SCENE_LEAN_LIGHTING` compiles out must be off.
+@internal
+bool leanLightingAllowed({
+  required bool irradianceField,
+  required int rectAreaLightCount,
+  required bool environmentBlending,
+  required bool ambientOcclusion,
+  required int pointShadowTileCount,
+}) =>
+    shadingTierOverride ??
+    (!debugDisableLeanLighting &&
+        !irradianceField &&
+        rectAreaLightCount == 0 &&
+        !environmentBlending &&
+        !ambientOcclusion &&
+        pointShadowTileCount == 0);
+
+/// Forces every eligible draw onto the lean (true) or full (false) lit entries
+/// regardless of the frame's features, or null to decide per frame. Set only
+/// around a warm-up frame whose image is discarded, to compile a tier's
+/// pipelines before the scene needs them.
+@internal
+bool? shadingTierOverride;
+
 /// The lighting state handed to a [Material] when it binds for a draw.
 ///
 /// Bundles the image-based-lighting [EnvironmentMap] (and the scene's
@@ -1150,6 +1184,7 @@ class Lighting {
     this.froxels,
     this.spotShadowCount = 0,
     this.pointShadowTileCount = 0,
+    this.rectAreaLightCount = 0,
     this.spotShadowDepthBias = 0.0,
     this.spotShadowNormalBias = 0.0,
     this.spotShadowSoftness = 0.0,
@@ -1197,6 +1232,23 @@ class Lighting {
   /// The scene's distance fog, or null when fog is off for this frame. Applied
   /// per-fragment by every material in linear HDR before tone mapping.
   final Fog? fog;
+
+  /// The rect area lights packed into the punctual light data this frame.
+  @internal
+  final int rectAreaLightCount;
+
+  /// Whether every feature the lean lit entries compile out is off this frame
+  /// (see `FLUTTER_SCENE_LEAN_LIGHTING` in `material_lighting.glsl`), so a
+  /// draw may use them. The draw's environment must also carry no parallax
+  /// box (see [Material.usesLeanVariant]).
+  @internal
+  bool get allowsLeanShading => leanLightingAllowed(
+    irradianceField: irradianceField != null,
+    rectAreaLightCount: rectAreaLightCount,
+    environmentBlending: environmentMapB != null && environmentBlend > 0.0,
+    ambientOcclusion: ssaoMap != null || ssaoIndirectLight,
+    pointShadowTileCount: pointShadowTileCount,
+  );
 
   /// A secondary environment cross-faded with [environmentMap] by
   /// [environmentBlend], or null when a single environment is in effect.

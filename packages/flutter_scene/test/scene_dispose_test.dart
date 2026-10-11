@@ -8,14 +8,7 @@ import 'package:flutter_scene/scene.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
 
-bool _gpuAvailable() {
-  try {
-    Scene();
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
+import 'support/gpu_available.dart';
 
 List<RenderView> _views() => [
   RenderView(
@@ -52,7 +45,7 @@ void _renderViews(Scene scene) {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  if (!_gpuAvailable()) {
+  if (!gpuAvailable()) {
     test(
       'scene dispose suite (skipped: no GPU device)',
       () {},
@@ -117,7 +110,8 @@ void main() {
       ..antiAliasingMode = AntiAliasingMode.taa
       ..directionalLight = DirectionalLight(castsShadow: true)
       ..add(_cube()..shadowStatic = true)
-      ..add(_mirror(_MirrorMaterial()));
+      ..add(_mirror(_MirrorMaterial()))
+      ..add(Node()..addComponent(PointLightComponent(PointLight())));
     scene.globalIllumination.enabled = true;
     scene.autoExposure.enabled = true;
     _renderViews(scene);
@@ -129,6 +123,7 @@ void main() {
       'autoExposure',
       'shadowCache',
       'ssgi',
+      'punctualLights',
       'probe',
       'planar',
     });
@@ -164,6 +159,20 @@ void main() {
 
     expect(stepper.step, throwsStateError);
     expect(stepper.currentProbe, 0);
+  });
+
+  test('a warm-up in progress stops when the scene is disposed', () async {
+    await Scene.initializeStaticResources();
+    final scene = Scene()..add(_cube());
+    final warmUp = scene.warmUp(
+      _views(),
+      sliceBudget: const Duration(milliseconds: 1),
+    );
+
+    scene.dispose();
+
+    await expectLater(warmUp, completes);
+    expect(scene.surface.debugHeldTextureCount, 0);
   });
 
   test('dispose fails a pending render graph capture', () async {

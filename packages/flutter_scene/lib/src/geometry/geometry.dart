@@ -1110,6 +1110,13 @@ abstract class Geometry with RenderSourceListeners {
   @internal
   void coverMorphWeights(Float32List weights) {}
 
+  /// Fits [localBounds] to a node drawing with [worldTransform], for geometry
+  /// whose drawn extent depends on that transform beyond the transform of its
+  /// bounds. Called before culling when the transform changes; the default
+  /// does nothing.
+  @internal
+  void coverWorldTransform(vm.Matrix4 worldTransform) {}
+
   /// Hook for skinned geometries to receive the joints texture computed
   /// by [Skin.getJointsTexture].
   ///

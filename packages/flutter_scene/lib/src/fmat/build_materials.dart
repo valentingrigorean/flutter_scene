@@ -12,6 +12,7 @@ import '../generated_assets/engine_identity.dart'
     show debugViewsVariantSuffix, engineIdentity;
 import '../generated_assets/generated_assets.dart';
 import '../generated_assets/generated_tree.dart';
+import '../generated_assets/wgsl_sidecar.dart' show wgslSidecarPathFor;
 import 'fmat.dart';
 import 'fmat_emitter.dart'
     show
@@ -371,6 +372,12 @@ Future<void> _buildMaterials({
         ) ??
         packageRoot.resolve('build/shaderbundles/$bundleName.index.json'),
   );
+  // The WebGPU backend's WGSL, only under flutter_scene_webgpu. Data-asset
+  // builds do not carry it yet.
+  // TODO(webgpu-data-assets): register the WGSL as a data asset too.
+  final wgslFile = wgslSidecarsForBuild(buildInput) && tree != null
+      ? File(wgslSidecarPathFor(shippedBundleFile.path))
+      : null;
 
   final sidecars = <String, Object?>{};
   final materialSources = <String, String>{};
@@ -409,7 +416,7 @@ Future<void> _buildMaterials({
   final stampFile = File(
     packageRoot.resolve('build/shaderbundles/$bundleName.inputs').toFilePath(),
   );
-  final outputs = [shippedBundleFile, sidecarFile, indexFile];
+  final outputs = [shippedBundleFile, sidecarFile, indexFile, ?wgslFile];
   var fresh = tree != null
       ? tree.isFresh(
           GeneratedAssetFamily.material,
@@ -434,6 +441,7 @@ Future<void> _buildMaterials({
       bundleFile: shippedBundleFile,
       sidecarFile: sidecarFile,
       indexFile: indexFile,
+      wgslFile: wgslFile,
       tree: tree,
       stamp: stamp,
       owner: assetOwner,
@@ -566,6 +574,10 @@ Future<void> _buildMaterials({
     if (tree != null) {
       writeGeneratedBytes(shippedBundleFile.uri, bundleFile.readAsBytesSync());
     }
+    final compiledWgsl = File(wgslSidecarPathFor(bundleFile.path));
+    if (wgslFile != null && compiledWgsl.existsSync()) {
+      writeGeneratedBytes(wgslFile.uri, compiledWgsl.readAsBytesSync());
+    }
     // Write the combined parameter sidecar next to the produced bundle.
     writeGeneratedString(
       sidecarFile.uri,
@@ -616,6 +628,7 @@ Future<void> _buildMaterials({
       bundleFile: shippedBundleFile,
       sidecarFile: sidecarFile,
       indexFile: indexFile,
+      wgslFile: wgslFile,
       tree: tree,
       stamp: stamp,
       owner: assetOwner,
@@ -637,6 +650,7 @@ Future<void> _buildMaterials({
     bundleFile: shippedBundleFile,
     sidecarFile: sidecarFile,
     indexFile: indexFile,
+    wgslFile: wgslFile,
     tree: tree,
     stamp: stamp,
     owner: assetOwner,
@@ -734,6 +748,7 @@ void _registerOutputs({
   required File bundleFile,
   required File sidecarFile,
   required File indexFile,
+  required File? wgslFile,
   required GeneratedAssetTree? tree,
   required String stamp,
   required String owner,
@@ -767,6 +782,8 @@ void _registerOutputs({
       'package': owner,
       'bundleName': bundleName,
       'shaderBundleFileName': bundleFile.uri.pathSegments.last,
+      if (wgslFile != null && wgslFile.existsSync())
+        'wgslFileName': wgslFile.uri.pathSegments.last,
       'sidecarFileName': sidecarFile.uri.pathSegments.last,
       'materials': {
         for (final key in sidecars.keys)
@@ -804,8 +821,24 @@ void _registerOutputs({
         stamp: stamp,
         owner: owner,
         target: target,
-      )
-      ..save();
+      );
+    if (wgslFile == null || !wgslFile.existsSync()) {
+      tree.drop(
+        GeneratedAssetFamily.material,
+        '$bundleName#wgsl',
+        target: target,
+      );
+    } else {
+      tree.recordFile(
+        family: GeneratedAssetFamily.material,
+        id: '$bundleName#wgsl',
+        uri: wgslFile.uri,
+        stamp: stamp,
+        owner: owner,
+        target: target,
+      );
+    }
+    tree.save();
   } else {
     buildOutput.assets.data.addAll([
       DataAsset(

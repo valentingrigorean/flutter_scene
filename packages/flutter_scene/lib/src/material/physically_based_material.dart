@@ -106,12 +106,7 @@ class PhysicallyBasedMaterial extends Material {
        _normalTexture = normalTexture,
        _emissiveTexture = emissiveTexture,
        _occlusionTexture = occlusionTexture {
-    setFragmentShaderName(
-      'StandardFragment',
-      cubeName: 'StandardCubeFragment',
-      noShadowName: 'StandardNoShadowFragment',
-      noShadowCubeName: 'StandardNoShadowCubeFragment',
-    );
+    _setStandardShaderNames(lightmapped: false);
   }
 
   /// Creates a material from normalized imported properties.
@@ -1173,19 +1168,28 @@ class PhysicallyBasedMaterial extends Material {
     final lightmapped = _usesLightmapVariant;
     if (lightmapped == _standardShaderNamesLightmapped) return;
     _standardShaderNamesLightmapped = lightmapped;
+    _setStandardShaderNames(lightmapped: lightmapped);
+  }
+
+  void _setStandardShaderNames({required bool lightmapped}) {
+    final prefix = lightmapped ? 'StandardLightmap' : 'Standard';
     setFragmentShaderName(
-      lightmapped ? 'StandardLightmapFragment' : 'StandardFragment',
-      cubeName: lightmapped
-          ? 'StandardLightmapCubeFragment'
-          : 'StandardCubeFragment',
-      noShadowName: lightmapped
-          ? 'StandardLightmapNoShadowFragment'
-          : 'StandardNoShadowFragment',
-      noShadowCubeName: lightmapped
-          ? 'StandardLightmapNoShadowCubeFragment'
-          : 'StandardNoShadowCubeFragment',
+      '${prefix}Fragment',
+      cubeName: '${prefix}CubeFragment',
+      noShadowName: '${prefix}NoShadowFragment',
+      noShadowCubeName: '${prefix}NoShadowCubeFragment',
+    );
+    setLeanFragmentShaderNames(
+      '${prefix}LeanFragment',
+      cubeName: '${prefix}LeanCubeFragment',
+      noShadowName: '${prefix}LeanNoShadowFragment',
+      noShadowCubeName: '${prefix}LeanNoShadowCubeFragment',
     );
   }
+
+  @override
+  EnvironmentMap drawEnvironment(Lighting lighting) =>
+      environment ?? lighting.environmentMap;
 
   void _ensurePreparedVariant() {
     if (!_materialDataDirty) return;
@@ -1630,7 +1634,7 @@ class PhysicallyBasedMaterial extends Material {
     // [fragmentShader] when the bound environment picks the cube radiance
     // layout. Slots must come from the shader actually drawn with.
     final shader = fragmentShaderForLighting(lighting);
-    final EnvironmentMap env = environment ?? lighting.environmentMap;
+    final env = drawEnvironment(lighting);
 
     // FragInfo std140 layout (624 bytes / 156 floats). EngineLightingUniforms
     // packs the shared engine lighting, image-based-lighting, and shadow
@@ -1674,7 +1678,9 @@ class PhysicallyBasedMaterial extends Material {
     fragInfo[122] = roughnessFactor;
     fragInfo[123] = normalTexture != null ? 1.0 : 0.0;
     fragInfo[124] = normalScale;
-    fragInfo[125] = occlusionStrength;
+    // Without a texture the occlusion is 1 at any strength; 0 lets the shader
+    // skip the read.
+    fragInfo[125] = occlusionTexture != null ? occlusionStrength : 0.0;
     fragInfo[132] = alphaMode.index.toDouble();
     fragInfo[133] = alphaCutoff;
     fragInfo[138] = specularAntiAliasingVariance;
