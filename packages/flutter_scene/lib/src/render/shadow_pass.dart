@@ -234,6 +234,12 @@ class ShadowPass extends RenderGraphPass {
   static final gpu.Shader _copyFragmentShader =
       baseShaderLibrary['ShadowCopyFragment']!;
 
+  /// The pipeline that replays a cached static tile into the atlas. A frame
+  /// first takes it once a static caster casts, which can be frames after a
+  /// warm-up, so the scene's warm-up builds it ahead.
+  static gpu.RenderPipeline tileCopyPipeline() =>
+      resolvePipeline(_copyVertexShader, _copyFragmentShader);
+
   // Two triangles of NDC positions covering the viewport (6 vec2s).
   static final gpu.DeviceBuffer _quadBuffer = gpu.gpuContext
       .createDeviceBufferWithCopy(
@@ -604,7 +610,7 @@ class ShadowPass extends RenderGraphPass {
       ),
     );
     pass.clearBindings();
-    final pipeline = resolvePipeline(_copyVertexShader, _copyFragmentShader);
+    final pipeline = tileCopyPipeline();
     pass.bindPipeline(pipeline);
     pass.setColorBlendEnable(false);
     pass.setCullMode(gpu.CullMode.none);
