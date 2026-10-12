@@ -2221,7 +2221,10 @@ base class Scene implements SceneGraph {
   /// and the sides of a wider view are culled away unwarmed. A shadow caster
   /// [unbuiltPipelines] lists that the frame's shadow pass leaves out, such as
   /// one in a cascade whose stale cached tile refreshes in a later frame, is
-  /// drawn into a scratch target, so its shadow pipeline is built too.
+  /// drawn into a scratch target, so its shadow pipeline is built too. Where
+  /// the directional light casts and caches static shadows, the pipeline that
+  /// copies a cached tile into the frame's atlas is built too, though no
+  /// static caster casts yet.
   ///
   /// Set [includeOffscreen] to encode every render item once. This costs more
   /// during loading, but avoids later pipeline stalls as a moving camera first
@@ -2286,6 +2289,7 @@ base class Scene implements SceneGraph {
     if (sliceBudget == null) {
       encode();
       _buildListedShadowCasters(views, querySize);
+      _buildShadowTileCopy();
       return;
     }
     // Each slice is a whole offscreen frame; stop once one encodes every view
@@ -2299,6 +2303,7 @@ base class Scene implements SceneGraph {
       withPipelineBuildBudget(sliceBudget, encode);
       if (_pacedFrameCount == paced && deferredPipelineBuilds == 0) {
         _buildListedShadowCasters(views, querySize);
+        _buildShadowTileCopy();
         return;
       }
       await Future<void>.delayed(const Duration(milliseconds: 16));
@@ -2352,6 +2357,18 @@ base class Scene implements SceneGraph {
     }
     encoder.flush();
     rendererSubmissions.submit(commandBuffer);
+  }
+
+  // Builds the pipeline that copies a cached static shadow tile into the
+  // atlas where the light caches static shadows: a frame takes it once a
+  // static caster casts, which can be after the warm-up's frames, as when a
+  // moving caster comes to rest.
+  void _buildShadowTileCopy() {
+    final light = renderScene.primaryDirectionalLight?.light;
+    if (light == null || !light.castsShadow || !light.cacheStaticShadows) {
+      return;
+    }
+    ShadowPass.tileCopyPipeline();
   }
 
   bool _warmUpIncludeOffscreen = false;
