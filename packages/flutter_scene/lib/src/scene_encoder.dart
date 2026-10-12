@@ -595,18 +595,19 @@ bool _deferBuild(
 ) {
   final budget = _buildBudget;
   if (budget == null || _pipelineCache.containsKey(key)) return false;
-  final instanced =
-      vertexLayout?.buffers.any(
-        (buffer) => buffer.stepMode == gpu.VertexStepMode.instance,
-      ) ??
-      false;
-  if (!(instanced && _instancedBuilt) && _buildClock.elapsed < budget) {
-    if (instanced) _instancedBuilt = true;
+  if (!(_instancedBuilt && _readsPerInstance(vertexLayout)) &&
+      _buildClock.elapsed < budget) {
     return false;
   }
   _deferredBuilds++;
   return true;
 }
+
+bool _readsPerInstance(VertexLayoutDescriptor? vertexLayout) =>
+    vertexLayout?.buffers.any(
+      (buffer) => buffer.stepMode == gpu.VertexStepMode.instance,
+    ) ??
+    false;
 
 /// Pipelines currently held in the process-wide cache.
 int get pipelineCacheSize => _pipelineCache.length;
@@ -642,6 +643,9 @@ gpu.RenderPipeline resolvePipeline(
     vertexLayout: vertexLayout?.toGpuLayout(),
   );
   _buildClock.stop();
+  if (_buildBudget != null && _readsPerInstance(vertexLayout)) {
+    _instancedBuilt = true;
+  }
   if (stopwatch != null) {
     stopwatch.stop();
     // A backend pipeline build is synchronous and lands mid-frame the first
