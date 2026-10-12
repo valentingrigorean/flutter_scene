@@ -82,4 +82,20 @@ void main() {
     // context. A caller still has to make progress rather than hang.
     await awaitRasterThread(timeout: timeout);
   });
+
+  test('waits for a scheduled frame on the root clock, so a zone with its own '
+      'clock owns no timer of the wait', () async {
+    TestWidgetsFlutterBinding.ensureInitialized().scheduleFrame();
+    final timers = <Duration>[];
+    await runZoned(
+      () => awaitScheduledFrame(timeout: timeout),
+      zoneSpecification: ZoneSpecification(
+        createTimer: (self, parent, zone, duration, callback) {
+          timers.add(duration);
+          return parent.createTimer(zone, duration, callback);
+        },
+      ),
+    );
+    expect(timers, isEmpty);
+  });
 }

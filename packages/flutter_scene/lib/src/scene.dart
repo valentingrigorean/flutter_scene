@@ -89,6 +89,7 @@ import 'render/render_stats.dart';
 import 'scene_encoder.dart'
     show
         beginDrawFailureFrame,
+        builtInstancedPipeline,
         colorPipelineInputs,
         colorPipelinesBuilt,
         coveragePipelineInputs,
@@ -2236,7 +2237,11 @@ base class Scene implements SceneGraph {
   /// device then keeps answering input and animating its loading screen
   /// instead of blocking for the whole compile (Android declares an app
   /// that ignores input for ten seconds not responding). A single build
-  /// longer than the budget still runs whole.
+  /// longer than the budget still runs whole. A slice builds at most one new
+  /// pipeline whose vertex layout reads a per-instance slot, and the next
+  /// slice waits for the frame the engine has scheduled, so a driver that
+  /// compiles such a pipeline at its first draw does so on that frame alone.
+  /// The listed shadow casters build within the same budget.
   /// {@category Assets and loading}
   Future<void> warmUp(
     List<RenderView> views, {
@@ -2295,18 +2300,38 @@ base class Scene implements SceneGraph {
     // Each slice is a whole offscreen frame; stop once one encodes every view
     // and skips nothing, or after a generous cap if something never finishes
     // building. A view paced by GPU backpressure re-presents its last image
-    // and resolves no pipelines, so it proves nothing.
+    // and resolves no pipelines, so it proves nothing. The shadow casters the
+    // query still lists build within the same budget once a frame skips
+    // nothing.
+    var frameBuilt = false;
+    var instanced = false;
     for (var slice = 0; slice < 1000; slice++) {
-      // Each slice compiles pipelines after a yield, so rendezvous again.
-      if (slice > 0) await awaitRasterThread();
+      if (slice > 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 16));
+        // A GLES driver compiles the vertex stage of a new pipeline that
+        // reads a per-instance slot when a present syncs with the slice's
+        // draws (Mesa radeonsi), so that compile lands on the frame the
+        // engine has scheduled rather than on the next slice's builds, which
+        // block this thread on the raster thread.
+        if (instanced) await awaitScheduledFrame();
+        // Each slice compiles pipelines after a yield, so rendezvous again.
+        await awaitRasterThread();
+      }
       final paced = _pacedFrameCount;
-      withPipelineBuildBudget(sliceBudget, encode);
-      if (_pacedFrameCount == paced && deferredPipelineBuilds == 0) {
-        _buildListedShadowCasters(views, querySize);
+      var deferred = 0;
+      withPipelineBuildBudget(sliceBudget, () {
+        if (!frameBuilt) {
+          encode();
+          frameBuilt = _pacedFrameCount == paced && deferredPipelineBuilds == 0;
+        }
+        if (frameBuilt) _buildListedShadowCasters(views, querySize);
+        deferred = deferredPipelineBuilds;
+        instanced = builtInstancedPipeline;
+      });
+      if (frameBuilt && deferred == 0) {
         _buildShadowTileCopy();
         return;
       }
-      await Future<void>.delayed(const Duration(milliseconds: 16));
     }
   }
 
