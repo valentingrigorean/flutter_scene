@@ -68,6 +68,32 @@ Future<void> awaitRasterThread({
   return completer.future;
 }
 
+/// Waits until the frame the engine has scheduled finishes on the UI thread,
+/// so the raster thread presents it next, or until [timeout].
+///
+/// Completes at once when no frame is scheduled or the embedder has frames
+/// disabled: nothing then presents soon, and waiting would only stall the
+/// caller. Like [awaitRasterThread], its timer runs in the root zone, so a
+/// widget test that never pumps that frame leaves no timer of its own
+/// pending.
+Future<void> awaitScheduledFrame({
+  Duration timeout = const Duration(milliseconds: 100),
+}) {
+  final binding = SchedulerBinding.instance;
+  if (!binding.framesEnabled || !binding.hasScheduledFrame) {
+    return Future<void>.value();
+  }
+  final completer = Completer<void>();
+  final giveUp = Zone.root.createTimer(timeout, () {
+    if (!completer.isCompleted) completer.complete();
+  });
+  binding.endOfFrame.whenComplete(() {
+    giveUp.cancel();
+    if (!completer.isCompleted) completer.complete();
+  });
+  return completer.future;
+}
+
 /// Paces a producer against presented frames.
 ///
 /// One pacer per producer (one radiance fill), because the degradation below

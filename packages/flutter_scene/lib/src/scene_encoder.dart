@@ -589,6 +589,11 @@ T withPipelineBuildBudget<T>(Duration budget, T Function() body) {
 @internal
 int get deferredPipelineBuilds => _deferredBuilds;
 
+/// Whether the last [withPipelineBuildBudget] built a new pipeline whose
+/// vertex layout reads a per-instance slot.
+@internal
+bool get builtInstancedPipeline => _instancedBuilt;
+
 bool _deferBuild(
   (gpu.Shader, gpu.Shader, int) key,
   VertexLayoutDescriptor? vertexLayout,
