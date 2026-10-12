@@ -559,9 +559,17 @@ final Set<(gpu.Shader, gpu.Shader, int)> _rejectedPipelines = {};
 Duration? _buildBudget;
 final Stopwatch _buildClock = Stopwatch();
 int _deferredBuilds = 0;
+bool _instancedBuilt = false;
 
 /// Runs [body] with new pipeline builds capped at [budget] of build time;
 /// draws past it are skipped and counted in [deferredPipelineBuilds].
+///
+/// A new pipeline whose vertex layout reads a per-instance slot builds at
+/// most once per call, whatever the time left: a GLES driver can compile the
+/// whole vertex stage of such a pipeline at its first draw (Mesa radeonsi
+/// compiles an instanced vertex shader as one monolithic variant on its
+/// driver thread, outside any disk cache), after the build this budget
+/// times, and the next frame waits for that compile.
 @internal
 T withPipelineBuildBudget<T>(Duration budget, T Function() body) {
   _buildBudget = budget;
@@ -569,6 +577,7 @@ T withPipelineBuildBudget<T>(Duration budget, T Function() body) {
     ..stop()
     ..reset();
   _deferredBuilds = 0;
+  _instancedBuilt = false;
   try {
     return body();
   } finally {
@@ -580,10 +589,21 @@ T withPipelineBuildBudget<T>(Duration budget, T Function() body) {
 @internal
 int get deferredPipelineBuilds => _deferredBuilds;
 
-bool _deferBuild((gpu.Shader, gpu.Shader, int) key) {
+bool _deferBuild(
+  (gpu.Shader, gpu.Shader, int) key,
+  VertexLayoutDescriptor? vertexLayout,
+) {
   final budget = _buildBudget;
   if (budget == null || _pipelineCache.containsKey(key)) return false;
-  if (_buildClock.elapsed < budget) return false;
+  final instanced =
+      vertexLayout?.buffers.any(
+        (buffer) => buffer.stepMode == gpu.VertexStepMode.instance,
+      ) ??
+      false;
+  if (!(instanced && _instancedBuilt) && _buildClock.elapsed < budget) {
+    if (instanced) _instancedBuilt = true;
+    return false;
+  }
   _deferredBuilds++;
   return true;
 }
@@ -913,7 +933,7 @@ gpu.RenderPipeline? resolvePipelineOrDefer(
     vertexShader,
     fragmentShader,
     vertexLayoutId(vertexLayout),
-  ))) {
+  ), vertexLayout)) {
     return null;
   }
   return resolvePipeline(
@@ -970,7 +990,7 @@ gpu.RenderPipeline? tryResolvePipeline(
   if (cached != null) return cached;
   final key = (vertexShader, fragmentShader, layoutId);
   if (_rejectedPipelines.contains(key)) return null;
-  if (_deferBuild(key)) return null;
+  if (_deferBuild(key, vertexLayout)) return null;
   // A ShaderMaterial pairing whose reflection is still loading cannot be
   // checked yet, so its draw waits rather than risking a refusal.
   if (stageInterfaceDeferred(vertexShader, fragmentShader)) return null;
