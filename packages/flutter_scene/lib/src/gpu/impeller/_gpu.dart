@@ -15,4 +15,5 @@ part 'encoded_image.dart';
 part 'host.dart';
 part 'present.dart';
 part 'shader_library_inline.dart';
+part 'shader_names.dart';
 part 'surface.dart';

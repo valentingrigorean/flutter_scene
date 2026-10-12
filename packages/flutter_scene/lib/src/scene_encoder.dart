@@ -7,6 +7,10 @@ import 'package:flutter/foundation.dart'
     show debugPrint, internal, kDebugMode, visibleForTesting;
 import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/gpu/shared/shader_library_sources.dart'
+    show knownShaderLibraries;
+import 'package:flutter_scene/src/shader_reflection/shader_reflection.dart'
+    show ShaderReflection;
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/camera.dart';
@@ -605,6 +609,9 @@ gpu.RenderPipeline resolvePipeline(
   final key = (vertexShader, fragmentShader, layoutId);
   activeRenderCounters.pipelineBuilds++;
   _scenePipelinesBuilt++;
+  _scenePipelineNames.add(
+    _pipelineName(vertexShader, fragmentShader, vertexLayout),
+  );
   final stopwatch = kDebugMode || profileRendering
       ? (Stopwatch()..start())
       : null;
@@ -643,6 +650,44 @@ int _scenePipelinesBuilt = 0;
 /// of them, so a frame after `Scene.unbuiltPipelines` listed nothing keeps
 /// it.
 int get scenePipelinesBuilt => _scenePipelinesBuilt;
+
+final List<String> _scenePipelineNames = [];
+
+/// The render pipelines [scenePipelinesBuilt] counts past its first [count],
+/// oldest first, each named as the pipeline cache keys it: the vertex
+/// shader, the fragment shader and the vertex layout, as
+/// `vertex + fragment [layout]`.
+///
+/// A shader is named by its entry in the shader library that handed it out,
+/// or by its reflection where the library keeps its entries private; a
+/// layout lists each buffer slot's stride, step mode and attributes, and a
+/// pipeline on the shader's own reflected layout reads `[reflected]`.
+List<String> scenePipelinesBuiltSince(int count) =>
+    count >= _scenePipelineNames.length
+    ? const []
+    : List.unmodifiable(_scenePipelineNames.skip(math.max(count, 0)));
+
+String _pipelineName(
+  gpu.Shader vertexShader,
+  gpu.Shader fragmentShader,
+  VertexLayoutDescriptor? vertexLayout,
+) =>
+    '${_shaderName(vertexShader)} + ${_shaderName(fragmentShader)} '
+    '[${vertexLayout == null ? 'reflected' : _layoutName(vertexLayout)}]';
+
+String _shaderName(gpu.Shader shader) {
+  for (final library in knownShaderLibraries()) {
+    if (gpu.loadedShaderName(library, shader) case final name?) return name;
+  }
+  return ShaderReflection.nameOf(shader) ?? 'unnamed shader';
+}
+
+String _layoutName(VertexLayoutDescriptor layout) => [
+  for (final buffer in layout.buffers)
+    '${buffer.strideInBytes} B'
+        '${buffer.stepMode == gpu.VertexStepMode.instance ? ' per instance' : ''}'
+        ': ${buffer.attributes.map((attribute) => attribute.name).join(', ')}',
+].join('; ');
 
 /// What keys a render pipeline: the vertex shader, the fragment shader, and
 /// the vertex layout a draw binds.
