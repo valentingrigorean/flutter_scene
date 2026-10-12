@@ -2359,8 +2359,9 @@ base class Scene implements SceneGraph {
     rendererSubmissions.submit(commandBuffer);
   }
 
-  // Builds the pipeline that copies a cached static shadow tile into the
-  // atlas where the light caches static shadows: a frame takes it once a
+  // Draws once the copy of a cached static shadow tile into the atlas where
+  // the light caches static shadows, so its pipeline and the backend's
+  // pipeline state are built: a frame takes it once a
   // static caster casts, which can be after the warm-up's frames, as when a
   // moving caster comes to rest.
   void _buildShadowTileCopy() {
@@ -2368,7 +2369,7 @@ base class Scene implements SceneGraph {
     if (light == null || !light.castsShadow || !light.cacheStaticShadows) {
       return;
     }
-    ShadowPass.tileCopyPipeline();
+    ShadowPass.warmUpTileCopy();
   }
 
   bool _warmUpIncludeOffscreen = false;

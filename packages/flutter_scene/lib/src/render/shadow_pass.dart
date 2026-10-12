@@ -234,11 +234,53 @@ class ShadowPass extends RenderGraphPass {
   static final gpu.Shader _copyFragmentShader =
       baseShaderLibrary['ShadowCopyFragment']!;
 
-  /// The pipeline that replays a cached static tile into the atlas. A frame
-  /// first takes it once a static caster casts, which can be frames after a
-  /// warm-up, so the scene's warm-up builds it ahead.
-  static gpu.RenderPipeline tileCopyPipeline() =>
-      resolvePipeline(_copyVertexShader, _copyFragmentShader);
+  /// Draws the replay of a cached static tile once, from a cleared scratch
+  /// tile into a scratch target with the atlas's formats, so the pipeline
+  /// and the backend's pipeline state for the atlas are built. A frame first
+  /// replays a tile once a static caster casts, which can be frames after a
+  /// warm-up, so the scene's warm-up runs this ahead.
+  static void warmUpTileCopy() {
+    final depthMap = shadowMapIsDepth;
+    gpu.Texture scratch(gpu.PixelFormat format, {bool read = false}) =>
+        gpu.gpuContext.createTexture(
+          gpu.StorageMode.devicePrivate,
+          1,
+          1,
+          format: format,
+          enableRenderTargetUsage: true,
+          enableShaderReadUsage: read,
+        );
+    final depthFormat = gpu.gpuContext.defaultDepthStencilFormat;
+    final tile = depthMap
+        ? scratch(depthFormat, read: true)
+        : scratch(shadowMapFormat, read: true);
+    final tileBuffer = gpu.gpuContext.createCommandBuffer();
+    tileBuffer.createRenderPass(
+      depthMap
+          ? _shadowTarget(
+              color: scratch(shadowPassColorFormat),
+              depth: tile,
+              depthMap: true,
+            )
+          : _shadowTarget(
+              color: tile,
+              depth: scratch(depthFormat),
+              depthMap: false,
+            ),
+    );
+    rendererSubmissions.submit(tileBuffer);
+    final copyBuffer = gpu.gpuContext.createCommandBuffer();
+    final pass = copyBuffer.createRenderPass(
+      _shadowTarget(
+        color: scratch(shadowPassColorFormat),
+        depth: scratch(depthFormat),
+        depthMap: depthMap,
+      ),
+    );
+    pass.setViewport(gpu.Viewport(x: 0, y: 0, width: 1, height: 1));
+    _drawTileCopy(pass, tile);
+    rendererSubmissions.submit(copyBuffer);
+  }
 
   // Two triangles of NDC positions covering the viewport (6 vec2s).
   static final gpu.DeviceBuffer _quadBuffer = gpu.gpuContext
@@ -609,8 +651,14 @@ class ShadowPass extends RenderGraphPass {
         height: _tileResolution,
       ),
     );
+    _drawTileCopy(pass, source);
+  }
+
+  // The copy draw of [_encodeTileCopy] and [warmUpTileCopy], so both build
+  // the same pipeline state.
+  static void _drawTileCopy(gpu.RenderPass pass, gpu.Texture source) {
     pass.clearBindings();
-    final pipeline = tileCopyPipeline();
+    final pipeline = resolvePipeline(_copyVertexShader, _copyFragmentShader);
     pass.bindPipeline(pipeline);
     pass.setColorBlendEnable(false);
     pass.setCullMode(gpu.CullMode.none);
