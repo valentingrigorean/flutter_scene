@@ -429,6 +429,7 @@ export 'src/scene_encoder.dart'
         SceneTranslucentDraw,
         maxSceneColorCaptureBatches,
         scenePipelinesBuilt,
+        scenePipelinesBuiltSince,
         sceneSortDepth,
         sceneTranslucentDraws;
 export 'src/unbuilt_pipeline.dart' show ScenePipelinePass, UnbuiltPipelineDraw;

@@ -162,6 +162,34 @@ void main() {
   });
 
   test(
+    'scenePipelinesBuiltSince names each pipeline a render builds by '
+    'its shader pair and vertex layout, and none once they are built',
+    () async {
+      final scene = await _scene();
+      scene.add(_box('box', material: UnlitMaterial()));
+      final views = [RenderView(camera: _camera())];
+
+      final before = scenePipelinesBuilt;
+      expect(scenePipelinesBuiltSince(before), isEmpty);
+      _frame(scene, views, _square);
+      final names = scenePipelinesBuiltSince(before);
+      expect(names, hasLength(scenePipelinesBuilt - before));
+      expect(
+        names,
+        contains(
+          allOf(
+            startsWith('UnskinnedVertex + UnlitFragment ['),
+            contains('per instance'),
+          ),
+        ),
+      );
+      final built = scenePipelinesBuilt;
+      _frame(scene, views, _square);
+      expect(scenePipelinesBuiltSince(built), isEmpty);
+    },
+  );
+
+  test(
     'a hidden node, a node behind the camera and a node on a layer '
     'the view masks out are not listed; a view of that layer lists it',
     () async {
