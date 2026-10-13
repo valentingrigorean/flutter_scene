@@ -154,8 +154,13 @@ String? recordPassDraw(gpu.RenderPass pass) {
   return state.description;
 }
 
-/// The render pass setters that also record the state for [recordPassDraw].
-@internal
+/// The render pass setters that also record the state the scene's pipeline
+/// meter keys a draw by.
+///
+/// A `Geometry` whose `draw` sets its own blend, depth, stencil, cull,
+/// winding or primitive state sets it through these, so a draw the scene
+/// encodes counts each native pipeline state it meets in
+/// `scenePipelinesBuilt`.
 extension TrackedPassState on gpu.RenderPass {
   void bindTrackedPipeline(gpu.RenderPipeline pipeline) {
     bindPipeline(pipeline);
