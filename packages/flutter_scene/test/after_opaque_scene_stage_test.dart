@@ -1,5 +1,6 @@
 // A custom pass of RenderStage.afterOpaqueScene runs on the scene color
-// between the opaque draws, those that blend in the opaque pass among them,
+// after the opaque draws below its render order, those that blend in the
+// opaque pass among them, and before the opaque draws of its order and above
 // and the translucent draws, which then draw over what it composed.
 
 import 'dart:typed_data';
@@ -33,13 +34,19 @@ class _RecordingMaterial extends UnlitMaterial {
 }
 
 class _FillPass extends CustomRenderPass {
-  _FillPass(this.drawn);
+  _FillPass(this.label, this.drawn, {this.fill, this.order = double.infinity});
 
+  final String label;
   final List<String> drawn;
+  final Vector4? fill;
+  final double order;
   final List<gpu.PixelFormat> formats = [];
 
   @override
-  String get name => 'fill';
+  String get name => label;
+
+  @override
+  double get beforeRenderOrder => order;
 
   @override
   RenderStage get stage => RenderStage.afterOpaqueScene;
@@ -49,16 +56,18 @@ class _FillPass extends CustomRenderPass {
 
   @override
   void execute(RenderPassContext context) {
-    drawn.add('fill');
+    drawn.add(label);
     final color = context.currentColor;
     formats.add(color.format);
+    final fill = this.fill;
+    if (fill == null) return;
     final commands = gpu.gpuContext.createCommandBuffer();
     commands.createRenderPass(
       gpu.RenderTarget.singleColor(
         gpu.ColorAttachment(
           texture: color,
           loadAction: gpu.LoadAction.clear,
-          clearValue: Vector4(1, 0, 0, 1),
+          clearValue: fill,
         ),
       ),
     );
@@ -114,13 +123,15 @@ List<int> _pixel(Uint8List rgba, int x, int y) {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a pass after the opaque scene runs between the opaque draws and the '
-      'translucent draws on the HDR scene color, and the translucent draws '
-      'blend over what it drew', () async {
+  test('a pass after the opaque scene runs on the HDR scene color before the '
+      'opaque draws of its render order and above, which blend over what it '
+      'drew as the translucent draws do, and a pass of no order runs after '
+      'every opaque draw', () async {
     if (!gpuAvailable()) return;
     await Scene.initializeStaticResources();
     final drawn = <String>[];
-    final pass = _FillPass(drawn);
+    final pass = _FillPass('fill', drawn, fill: Vector4(1, 0, 0, 1), order: 1);
+    final last = _FillPass('last', drawn);
     final scene = Scene()
       ..toneMapping = ToneMappingMode.linear
       ..add(
@@ -149,18 +160,19 @@ void main() {
           x: -50,
         ),
       )
+      ..addRenderPass(last)
       ..addRenderPass(pass);
 
     final rgba = await _frame(scene);
     scene.dispose();
 
-    expect(drawn, ['wall', 'overlay', 'fill', 'glass']);
+    expect(drawn, ['wall', 'fill', 'overlay', 'last', 'glass']);
     expect(pass.formats.single, gpu.PixelFormat.r16g16b16a16Float);
-    final filled = _pixel(rgba, 50, 100);
-    final glazed = _pixel(rgba, 150, 100);
-    expect(filled[0], greaterThan(240), reason: 'the fill at $filled');
-    expect(filled[1] + filled[2], lessThan(16), reason: 'the fill at $filled');
-    expect(glazed[0], greaterThan(100), reason: 'the glass at $glazed');
-    expect(glazed[2], greaterThan(100), reason: 'the glass at $glazed');
+    for (final x in [50, 150]) {
+      final over = _pixel(rgba, x, 100);
+      expect(over[0], greaterThan(100), reason: 'the fill under $over');
+      expect(over[1], lessThan(16), reason: 'no wall over the fill at $over');
+      expect(over[2], greaterThan(100), reason: 'the blend over $over');
+    }
   });
 }

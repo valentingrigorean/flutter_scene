@@ -63,13 +63,16 @@ ByteData packPostShadowInfo(
 /// display-referred image (after the resolve/tone-mapping pass).
 /// {@category Rendering}
 enum RenderStage {
-  /// Between the opaque and the translucent draws of the scene, on the linear
-  /// HDR scene color, so the translucent surfaces draw over what the pass
-  /// composes. The opaque draws include the materials that blend in the
-  /// opaque pass (`Material.blendsInOpaquePass`). A pass here splits the scene
-  /// pass around it: the linear depth ([RenderInput.depth]) is present, and
-  /// the depth the scene pass stores ([RenderInput.depthAttachment],
-  /// [RenderInput.depthStored]) is not yet published.
+  /// Among the opaque draws of the scene, on the linear HDR scene color:
+  /// after the opaque draws of a render order below
+  /// [CustomRenderPass.beforeRenderOrder] and before the others and every
+  /// translucent draw, so those draw over what the pass composes. By default
+  /// it runs after every opaque draw. The opaque draws include the materials
+  /// that blend in the opaque pass (`Material.blendsInOpaquePass`). A pass
+  /// here splits the scene pass around it: the linear depth
+  /// ([RenderInput.depth]) is present, and the depth the scene pass stores
+  /// ([RenderInput.depthAttachment], [RenderInput.depthStored]) is not yet
+  /// published.
   afterOpaqueScene,
 
   /// Right after the scene is drawn (opaque and transparent), on the linear
@@ -208,6 +211,11 @@ abstract class CustomRenderPass {
   /// that draws for one view of a frame costs the other views nothing. True
   /// for every view by default.
   bool runsIn(RenderView view) => true;
+
+  /// At [RenderStage.afterOpaqueScene], the render order whose opaque draws
+  /// and those above it draw after this pass. Infinity, the default, runs it
+  /// after every opaque draw.
+  double get beforeRenderOrder => double.infinity;
 
   /// Whether this pass draws onto [RenderPassContext.currentColor] in place,
   /// in a render pass of its own that loads that image, where the other

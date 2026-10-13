@@ -77,6 +77,15 @@ int transmissionFilterBandOffset(int width, int level) {
   return width - (width + divisor - 1) ~/ divisor;
 }
 
+/// The custom passes the scene pass runs before the opaque draws of [order]
+/// and above, at `RenderStage.afterOpaqueScene`.
+class OpaqueSplit {
+  const OpaqueSplit(this.order, this.passes);
+
+  final double order;
+  final List<RenderGraphPass> passes;
+}
+
 /// Draws the scene's render items (opaque, then depth-sorted
 /// translucent) into a floating-point HDR color target, publishing it on
 /// the render-graph blackboard for the resolve pass to read. If a
@@ -113,7 +122,7 @@ class ScenePass extends RenderGraphPass {
     int layerMask = kRenderLayerAll,
     Fog? fog,
     bool captureOpaqueColor = false,
-    List<RenderGraphPass> afterOpaque = const [],
+    List<OpaqueSplit> afterOpaque = const [],
     bool displayReferredLayer = false,
     gpu.PixelFormat? displayReferredFormat,
     int maxCaptureBatches = maxSceneColorCaptureBatches,
@@ -206,9 +215,10 @@ class ScenePass extends RenderGraphPass {
   // depth, and the engine time for material animation.
   final bool _captureOpaqueColor;
 
-  // The custom passes of RenderStage.afterOpaqueScene, run on the scene color
-  // between the opaque and the translucent draws, which split the scene pass.
-  final List<RenderGraphPass> _afterOpaque;
+  // The custom passes of RenderStage.afterOpaqueScene, in rising render
+  // order, each run on the scene color before the opaque draws of its render
+  // order and above, which split the scene pass.
+  final List<OpaqueSplit> _afterOpaque;
 
   // The scene holds a display-referred surface, so depth must survive the
   // scene's own passes and the extra layer is drawn after them.
@@ -540,28 +550,54 @@ class ScenePass extends RenderGraphPass {
     // initial target. Later screen-reading batches alternate targets. Readers
     // with disjoint projected bounds share a capture, while overlapping
     // readers get the accumulated color produced by the preceding batch.
-    encoder.flushOpaque();
-    if (!splits &&
-        encoder.hasPendingTranslucent &&
-        !encoder.nextTranslucentBatchReadsSceneColor) {
-      encoder.flushNextTranslucentBatch();
-    }
-    if (!encoder.hasPendingTranslucent) {
-      _encodeDebugOverlays(renderPass, context.transientsBuffer, encoder);
-    }
-    rendererSubmissions.submit(commandBuffer);
-
     var currentColor = hdrColor;
     var nextColor = alternateColor!;
-    if (splits) {
+    var commands = commandBuffer;
+    var drawing = renderPass;
+    for (final split in _afterOpaque) {
+      encoder.flushOpaqueBelow(split.order);
+      rendererSubmissions.submit(commands);
       context.blackboard.set(kSceneColorBlackboardKey, currentColor);
-      for (final pass in _afterOpaque) {
+      for (final pass in split.passes) {
         pass.execute(context);
       }
       currentColor = context.blackboard.require<gpu.Texture>(
         kSceneColorBlackboardKey,
       );
+      final attachment = gpu.ColorAttachment(
+        texture: _enableMsaa ? msaaColor! : nextColor,
+      );
+      if (_enableMsaa) {
+        attachment.resolveTexture = nextColor;
+        attachment.storeAction = gpu.StoreAction.multisampleResolve;
+      }
+      commands = gpu.gpuContext.createCommandBuffer();
+      drawing = commands.createRenderPass(
+        gpu.RenderTarget.singleColor(
+          attachment,
+          depthStencilAttachment: gpu.DepthStencilAttachment(
+            texture: depth,
+            depthLoadAction: gpu.LoadAction.load,
+            depthStoreAction: gpu.StoreAction.store,
+            depthClearValue: depthRasterOf(_camera).clearDepth,
+          ),
+        ),
+      );
+      _encodeCopy(drawing, currentColor);
+      encoder.continueIn(drawing);
+      final drawn = nextColor;
+      nextColor = currentColor;
+      currentColor = drawn;
     }
+    encoder.flushOpaque();
+    if (encoder.hasPendingTranslucent &&
+        !encoder.nextTranslucentBatchReadsSceneColor) {
+      encoder.flushNextTranslucentBatch();
+    }
+    if (!encoder.hasPendingTranslucent) {
+      _encodeDebugOverlays(drawing, context.transientsBuffer, encoder);
+    }
+    rendererSubmissions.submit(commands);
     gpu.Texture? transmissionAtlas;
     List<gpu.Texture>? transmissionMips;
     var captureBatch = 0;
