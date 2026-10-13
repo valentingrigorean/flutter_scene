@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:vector_math/vector_math.dart' show Matrix4, Vector3;
 
+import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/fmat/fmat_ast.dart' show DepthSurfaceKind;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
@@ -650,8 +651,8 @@ abstract class Material {
     TransientWriter transientsBuffer,
     Lighting lighting,
   ) {
-    pass.setCullMode(renderCullMode);
-    pass.setWindingOrder(gpu.WindingOrder.clockwise);
+    pass.setTrackedCullMode(renderCullMode);
+    pass.setTrackedWindingOrder(gpu.WindingOrder.clockwise);
   }
 
   /// The face-culling mode geometry drawn with this material renders with.

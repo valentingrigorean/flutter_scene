@@ -26,6 +26,7 @@ import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/material/engine_lighting.dart';
 import 'package:flutter_scene/src/material/shader_interface.dart';
 import 'package:flutter_scene/src/node.dart';
+import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/projection_params.dart';
 import 'package:flutter_scene/src/render/custom_render_pass.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
@@ -654,9 +655,8 @@ gpu.RenderPipeline resolvePipeline(
   final key = (vertexShader, fragmentShader, layoutId);
   activeRenderCounters.pipelineBuilds++;
   _scenePipelinesBuilt++;
-  _scenePipelineNames.add(
-    _pipelineName(vertexShader, fragmentShader, vertexLayout),
-  );
+  final name = _pipelineName(vertexShader, fragmentShader, vertexLayout);
+  _scenePipelineNames.add(name);
   final stopwatch = kDebugMode || profileRendering
       ? (Stopwatch()..start())
       : null;
@@ -685,9 +685,22 @@ gpu.RenderPipeline resolvePipeline(
       );
     }
   }
+  _pipelineNames[pipeline] = name;
   (_pipelineIndex[vertexShader] ??= HashMap.identity())[fragmentShader] ??= {};
   _pipelineIndex[vertexShader]![fragmentShader]![layoutId] = pipeline;
   return _pipelineCache[key] = pipeline;
+}
+
+final Expando<String> _pipelineNames = Expando('pipeline name');
+
+/// Counts in [scenePipelinesBuilt] the draw [pass] records next with
+/// [pipeline] when [pipeline] drew before in another native pipeline state.
+void countPipelineState(gpu.RenderPass pass, gpu.RenderPipeline? pipeline) {
+  if (recordPassDraw(pass) case final state?) {
+    _scenePipelinesBuilt++;
+    final name = pipeline == null ? null : _pipelineNames[pipeline];
+    _scenePipelineNames.add('${name ?? 'unnamed'} {$state}');
+  }
 }
 
 int _scenePipelinesBuilt = 0;
@@ -697,6 +710,12 @@ int _scenePipelinesBuilt = 0;
 /// the passes that share their pipeline cache. A render that leaves it unchanged built none
 /// of them, so a frame after `Scene.unbuiltPipelines` listed nothing keeps
 /// it.
+///
+/// The backend builds a native pipeline for each render target, blend,
+/// depth, stencil, cull, winding and primitive state a render pipeline draws
+/// in. A color, coverage, depth prepass or shadow caster draw in a state its
+/// pipeline has not drawn in before counts here too, so a pipeline built in
+/// a warm-up and drawn later in another state counts once more.
 int get scenePipelinesBuilt => _scenePipelinesBuilt;
 
 final List<String> _scenePipelineNames = [];
@@ -709,7 +728,9 @@ final List<String> _scenePipelineNames = [];
 /// A shader is named by its entry in the shader library that handed it out,
 /// or by its reflection where the library keeps its entries private; a
 /// layout lists each buffer slot's stride, step mode and attributes, and a
-/// pipeline on the shader's own reflected layout reads `[reflected]`.
+/// pipeline on the shader's own reflected layout reads `[reflected]`. A
+/// pipeline drawn in a further state is followed by that state, as
+/// `vertex + fragment [layout] {target, blend, depth, cull}`.
 List<String> scenePipelinesBuiltSince(int count) =>
     count >= _scenePipelineNames.length
     ? const []
@@ -1087,6 +1108,7 @@ void drawOrRejectPipeline(
   int instanceCount = 1,
   Material? material,
 }) {
+  countPipelineState(pass, pipeline);
   try {
     geometry.draw(pass, instanceCount: instanceCount);
   } on Exception catch (error) {
@@ -1205,9 +1227,9 @@ base class SceneEncoder {
     _lodProjection = lodProjectionOf(_camera, _dimensions);
 
     // Begin the opaque phase.
-    _renderPass.setDepthWriteEnable(true);
-    _renderPass.setColorBlendEnable(false);
-    _renderPass.setDepthCompareOperation(_raster.nearerOrEqual);
+    _renderPass.setTrackedDepthWriteEnable(true);
+    _renderPass.setTrackedColorBlendEnable(false);
+    _renderPass.setTrackedDepthCompareOperation(_raster.nearerOrEqual);
   }
 
   final Camera _camera;
@@ -1685,7 +1707,7 @@ base class SceneEncoder {
   void _bindPipeline(gpu.RenderPipeline pipeline) {
     if (identical(_boundPipeline, pipeline)) return;
     activeRenderCounters.pipelineBinds++;
-    _renderPass.bindPipeline(pipeline);
+    _renderPass.bindTrackedPipeline(pipeline);
     _boundPipeline = pipeline;
   }
 
@@ -1893,15 +1915,15 @@ base class SceneEncoder {
       // The coverage pre-draw and the fallback debug shader have none of the
       // material's fragment slots; only the pass state and the vertex stage
       // are the material's.
-      _renderPass.setCullMode(material.renderCullMode);
-      _renderPass.setWindingOrder(gpu.WindingOrder.clockwise);
+      _renderPass.setTrackedCullMode(material.renderCullMode);
+      _renderPass.setTrackedWindingOrder(gpu.WindingOrder.clockwise);
       if (_coveragePass) _bindCoverage(material, fade);
     } else {
       material.lodFade = fade;
       material.bind(_renderPass, _transientsBuffer, _lighting);
     }
     final faceCull = _faceCull;
-    if (faceCull != null) _renderPass.setCullMode(faceCull);
+    if (faceCull != null) _renderPass.setTrackedCullMode(faceCull);
     _boundMaterialFaceCull = faceCull;
     _boundWindingOrder = null;
     if (materialVertex != null) {
@@ -1940,13 +1962,13 @@ base class SceneEncoder {
 
   void _setWindingOrder(gpu.WindingOrder windingOrder) {
     if (_boundWindingOrder == windingOrder) return;
-    _renderPass.setWindingOrder(windingOrder);
+    _renderPass.setTrackedWindingOrder(windingOrder);
     _boundWindingOrder = windingOrder;
   }
 
   void _setPrimitiveType(gpu.PrimitiveType primitiveType) {
     if (_boundPrimitiveType == primitiveType) return;
-    _renderPass.setPrimitiveType(primitiveType);
+    _renderPass.setTrackedPrimitiveType(primitiveType);
     _boundPrimitiveType = primitiveType;
   }
 
@@ -2453,9 +2475,9 @@ base class SceneEncoder {
   /// the depth the earlier draws wrote.
   void continueIn(gpu.RenderPass pass) {
     _rebind(pass);
-    _renderPass.setDepthWriteEnable(true);
-    _renderPass.setColorBlendEnable(false);
-    _renderPass.setDepthCompareOperation(_raster.nearerOrEqual);
+    _renderPass.setTrackedDepthWriteEnable(true);
+    _renderPass.setTrackedColorBlendEnable(false);
+    _renderPass.setTrackedDepthCompareOperation(_raster.nearerOrEqual);
   }
 
   bool _opaqueSorted = false;
@@ -2543,23 +2565,23 @@ base class SceneEncoder {
       if (coverage != null) {
         _coveragePass = true;
         _renderPass.setStencilReference(1);
-        _renderPass.setStencilConfig(_markCoverage);
+        _renderPass.setTrackedStencilConfig(_markCoverage);
         _encodeOpaqueRun(index, end, coverage, record.fade);
         _coveragePass = false;
-        _renderPass.setStencilConfig(_testCoverage);
-        _renderPass.setDepthCompareOperation(gpu.CompareFunction.equal);
-        _renderPass.setDepthWriteEnable(false);
+        _renderPass.setTrackedStencilConfig(_testCoverage);
+        _renderPass.setTrackedDepthCompareOperation(gpu.CompareFunction.equal);
+        _renderPass.setTrackedDepthWriteEnable(false);
         _encodeOpaqueRun(index, end, record.pipeline, 1.0);
-        _renderPass.setStencilConfig(_noStencil);
-        _renderPass.setDepthCompareOperation(_raster.nearerOrEqual);
-        _renderPass.setDepthWriteEnable(true);
+        _renderPass.setTrackedStencilConfig(_noStencil);
+        _renderPass.setTrackedDepthCompareOperation(_raster.nearerOrEqual);
+        _renderPass.setTrackedDepthWriteEnable(true);
       } else if (record.material.blendsInOpaquePass) {
-        _renderPass.setDepthWriteEnable(false);
-        _renderPass.setColorBlendEnable(true);
-        _renderPass.setColorBlendEquation(_premultipliedOver);
+        _renderPass.setTrackedDepthWriteEnable(false);
+        _renderPass.setTrackedColorBlendEnable(true);
+        _renderPass.setTrackedColorBlendEquation(_premultipliedOver);
         _encodeOpaqueRun(index, end, record.pipeline, record.fade);
-        _renderPass.setColorBlendEnable(false);
-        _renderPass.setDepthWriteEnable(true);
+        _renderPass.setTrackedColorBlendEnable(false);
+        _renderPass.setTrackedDepthWriteEnable(true);
       } else {
         end = _instanceBatchEnd(index);
         if (end - index > 1) {
@@ -3027,18 +3049,20 @@ base class SceneEncoder {
     _phase = DrawPhase.translucent;
 
     if (translucentPass != null) _rebind(translucentPass);
-    _renderPass.setDepthCompareOperation(_raster.nearerOrEqual);
+    _renderPass.setTrackedDepthCompareOperation(_raster.nearerOrEqual);
     final encodeWatch = profileRendering ? (Stopwatch()..start()) : null;
-    _renderPass.setDepthWriteEnable(false);
-    _renderPass.setColorBlendEnable(true);
-    _renderPass.setColorBlendEquation(_premultipliedOver);
+    _renderPass.setTrackedDepthWriteEnable(false);
+    _renderPass.setTrackedColorBlendEnable(true);
+    _renderPass.setTrackedColorBlendEquation(_premultipliedOver);
 
     while (_translucentCursor < end) {
       final record = _translucentRecords[_translucentCursor++];
-      _renderPass.setDepthWriteEnable(record.material.translucentDepthWrite);
+      _renderPass.setTrackedDepthWriteEnable(
+        record.material.translucentDepthWrite,
+      );
       // Set per record, like the depth write above, so a projection volume
       // drawn with `always` cannot leak that test into the next draw.
-      _renderPass.setDepthCompareOperation(
+      _renderPass.setTrackedDepthCompareOperation(
         _raster.compare(record.material.depthCompare),
       );
       record.material.lightListOffset = record.lightListOffset;
@@ -3114,12 +3138,12 @@ base class SceneEncoder {
     _boundPrimitiveType = null;
     EngineLightingUniforms.invalidateBindMemo();
 
-    _renderPass.setDepthWriteEnable(false);
-    _renderPass.setColorBlendEnable(true);
-    _renderPass.setColorBlendEquation(_premultipliedOver);
+    _renderPass.setTrackedDepthWriteEnable(false);
+    _renderPass.setTrackedColorBlendEnable(true);
+    _renderPass.setTrackedColorBlendEquation(_premultipliedOver);
 
     for (final record in _displayReferredRecords) {
-      _renderPass.setDepthCompareOperation(
+      _renderPass.setTrackedDepthCompareOperation(
         _raster.compare(record.material.depthCompare),
       );
       record.material.lightListOffset = record.lightListOffset;

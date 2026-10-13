@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_scene/src/geometry/geometry.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
+import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/debug_view.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
@@ -81,12 +82,12 @@ class _WireframeEncoder {
     this._layerMask,
     this._frame,
   ) {
-    _pass.setDepthWriteEnable(false);
-    _pass.setDepthCompareOperation(_raster.nearerOrEqual);
-    _pass.setCullMode(gpu.CullMode.none);
-    _pass.setWindingOrder(gpu.WindingOrder.clockwise);
-    _pass.setColorBlendEnable(true);
-    _pass.setColorBlendEquation(
+    _pass.setTrackedDepthWriteEnable(false);
+    _pass.setTrackedDepthCompareOperation(_raster.nearerOrEqual);
+    _pass.setTrackedCullMode(gpu.CullMode.none);
+    _pass.setTrackedWindingOrder(gpu.WindingOrder.clockwise);
+    _pass.setTrackedColorBlendEnable(true);
+    _pass.setTrackedColorBlendEquation(
       gpu.ColorBlendEquation(
         colorBlendOperation: gpu.BlendOperation.add,
         sourceColorBlendFactor: gpu.BlendFactor.one,
@@ -162,10 +163,10 @@ class _WireframeEncoder {
           geometry.instancedVertexLayoutFor(null, attributes),
     );
     if (!identical(_boundPipeline, pipeline)) {
-      _pass.bindPipeline(pipeline);
+      _pass.bindTrackedPipeline(pipeline);
       _boundPipeline = pipeline;
     }
-    _pass.setPrimitiveType(gpu.PrimitiveType.line);
+    _pass.setTrackedPrimitiveType(gpu.PrimitiveType.line);
     _pass.bindUniform(
       _fragment.cachedUniformSlot('MaskInfo'),
       _transients.emplace(ByteData.sublistView(_color)),

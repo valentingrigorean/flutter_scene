@@ -15,6 +15,7 @@ import 'package:flutter_scene/src/material/physically_based_material.dart'
 import 'package:flutter_scene/src/material/unlit_material.dart';
 import 'package:flutter_scene/src/mesh.dart';
 import 'package:flutter_scene/src/particles/distribution.dart';
+import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 
 // TODO(particles): per-particle trails (a ribbon per particle of a
@@ -188,7 +189,7 @@ class _TrailDefaultMaterial extends UnlitMaterial {
     Lighting lighting,
   ) {
     super.bind(pass, transientsBuffer, lighting);
-    pass.setCullMode(gpu.CullMode.none);
+    pass.setTrackedCullMode(gpu.CullMode.none);
   }
 }
 

@@ -1,3 +1,4 @@
+import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart'
     show
@@ -249,9 +250,9 @@ class ShadowEncoder {
        _casterChannelMask = casterChannelMask {
     frustum = Frustum.matrix(_lightSpaceMatrix);
     setCurrentViewInstanceBand(_cameraPosition, _noViewDirection);
-    _renderPass.setDepthWriteEnable(true);
-    _renderPass.setColorBlendEnable(false);
-    _renderPass.setDepthCompareOperation(gpu.CompareFunction.lessEqual);
+    _renderPass.setTrackedDepthWriteEnable(true);
+    _renderPass.setTrackedColorBlendEnable(false);
+    _renderPass.setTrackedDepthCompareOperation(gpu.CompareFunction.lessEqual);
     // TODO(shadow-slope-bias): set a slope-scaled caster bias with
     // RenderPass.setDepthBias once Flutter GPU has it, so grazing casters stop
     // relying on the receiver's shadowNormalBias alone.
@@ -264,8 +265,8 @@ class ShadowEncoder {
       ShadowCasterFaces.back => gpu.CullMode.frontFace,
       ShadowCasterFaces.both => gpu.CullMode.none,
     };
-    _renderPass.setCullMode(_currentCullMode);
-    _renderPass.setWindingOrder(gpu.WindingOrder.clockwise);
+    _renderPass.setTrackedCullMode(_currentCullMode);
+    _renderPass.setTrackedWindingOrder(gpu.WindingOrder.clockwise);
   }
 
   final gpu.RenderPass _renderPass;
@@ -413,7 +414,7 @@ class ShadowEncoder {
         ? gpu.CullMode.none
         : (masked ? materialCull : shadowCasterCullMode(item, _casterFaces));
     if (cullMode != _currentCullMode) {
-      _renderPass.setCullMode(cullMode);
+      _renderPass.setTrackedCullMode(cullMode);
       _currentCullMode = cullMode;
     }
     final positionOnly = draw.positionOnly;
@@ -434,10 +435,10 @@ class ShadowEncoder {
     if (pipeline == null) return;
     if (!identical(_boundPipeline, pipeline)) {
       _renderPass.clearBindings();
-      _renderPass.bindPipeline(pipeline);
+      _renderPass.bindTrackedPipeline(pipeline);
       _boundPipeline = pipeline;
     }
-    _renderPass.setPrimitiveType(geometry.primitiveType);
+    _renderPass.setTrackedPrimitiveType(geometry.primitiveType);
     activeDrawRecorder?.setContext(
       DrawContext(
         phase: DrawPhase.shadow,
@@ -484,7 +485,7 @@ class ShadowEncoder {
             _bindDraw(item.drawTransform * instanceTransform);
             final flip =
                 item.windingFlipped != (instanceTransform.determinant() < 0);
-            _renderPass.setWindingOrder(
+            _renderPass.setTrackedWindingOrder(
               flip
                   ? gpu.WindingOrder.counterClockwise
                   : gpu.WindingOrder.clockwise,
@@ -500,7 +501,7 @@ class ShadowEncoder {
       final shared = item.sharedRows;
       if (shared != null) {
         final rows = sharedInstanceRowsOf(shared);
-        _renderPass.setWindingOrder(
+        _renderPass.setTrackedWindingOrder(
           item.windingFlipped != rows.flipped
               ? gpu.WindingOrder.counterClockwise
               : gpu.WindingOrder.clockwise,
@@ -535,7 +536,7 @@ class ShadowEncoder {
           if (first + count > limit) count = limit - first;
         }
         bindInstanceRows(_renderPass, item, first, count, slot: instanceSlot);
-        _renderPass.setWindingOrder(
+        _renderPass.setTrackedWindingOrder(
           ranges[range + 2] != 0
               ? gpu.WindingOrder.counterClockwise
               : gpu.WindingOrder.clockwise,
@@ -567,7 +568,7 @@ class ShadowEncoder {
     }
     // Mirrored casters reverse winding; flip the cull order so the same faces
     // that are visible also cast shadows.
-    _renderPass.setWindingOrder(
+    _renderPass.setTrackedWindingOrder(
       item.windingFlipped
           ? gpu.WindingOrder.counterClockwise
           : gpu.WindingOrder.clockwise,
