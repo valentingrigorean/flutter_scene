@@ -703,6 +703,17 @@ void countPipelineState(gpu.RenderPass pass, gpu.RenderPipeline? pipeline) {
   }
 }
 
+gpu.RenderPass? _armedPass;
+gpu.RenderPipeline? _armedPipeline;
+
+/// Counts the state of a draw a geometry issues on [pass] from inside
+/// [drawOrRejectPipeline], after the geometry set its own state, as
+/// [countPipelineState] does.
+void countArmedPipelineState(gpu.RenderPass pass) {
+  if (!identical(pass, _armedPass)) return;
+  countPipelineState(pass, _armedPipeline);
+}
+
 int _scenePipelinesBuilt = 0;
 
 /// The number of render pipelines the scene's passes have built in this
@@ -1108,13 +1119,17 @@ void drawOrRejectPipeline(
   int instanceCount = 1,
   Material? material,
 }) {
-  countPipelineState(pass, pipeline);
+  _armedPass = pass;
+  _armedPipeline = pipeline;
   try {
     geometry.draw(pass, instanceCount: instanceCount);
   } on Exception catch (error) {
     if (pipeline == null) rethrow;
     _recordFailedDraw(pipeline, geometry, material, error);
     return;
+  } finally {
+    _armedPass = null;
+    _armedPipeline = null;
   }
   if (_failingPipelines.isNotEmpty && pipeline != null) {
     _failingPipelines.remove(pipeline);
