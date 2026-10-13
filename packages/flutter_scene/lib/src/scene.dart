@@ -4459,6 +4459,33 @@ base class Scene implements SceneGraph {
       }
     }
     instanceBandViews[camera] = view;
+    final afterOpaqueTime =
+        DateTime.now().millisecondsSinceEpoch.remainder(100000) / 1000.0;
+    final afterOpaque = <RenderGraphPass>[
+      for (final (index, pass) in _passesAt(
+        RenderStage.afterOpaqueScene,
+        view,
+      ).indexed)
+        UserRenderGraphPass(
+          pass: pass,
+          camera: camera,
+          dimensions: pixelSize,
+          destination: pass.drawsInPlace
+              ? null
+              : pool.acquire(
+                  TransientTextureDescriptor.color(
+                    width: pixelSize.width.toInt(),
+                    height: pixelSize.height.toInt(),
+                    format: gpu.PixelFormat.r16g16b16a16Float,
+                    debugName: 'custom_hdr_afterOpaqueScene_$index',
+                  ),
+                ),
+          renderScene: renderScene,
+          viewLayerMask: view.layerMask,
+          passIndex: index,
+          time: afterOpaqueTime,
+        ),
+    ];
     graph.addPass(
       ScenePass(
         camera: camera,
@@ -4495,6 +4522,7 @@ base class Scene implements SceneGraph {
         layerMask: view.layerMask,
         fog: fog,
         captureOpaqueColor: captureOpaqueColor,
+        afterOpaque: afterOpaque,
         displayReferredLayer: displayReferredActive,
         displayReferredFormat: outputColor.format,
         // TAA resolves the scene color only, and the layer composites after

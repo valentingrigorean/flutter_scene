@@ -113,6 +113,7 @@ class ScenePass extends RenderGraphPass {
     int layerMask = kRenderLayerAll,
     Fog? fog,
     bool captureOpaqueColor = false,
+    List<RenderGraphPass> afterOpaque = const [],
     bool displayReferredLayer = false,
     gpu.PixelFormat? displayReferredFormat,
     int maxCaptureBatches = maxSceneColorCaptureBatches,
@@ -131,6 +132,7 @@ class ScenePass extends RenderGraphPass {
   }) : _debugView = debugView,
        _primaryView = primaryView,
        _captureOpaqueColor = captureOpaqueColor,
+       _afterOpaque = afterOpaque,
        _displayReferredLayer = displayReferredLayer,
        _displayReferredFormat = displayReferredFormat,
        _maxCaptureBatches = maxCaptureBatches,
@@ -204,6 +206,10 @@ class ScenePass extends RenderGraphPass {
   // depth, and the engine time for material animation.
   final bool _captureOpaqueColor;
 
+  // The custom passes of RenderStage.afterOpaqueScene, run on the scene color
+  // between the opaque and the translucent draws, which split the scene pass.
+  final List<RenderGraphPass> _afterOpaque;
+
   // The scene holds a display-referred surface, so depth must survive the
   // scene's own passes and the extra layer is drawn after them.
   final bool _displayReferredLayer;
@@ -254,6 +260,7 @@ class ScenePass extends RenderGraphPass {
     _conflictIds = _renderDepthConflictIds(context);
 
     final capture = _captureOpaqueColor;
+    final splits = _afterOpaque.isNotEmpty;
     // With MSAA the color targets are resolve destinations with no depth
     // attachment; without it they carry the scene depth, whose ring differs
     // between the captured and transient cases. Each setup keeps its own
@@ -261,6 +268,7 @@ class ScenePass extends RenderGraphPass {
     final attachmentKey = _enableMsaa
         ? 'resolve'
         : capture ||
+              splits ||
               _displayReferredLayer ||
               _publishSceneDepth ||
               _sampleSceneDepth
@@ -283,6 +291,7 @@ class ScenePass extends RenderGraphPass {
     // and so does a later pass that asked for the stored depth.
     final keepDepth =
         capture ||
+        splits ||
         _displayReferredLayer ||
         _publishSceneDepth ||
         _sampleSceneDepth;
@@ -301,7 +310,7 @@ class ScenePass extends RenderGraphPass {
     );
     // Screen-reading translucent batches alternate between these targets so
     // each batch can sample the fully composed color behind it.
-    final alternateColor = capture
+    final alternateColor = capture || splits
         ? context.texturePool.acquire(
             TransientTextureDescriptor.color(
               width: width,
@@ -508,7 +517,7 @@ class ScenePass extends RenderGraphPass {
     }
     cullWatch?.stop();
 
-    if (!capture || !encoder.hasPendingSceneColorReaders) {
+    if (!splits && (!capture || !encoder.hasPendingSceneColorReaders)) {
       final flushWatch = profileRendering ? (Stopwatch()..start()) : null;
       encoder.flush();
       _encodeDebugOverlays(renderPass, context.transientsBuffer, encoder);
@@ -532,7 +541,8 @@ class ScenePass extends RenderGraphPass {
     // with disjoint projected bounds share a capture, while overlapping
     // readers get the accumulated color produced by the preceding batch.
     encoder.flushOpaque();
-    if (encoder.hasPendingTranslucent &&
+    if (!splits &&
+        encoder.hasPendingTranslucent &&
         !encoder.nextTranslucentBatchReadsSceneColor) {
       encoder.flushNextTranslucentBatch();
     }
@@ -543,12 +553,22 @@ class ScenePass extends RenderGraphPass {
 
     var currentColor = hdrColor;
     var nextColor = alternateColor!;
+    if (splits) {
+      context.blackboard.set(kSceneColorBlackboardKey, currentColor);
+      for (final pass in _afterOpaque) {
+        pass.execute(context);
+      }
+      currentColor = context.blackboard.require<gpu.Texture>(
+        kSceneColorBlackboardKey,
+      );
+    }
     gpu.Texture? transmissionAtlas;
     List<gpu.Texture>? transmissionMips;
     var captureBatch = 0;
     while (encoder.hasPendingTranslucent) {
-      assert(encoder.nextTranslucentBatchReadsSceneColor);
+      final reads = encoder.nextTranslucentBatchReadsSceneColor;
       final shareFinalSnapshot =
+          reads &&
           captureBatch == _maxCaptureBatches - 1 &&
           encoder.pendingSceneColorReaderCount > 1;
       // A cap the scene chose is not worth a warning; the built-in maximum is.
@@ -564,9 +584,11 @@ class ScenePass extends RenderGraphPass {
       lighting.opaqueSceneColor = currentColor;
       lighting.filteredSceneColor = null;
       lighting.transmissionFilterBandCount = 0;
-      final readsFilteredSceneColor = shareFinalSnapshot
-          ? encoder.pendingTranslucentReadsFilteredSceneColor
-          : encoder.nextSceneColorBatchReadsFilteredSceneColor;
+      final readsFilteredSceneColor =
+          reads &&
+          (shareFinalSnapshot
+              ? encoder.pendingTranslucentReadsFilteredSceneColor
+              : encoder.nextSceneColorBatchReadsFilteredSceneColor);
       if (readsFilteredSceneColor) {
         final bands = transmissionFilterBandCount(width, height);
         if (bands > 0) {
@@ -621,7 +643,9 @@ class ScenePass extends RenderGraphPass {
         translucentTarget,
       );
       _encodeCopy(translucentPass, currentColor);
-      if (shareFinalSnapshot) {
+      if (!reads) {
+        encoder.flushNextTranslucentBatch(translucentPass: translucentPass);
+      } else if (shareFinalSnapshot) {
         // TODO(transmission-batching): replace the shared tail with a bounded
         // per-pixel resolve that preserves every overlapping layer.
         encoder.flushTranslucent(translucentPass: translucentPass);
@@ -640,7 +664,7 @@ class ScenePass extends RenderGraphPass {
       final completedColor = nextColor;
       nextColor = currentColor;
       currentColor = completedColor;
-      captureBatch++;
+      if (reads) captureBatch++;
     }
 
     _encodeDisplayReferredLayer(context, encoder, depth, width, height);
