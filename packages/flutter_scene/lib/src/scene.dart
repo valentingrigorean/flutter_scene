@@ -4408,31 +4408,36 @@ base class Scene implements SceneGraph {
     instanceBandViews[camera] = view;
     final afterOpaqueTime =
         DateTime.now().millisecondsSinceEpoch.remainder(100000) / 1000.0;
-    final afterOpaque = <RenderGraphPass>[
-      for (final (index, pass) in _passesAt(
-        RenderStage.afterOpaqueScene,
-        view,
-      ).indexed)
-        UserRenderGraphPass(
-          pass: pass,
-          camera: camera,
-          dimensions: pixelSize,
-          destination: pass.drawsInPlace
-              ? null
-              : pool.acquire(
-                  TransientTextureDescriptor.color(
-                    width: pixelSize.width.toInt(),
-                    height: pixelSize.height.toInt(),
-                    format: gpu.PixelFormat.r16g16b16a16Float,
-                    debugName: 'custom_hdr_afterOpaqueScene_$index',
-                  ),
+    final afterOpaque = <OpaqueSplit>[];
+    final opaqueStaged = _passesAt(RenderStage.afterOpaqueScene, view).toList()
+      ..sort((a, b) => a.beforeRenderOrder.compareTo(b.beforeRenderOrder));
+    for (final (index, pass) in opaqueStaged.indexed) {
+      final staged = UserRenderGraphPass(
+        pass: pass,
+        camera: camera,
+        dimensions: pixelSize,
+        destination: pass.drawsInPlace
+            ? null
+            : pool.acquire(
+                TransientTextureDescriptor.color(
+                  width: pixelSize.width.toInt(),
+                  height: pixelSize.height.toInt(),
+                  format: gpu.PixelFormat.r16g16b16a16Float,
+                  debugName: 'custom_hdr_afterOpaqueScene_$index',
                 ),
-          renderScene: renderScene,
-          viewLayerMask: view.layerMask,
-          passIndex: index,
-          time: afterOpaqueTime,
-        ),
-    ];
+              ),
+        renderScene: renderScene,
+        viewLayerMask: view.layerMask,
+        passIndex: index,
+        time: afterOpaqueTime,
+      );
+      if (afterOpaque.lastOrNull case final last?
+          when last.order == pass.beforeRenderOrder) {
+        last.passes.add(staged);
+      } else {
+        afterOpaque.add(OpaqueSplit(pass.beforeRenderOrder, [staged]));
+      }
+    }
     graph.addPass(
       ScenePass(
         camera: camera,

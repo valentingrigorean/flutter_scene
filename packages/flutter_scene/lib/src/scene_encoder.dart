@@ -2406,11 +2406,55 @@ base class SceneEncoder {
     flushTranslucent();
   }
 
-  /// Emits only the opaque phase (see [flush]). Used with [flushTranslucent]
-  /// when the scene pass snapshots the opaque color between them.
+  /// Emits only the opaque phase (see [flush]), the draws a
+  /// [flushOpaqueBelow] left. Used with [flushTranslucent] when the scene
+  /// pass snapshots the opaque color between them.
   void flushOpaque() {
-    _phase = DrawPhase.opaque;
-    final sortWatch = profileRendering ? (Stopwatch()..start()) : null;
+    _flushOpaqueThrough(null);
+    for (final record in _opaqueRecords) {
+      if (_opaqueRecordPool.length == _recordPoolLimit) break;
+      record.release();
+      _opaqueRecordPool.add(record);
+    }
+    _opaqueRecords.clear();
+    _opaqueSorted = false;
+    _opaqueCursor = 0;
+  }
+
+  /// Emits the opaque draws of a render order below [order], in the order
+  /// [flushOpaque] draws them, and keeps the others for it.
+  void flushOpaqueBelow(double order) => _flushOpaqueThrough(order);
+
+  /// Continues the draws of this encoder in [pass], a render pass that loads
+  /// the depth the earlier draws wrote.
+  void continueIn(gpu.RenderPass pass) {
+    _rebind(pass);
+    _renderPass.setDepthWriteEnable(true);
+    _renderPass.setColorBlendEnable(false);
+    _renderPass.setDepthCompareOperation(_raster.nearerOrEqual);
+  }
+
+  bool _opaqueSorted = false;
+  int _opaqueCursor = 0;
+
+  void _rebind(gpu.RenderPass pass) {
+    _renderPass = pass;
+    _boundPipeline = null;
+    _boundMaterial = null;
+    _boundMaterialVertex = null;
+    _boundFrameInfoShader = null;
+    _boundFrameInfoDepthBias = double.nan;
+    _boundFrameInfoDepthKey = -1;
+    _boundMaterialFade = double.nan;
+    _boundMaterialLightOffset = -1;
+    _boundMaterialLightCount = -1;
+    _boundMaterialLightChannelMask = -1;
+    _boundWindingOrder = null;
+    _boundPrimitiveType = null;
+    EngineLightingUniforms.invalidateBindMemo();
+  }
+
+  void _sortOpaque() {
     _opaqueRecords.sort((a, b) {
       final byOrder = a.item.renderOrder.compareTo(b.item.renderOrder);
       if (byOrder != 0) return byOrder;
@@ -2436,10 +2480,20 @@ base class SceneEncoder {
       if (byFade != 0) return byFade;
       return _opaqueDepth(a).compareTo(_opaqueDepth(b));
     });
+    _opaqueSorted = true;
+  }
+
+  void _flushOpaqueThrough(double? below) {
+    _phase = DrawPhase.opaque;
+    final sortWatch = profileRendering && !_opaqueSorted
+        ? (Stopwatch()..start())
+        : null;
+    if (!_opaqueSorted) _sortOpaque();
     sortWatch?.stop();
     final encodeWatch = profileRendering ? (Stopwatch()..start()) : null;
-    var index = 0;
-    while (index < _opaqueRecords.length) {
+    var index = _opaqueCursor;
+    while (index < _opaqueRecords.length &&
+        (below == null || _opaqueRecords[index].item.renderOrder < below)) {
       final record = _opaqueRecords[index];
       final item = record.item;
       record.material.lightListOffset = item.lightListOffset;
@@ -2485,17 +2539,12 @@ base class SceneEncoder {
       }
       index = end;
     }
+    _opaqueCursor = index;
     encodeWatch?.stop();
     if (profileRendering) {
-      _opaqueSortMicros = sortWatch!.elapsedMicroseconds;
-      _opaqueEncodeMicros = encodeWatch!.elapsedMicroseconds;
+      _opaqueSortMicros += sortWatch?.elapsedMicroseconds ?? 0;
+      _opaqueEncodeMicros += encodeWatch!.elapsedMicroseconds;
     }
-    for (final record in _opaqueRecords) {
-      if (_opaqueRecordPool.length == _recordPoolLimit) break;
-      record.release();
-      _opaqueRecordPool.add(record);
-    }
-    _opaqueRecords.clear();
   }
 
   // Encodes the opaque record at [index] with [pipeline] at cross-fade
@@ -2833,22 +2882,7 @@ base class SceneEncoder {
     if (_translucentCursor >= _translucentRecords.length) return;
     _phase = DrawPhase.translucent;
 
-    if (translucentPass != null) {
-      _renderPass = translucentPass;
-      _boundPipeline = null;
-      _boundMaterial = null;
-      _boundMaterialVertex = null;
-      _boundFrameInfoShader = null;
-      _boundFrameInfoDepthBias = double.nan;
-      _boundFrameInfoDepthKey = -1;
-      _boundMaterialFade = double.nan;
-      _boundMaterialLightOffset = -1;
-      _boundMaterialLightCount = -1;
-      _boundMaterialLightChannelMask = -1;
-      _boundWindingOrder = null;
-      _boundPrimitiveType = null;
-      EngineLightingUniforms.invalidateBindMemo();
-    }
+    if (translucentPass != null) _rebind(translucentPass);
     _renderPass.setDepthCompareOperation(_raster.nearerOrEqual);
     final encodeWatch = profileRendering ? (Stopwatch()..start()) : null;
     _renderPass.setDepthWriteEnable(false);
