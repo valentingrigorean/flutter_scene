@@ -1117,6 +1117,25 @@ abstract class Geometry with RenderSourceListeners {
   @internal
   void coverWorldTransform(vm.Matrix4 worldTransform) {}
 
+  /// The key that joins this geometry's opaque color draw with the draws of
+  /// other geometries returning an equal key into one instanced draw, or
+  /// null to draw alone, the default.
+  ///
+  /// The opaque phase asks once per draw, with the transform the draw binds.
+  /// Draws join when they also share a pipeline, a material, a render order,
+  /// a winding, a light list and a model scale, and none cuts itself out or
+  /// blends. The joined draw binds the first member's geometry and uniforms
+  /// and one instance record per member (see [packInstanceBatchMember]), so
+  /// an equal key promises that every value a member draws with and the
+  /// first member's uniforms do not carry is in its record.
+  Object? instanceBatchKey(vm.Matrix4 modelTransform) => null;
+
+  /// Writes what this member of an instanced draw (see [instanceBatchKey])
+  /// draws with into its instance record at [at] of [records], which holds
+  /// the member's model transform and colour. Called with the member's
+  /// anchor stated in `currentDrawAnchor`, before the first member binds.
+  void packInstanceBatchMember(Float32List records, int at) {}
+
   /// Hook for skinned geometries to receive the joints texture computed
   /// by [Skin.getJointsTexture].
   ///
