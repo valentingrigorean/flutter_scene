@@ -66,7 +66,9 @@ base class _OpaqueRecord {
       _material = material,
       _pipeline = pipeline,
       geometryKey = identityHashCode(geometry),
-      materialKey = identityHashCode(material);
+      materialKey = identityHashCode(material) {
+    _keyBatch(item, geometry, material);
+  }
   RenderItem? _item;
   RenderItem get item => _item!;
   // The geometry and material to draw, which differ from the item's own when
@@ -111,6 +113,27 @@ base class _OpaqueRecord {
     this.windingFlipped = windingFlipped;
     geometryKey = identityHashCode(geometry);
     materialKey = identityHashCode(material);
+    _keyBatch(item, geometry, material);
+  }
+
+  // The key of the instanced draw this record may join (see
+  // [Geometry.instanceBatchKey]), null for a draw that draws alone, and its
+  // hash, which orders the records of one material by the draw they join.
+  Object? batchKey;
+  int batchHash = 0;
+
+  void _keyBatch(RenderItem item, Geometry geometry, Material material) {
+    final key =
+        coveragePipeline == null &&
+            !material.blendsInOpaquePass &&
+            material.instanceAttributes == null &&
+            geometry.bindsModelTransformInstance &&
+            item.instanceTransforms == null &&
+            !hasMeshDrawSelector(item)
+        ? geometry.instanceBatchKey(item.drawTransform)
+        : null;
+    batchKey = key;
+    batchHash = key?.hashCode ?? 0;
   }
 
   // Identity sort keys, cached at submit time rather than recomputed per
@@ -126,6 +149,7 @@ base class _OpaqueRecord {
     _geometry = null;
     _material = null;
     _pipeline = null;
+    batchKey = null;
   }
 }
 
@@ -2462,6 +2486,8 @@ base class SceneEncoder {
       if (byPipeline != 0) return byPipeline;
       final byMaterial = a.materialKey.compareTo(b.materialKey);
       if (byMaterial != 0) return byMaterial;
+      final byBatch = a.batchHash.compareTo(b.batchHash);
+      if (byBatch != 0) return byBatch;
       final byGeometry = a.geometryKey.compareTo(b.geometryKey);
       if (byGeometry != 0) return byGeometry;
       final byLightOffset = a.item.lightListOffset.compareTo(
@@ -2503,7 +2529,7 @@ base class SceneEncoder {
       item.applyJointsTexture(record.geometry);
       item.applyMorphWeights(record.geometry);
 
-      final end = index + 1;
+      var end = index + 1;
       // A surface that cuts itself out first draws its coverage, writing
       // depth and a stencil mark only where it is kept, then shades exactly
       // the marked pixels (clearing the mark) with an equal depth test. The
@@ -2535,7 +2561,12 @@ base class SceneEncoder {
         _renderPass.setColorBlendEnable(false);
         _renderPass.setDepthWriteEnable(true);
       } else {
-        _encodeOpaqueRun(index, end, record.pipeline, 1.0);
+        end = _instanceBatchEnd(index);
+        if (end - index > 1) {
+          _encodeInstanceBatch(index, end);
+        } else {
+          _encodeOpaqueRun(index, end, record.pipeline, 1.0);
+        }
       }
       index = end;
     }
@@ -2544,6 +2575,119 @@ base class SceneEncoder {
     if (profileRendering) {
       _opaqueSortMicros += sortWatch?.elapsedMicroseconds ?? 0;
       _opaqueEncodeMicros += encodeWatch!.elapsedMicroseconds;
+    }
+  }
+
+  // The end of the run of records from [start] that join its instanced draw:
+  // records of one batch key, pipeline, material, render order, winding,
+  // light list and model scale (see [Geometry.instanceBatchKey]).
+  int _instanceBatchEnd(int start) {
+    final first = _opaqueRecords[start];
+    final key = first.batchKey;
+    var end = start + 1;
+    if (key == null || _debugView != null) return end;
+    final item = first.item;
+    final scale = item.worldTransform.storage;
+    while (end < _opaqueRecords.length) {
+      final next = _opaqueRecords[end];
+      final member = next.item;
+      if (next.batchHash != first.batchHash ||
+          !identical(next.pipeline, first.pipeline) ||
+          !identical(next.material, first.material) ||
+          next.fade != first.fade ||
+          next.windingFlipped != first.windingFlipped ||
+          member.renderOrder != item.renderOrder ||
+          member.lightListOffset != item.lightListOffset ||
+          member.lightListCount != item.lightListCount ||
+          member.lightChannelMask != item.lightChannelMask ||
+          !_sameScale(member.worldTransform.storage, scale) ||
+          next.batchKey != key) {
+        break;
+      }
+      end++;
+    }
+    return end;
+  }
+
+  static bool _sameScale(Float32List a, Float32List b) {
+    for (final column in const [0, 4, 8]) {
+      final along =
+          a[column] * a[column] +
+          a[column + 1] * a[column + 1] +
+          a[column + 2] * a[column + 2];
+      final across =
+          b[column] * b[column] +
+          b[column + 1] * b[column + 1] +
+          b[column + 2] * b[column + 2];
+      if (along != across) return false;
+    }
+    return true;
+  }
+
+  Float32List _batchRecords = Float32List(kInstanceRecordFloats * 16);
+
+  // Draws the records [start, end) of one batch key as one instanced draw:
+  // the first record binds the geometry, the material and the uniforms, and
+  // each record packs its own instance record under its anchor.
+  void _encodeInstanceBatch(int start, int end) {
+    final record = _opaqueRecords[start];
+    final item = record.item;
+    final geometry = record.geometry;
+    final material = record.material;
+    final pipeline = record.pipeline;
+    final count = end - start;
+    final floats = count * kInstanceRecordFloats;
+    if (_batchRecords.length < floats) {
+      _batchRecords = Float32List(floats * 2);
+    }
+    final records = _batchRecords;
+    for (var index = 0; index < count; index++) {
+      final member = _opaqueRecords[start + index];
+      final at = index * kInstanceRecordFloats;
+      records
+        ..setAll(at, member.item.worldTransform.storage)
+        ..fillRange(at + 16, at + kInstanceRecordFloats, 1);
+      member.item.beginAnchoredDraw();
+      try {
+        member.geometry.packInstanceBatchMember(records, at);
+      } finally {
+        RenderItem.endAnchoredDraw();
+      }
+    }
+    final selection = beginMeshDraw(
+      item,
+      geometry,
+      MeshDrawPass.color,
+      _cameraPosition,
+      _primaryView,
+    );
+    try {
+      if (selection.instanceCount == 0) return;
+      item.beginAnchoredDraw();
+      try {
+        if (!identical(_boundPipeline, pipeline)) _clearBindings();
+        _bindPipeline(pipeline);
+        final materialVertex = material.vertexShaderForGeometry(geometry);
+        _describeDraw(item, geometry, material, materialVertex, pipeline);
+        _bindGeometry(geometry, item.drawTransform, material, materialVertex);
+        _bindPackedInstances(
+          Float32List.sublistView(records, 0, floats),
+          geometry.vertexStreamCount,
+        );
+        _bindMaterial(material, materialVertex, 1.0);
+        _bindDebugView(material, item, false);
+        _setWindingOrder(
+          record.windingFlipped
+              ? gpu.WindingOrder.counterClockwise
+              : gpu.WindingOrder.clockwise,
+        );
+        _setPrimitiveType(geometry.primitiveType);
+        _drawGeometry(geometry, material, instanceCount: count);
+      } finally {
+        RenderItem.endAnchoredDraw();
+      }
+    } finally {
+      endMeshDraw(geometry);
     }
   }
 
