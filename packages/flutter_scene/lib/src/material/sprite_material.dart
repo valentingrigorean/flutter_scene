@@ -5,6 +5,7 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart';
 import 'package:flutter_scene/src/material/engine_lighting.dart';
 import 'package:flutter_scene/src/material/material.dart';
+import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/custom_render_pass.dart';
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/texture/texture2d.dart';
@@ -99,7 +100,7 @@ class SpriteMaterial extends Material {
     super.bind(pass, transientsBuffer, lighting);
     // A camera-facing quad's winding flips with the viewing angle, so cull
     // nothing rather than guess a front face.
-    pass.setCullMode(gpu.CullMode.none);
+    pass.setTrackedCullMode(gpu.CullMode.none);
     // Sprites keep the encoder's translucent depth state: the lessEqual test
     // (so opaque geometry occludes them) with depth writes off (so the
     // overlapping instances of one instanced draw do not self-occlude).

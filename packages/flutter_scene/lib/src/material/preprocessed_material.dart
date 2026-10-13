@@ -12,6 +12,7 @@ import 'package:flutter_scene/src/material/vertex_attributes.dart';
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/material/material_parameters.dart';
 import 'package:flutter_scene/src/material/physically_based_material.dart';
+import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/custom_render_pass.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/texture/texture2d.dart';
@@ -452,8 +453,8 @@ class PreprocessedMaterial extends Material implements HotReloadableFmat {
     TransientWriter transientsBuffer,
     Lighting lighting,
   ) {
-    pass.setCullMode(renderCullMode);
-    pass.setWindingOrder(gpu.WindingOrder.clockwise);
+    pass.setTrackedCullMode(renderCullMode);
+    pass.setTrackedWindingOrder(gpu.WindingOrder.clockwise);
     final shader = fragmentShaderForLighting(lighting);
 
     if (shadingModel == FmatShadingModel.shadowCatcher) {

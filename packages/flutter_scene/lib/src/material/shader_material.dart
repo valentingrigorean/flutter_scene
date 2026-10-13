@@ -12,6 +12,7 @@ import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/material/shader_interface.dart';
 import 'package:flutter_scene/src/material/shader_stage.dart';
 import 'package:flutter_scene/src/fmat/fmat_ast.dart' show FmatType;
+import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/custom_render_pass.dart'
     show RenderInput;
 import 'package:flutter_scene/src/texture/texture2d.dart';
@@ -545,8 +546,8 @@ class ShaderMaterial extends Material {
     TransientWriter transientsBuffer,
     Lighting lighting,
   ) {
-    pass.setCullMode(cullingMode);
-    pass.setWindingOrder(windingOrder);
+    pass.setTrackedCullMode(cullingMode);
+    pass.setTrackedWindingOrder(windingOrder);
 
     // The variant the pipeline was built from, which differs from
     // [fragmentShader] when an environment-sampling material supplied a

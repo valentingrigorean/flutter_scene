@@ -7,6 +7,7 @@ import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:flutter_scene/src/light.dart';
+import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/point_shadow.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
@@ -255,7 +256,8 @@ class ShadowPass extends RenderGraphPass {
         ? scratch(depthFormat, read: true)
         : scratch(shadowMapFormat, read: true);
     final tileBuffer = gpu.gpuContext.createCommandBuffer();
-    tileBuffer.createRenderPass(
+    createTrackedRenderPass(
+      tileBuffer,
       depthMap
           ? _shadowTarget(
               color: scratch(shadowPassColorFormat),
@@ -270,7 +272,8 @@ class ShadowPass extends RenderGraphPass {
     );
     rendererSubmissions.submit(tileBuffer);
     final copyBuffer = gpu.gpuContext.createCommandBuffer();
-    final pass = copyBuffer.createRenderPass(
+    final pass = createTrackedRenderPass(
+      copyBuffer,
       _shadowTarget(
         color: scratch(shadowPassColorFormat),
         depth: scratch(depthFormat),
@@ -367,7 +370,7 @@ class ShadowPass extends RenderGraphPass {
       return true;
     }());
     final commandBuffer = gpu.gpuContext.createCommandBuffer();
-    final renderPass = commandBuffer.createRenderPass(target);
+    final renderPass = createTrackedRenderPass(commandBuffer, target);
 
     // Each tile renders into its own slot of the strip. The viewport restricts
     // rasterization to the tile; the shared depth attachment is cleared once for
@@ -586,7 +589,7 @@ class ShadowPass extends RenderGraphPass {
         );
         target = _shadowTarget(color: tile, depth: depth, depthMap: false);
       }
-      final renderPass = commandBuffer.createRenderPass(target);
+      final renderPass = createTrackedRenderPass(commandBuffer, target);
       final encoder = ShadowEncoder(
         renderPass,
         context.transientsBuffer,
@@ -659,11 +662,11 @@ class ShadowPass extends RenderGraphPass {
   static void _drawTileCopy(gpu.RenderPass pass, gpu.Texture source) {
     pass.clearBindings();
     final pipeline = resolvePipeline(_copyVertexShader, _copyFragmentShader);
-    pass.bindPipeline(pipeline);
-    pass.setColorBlendEnable(false);
-    pass.setCullMode(gpu.CullMode.none);
-    pass.setDepthWriteEnable(true);
-    pass.setDepthCompareOperation(gpu.CompareFunction.always);
+    pass.bindTrackedPipeline(pipeline);
+    pass.setTrackedColorBlendEnable(false);
+    pass.setTrackedCullMode(gpu.CullMode.none);
+    pass.setTrackedDepthWriteEnable(true);
+    pass.setTrackedDepthCompareOperation(gpu.CompareFunction.always);
     bindVertexBufferCompat(pass, _quadView, 6);
     pass.bindTexture(
       _copyFragmentShader.cachedUniformSlot('source_texture'),

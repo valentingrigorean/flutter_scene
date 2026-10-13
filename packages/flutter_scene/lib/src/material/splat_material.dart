@@ -2,6 +2,7 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart';
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/shaders.dart';
+import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 
 /// The material for `SplatGeometry`: evaluates the Gaussian falloff over
@@ -32,7 +33,7 @@ class SplatMaterial extends Material {
   ) {
     super.bind(pass, transientsBuffer, lighting);
     // A screen-space footprint has no meaningful winding; cull nothing.
-    pass.setCullMode(gpu.CullMode.none);
+    pass.setTrackedCullMode(gpu.CullMode.none);
     // The fragment stage reads only varyings; there are no material
     // uniforms to bind.
   }
