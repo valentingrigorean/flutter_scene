@@ -1849,10 +1849,13 @@ class UnskinnedGeometry extends Geometry {
 /// {@category Geometry}
 class SkinnedGeometry extends Geometry {
   // The skinned FrameInfo, shared by every draw since emplace copies it out.
-  // The leading model transform stays identity.
+  // The leading model transform is identity or the palette root, moved by the
+  // instance frame of an anchored item.
   static final Float32List _skinnedFrameInfoScratch = Float32List(56);
 
   static final vm.Matrix4 _identity = vm.Matrix4.identity();
+
+  static final vm.Matrix4 _anchoredModel = vm.Matrix4.zero();
 
   static final gpu.SamplerOptions _jointsSampler = gpu.SamplerOptions(
     minFilter: gpu.MinMagFilter.nearest,
@@ -1956,9 +1959,19 @@ class SkinnedGeometry extends Geometry {
     // transform to be ignored). `modelTransform` is unused for skinned
     // geometry as a result. A palette holds matrices relative to its root,
     // so the root's world transform takes the model transform's place.
+    // The joint matrices leave a node's anchor out, as every globalTransform
+    // does, so an anchored item's instance frame (its anchor less the draw
+    // origin) moves the model transform.
     final palette = _palette;
+    final root = palette == null ? _identity : _paletteRoot;
+    final frame = currentDrawInstanceFrame;
+    final model = frame == null
+        ? root
+        : (_anchoredModel
+            ..setFrom(frame)
+            ..multiply(root));
     final frameInfo = _skinnedFrameInfoScratch
-      ..setAll(0, (palette == null ? _identity : _paletteRoot).storage)
+      ..setAll(0, model.storage)
       ..setAll(16, cameraTransform.storage)
       ..[32] = cameraPosition.x
       ..[33] = cameraPosition.y
