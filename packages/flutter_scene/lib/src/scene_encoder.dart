@@ -693,6 +693,16 @@ gpu.RenderPipeline resolvePipeline(
 
 final Expando<String> _pipelineNames = Expando('pipeline name');
 
+/// Counts in [scenePipelinesBuilt] the draw [pass] records next with
+/// [pipeline] when [pipeline] drew before in another native pipeline state.
+void countPipelineState(gpu.RenderPass pass, gpu.RenderPipeline? pipeline) {
+  if (recordPassDraw(pass) case final state?) {
+    _scenePipelinesBuilt++;
+    final name = pipeline == null ? null : _pipelineNames[pipeline];
+    _scenePipelineNames.add('${name ?? 'unnamed'} {$state}');
+  }
+}
+
 int _scenePipelinesBuilt = 0;
 
 /// The number of render pipelines the scene's passes have built in this
@@ -1098,11 +1108,7 @@ void drawOrRejectPipeline(
   int instanceCount = 1,
   Material? material,
 }) {
-  if (recordPassDraw(pass) case final state?) {
-    _scenePipelinesBuilt++;
-    final name = pipeline == null ? null : _pipelineNames[pipeline];
-    _scenePipelineNames.add('${name ?? 'unnamed'} {$state}');
-  }
+  countPipelineState(pass, pipeline);
   try {
     geometry.draw(pass, instanceCount: instanceCount);
   } on Exception catch (error) {

@@ -19,7 +19,7 @@ import 'package:flutter_scene/src/render/spot_shadow.dart';
 import 'package:flutter_scene/src/render/stored_depth_probe.dart';
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/scene_encoder.dart'
-    show deferredPipelineBuilds, resolvePipeline;
+    show countPipelineState, deferredPipelineBuilds, resolvePipeline;
 import 'package:flutter_scene/src/render/uniform_slots.dart';
 
 /// Render-graph blackboard key under which [ShadowPass] publishes the shadow
@@ -672,6 +672,7 @@ class ShadowPass extends RenderGraphPass {
       _copyFragmentShader.cachedUniformSlot('source_texture'),
       source,
     );
+    countPipelineState(pass, pipeline);
     drawCompat(pass, 6);
   }
 }
