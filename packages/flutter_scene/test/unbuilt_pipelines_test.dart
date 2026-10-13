@@ -189,6 +189,34 @@ void main() {
     },
   );
 
+  test('a built pipeline a render draws in another blend and depth state '
+      'counts that state once, named after the pipeline', () async {
+    final scene = await _scene()
+      ..maxGpuFramesInFlight = 0;
+    final glass = _box(
+      'glass',
+      material: UnlitMaterial()..alphaMode = AlphaMode.blend,
+    )..visible = false;
+    scene
+      ..add(_box('box', material: UnlitMaterial()))
+      ..add(glass);
+    final views = [RenderView(camera: _camera())];
+    _frame(scene, views, _square);
+
+    glass.visible = true;
+    final before = scenePipelinesBuilt;
+    _frame(scene, views, _square);
+    expect(
+      scenePipelinesBuiltSince(before),
+      contains(
+        allOf(startsWith('UnskinnedVertex + UnlitFragment ['), contains('{')),
+      ),
+    );
+    final built = scenePipelinesBuilt;
+    _frame(scene, views, _square);
+    expect(scenePipelinesBuiltSince(built), isEmpty);
+  });
+
   test(
     'a hidden node, a node behind the camera and a node on a layer '
     'the view masks out are not listed; a view of that layer lists it',

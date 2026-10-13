@@ -1,6 +1,7 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
@@ -71,15 +72,17 @@ void encodeSkybox(
   // Share the scene encoder's pipeline cache so a hot-reloaded sky fragment is
   // rebuilt (the cache is evicted by shader identity on reload).
   renderPass.clearBindings();
-  renderPass.bindPipeline(resolvePipeline(vertexShader, fragmentShader));
-  renderPass.setColorBlendEnable(false);
+  renderPass.bindTrackedPipeline(resolvePipeline(vertexShader, fragmentShader));
+  renderPass.setTrackedColorBlendEnable(false);
   // Draw at the far plane behind everything: pass where nothing has been
   // drawn (depth still at the cleared far value) and never write depth, so
   // opaque geometry draws in front.
-  renderPass.setDepthWriteEnable(false);
-  renderPass.setDepthCompareOperation(depthRasterOf(camera).nearerOrEqual);
-  renderPass.setCullMode(gpu.CullMode.none);
-  renderPass.setPrimitiveType(gpu.PrimitiveType.triangle);
+  renderPass.setTrackedDepthWriteEnable(false);
+  renderPass.setTrackedDepthCompareOperation(
+    depthRasterOf(camera).nearerOrEqual,
+  );
+  renderPass.setTrackedCullMode(gpu.CullMode.none);
+  renderPass.setTrackedPrimitiveType(gpu.PrimitiveType.triangle);
   bindVertexBufferCompat(renderPass, _fullscreenQuadView, 6);
 
   // Reconstruct the world view ray from inverse projection and camera

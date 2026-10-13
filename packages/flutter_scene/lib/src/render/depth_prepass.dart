@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'dart:math' as math;
 
+import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/fmat/fmat_ast.dart' show DepthSurfaceKind;
@@ -188,7 +189,7 @@ class DepthPrepass extends RenderGraphPass {
     );
 
     final commandBuffer = gpu.gpuContext.createCommandBuffer();
-    final renderPass = commandBuffer.createRenderPass(target);
+    final renderPass = createTrackedRenderPass(commandBuffer, target);
     setCurrentViewInstanceBandOf(_camera, _camera.position, _cameraForward);
     final encoder = _DepthPrepassEncoder(
       renderPass,
@@ -348,7 +349,7 @@ class TranslucentDepthPatchPass extends RenderGraphPass {
       ),
     );
     final commandBuffer = gpu.gpuContext.createCommandBuffer();
-    final renderPass = commandBuffer.createRenderPass(target);
+    final renderPass = createTrackedRenderPass(commandBuffer, target);
     setCurrentViewInstanceBandOf(_camera, _camera.position, _cameraForward);
     final encoder = _DepthPrepassEncoder(
       renderPass,
@@ -578,13 +579,13 @@ class _DepthPrepassEncoder {
   }) : _writeNormals = writeNormals,
        _translucentPatch = translucentPatch,
        _primaryView = primaryView {
-    _renderPass.setDepthWriteEnable(true);
-    _renderPass.setColorBlendEnable(false);
-    _renderPass.setDepthCompareOperation(_raster.nearerOrEqual);
+    _renderPass.setTrackedDepthWriteEnable(true);
+    _renderPass.setTrackedColorBlendEnable(false);
+    _renderPass.setTrackedDepthCompareOperation(_raster.nearerOrEqual);
     // Winding and culling are matched to each material per draw in [submit]
     // (winding follows the node/instance parity, culling follows the material's
     // own mode), so the same faces the color pass draws contribute depth.
-    _renderPass.setWindingOrder(gpu.WindingOrder.clockwise);
+    _renderPass.setTrackedWindingOrder(gpu.WindingOrder.clockwise);
     // The camera axes are constant across the pass. Pack them once and
     // rebind per draw (clearBindings drops the binding between draws). The
     // normal-writing path also needs the right/up axes to rotate the world
@@ -715,7 +716,7 @@ class _DepthPrepassEncoder {
     // Cull the same faces as the color pass; a double-sided (culling: none)
     // material must stay double-sided here, or its camera-facing back faces are
     // absent from the prepass and SSAO/SSR read the farther surface behind them.
-    _renderPass.setCullMode(item.material.renderCullMode);
+    _renderPass.setTrackedCullMode(item.material.renderCullMode);
     final geometry = item.geometry;
     // Skinned items draw through the full bind path below; apply this item's
     // skeleton to the (possibly shared) geometry first.
@@ -745,10 +746,10 @@ class _DepthPrepassEncoder {
     if (pipeline == null) return;
     if (!identical(_boundPipeline, pipeline)) {
       _renderPass.clearBindings();
-      _renderPass.bindPipeline(pipeline);
+      _renderPass.bindTrackedPipeline(pipeline);
       _boundPipeline = pipeline;
     }
-    _renderPass.setPrimitiveType(geometry.primitiveType);
+    _renderPass.setTrackedPrimitiveType(geometry.primitiveType);
     activeDrawRecorder?.setContext(
       DrawContext(
         phase: DrawPhase.depth,
@@ -847,7 +848,7 @@ class _DepthPrepassEncoder {
             _bindDraw(item.drawTransform * instanceTransform);
             final flip =
                 item.windingFlipped != (instanceTransform.determinant() < 0);
-            _renderPass.setWindingOrder(
+            _renderPass.setTrackedWindingOrder(
               flip
                   ? gpu.WindingOrder.counterClockwise
                   : gpu.WindingOrder.clockwise,
@@ -863,7 +864,7 @@ class _DepthPrepassEncoder {
       final shared = item.sharedRows;
       if (shared != null) {
         final rows = sharedInstanceRowsOf(shared);
-        _renderPass.setWindingOrder(
+        _renderPass.setTrackedWindingOrder(
           item.windingFlipped != rows.flipped
               ? gpu.WindingOrder.counterClockwise
               : gpu.WindingOrder.clockwise,
@@ -898,7 +899,7 @@ class _DepthPrepassEncoder {
           if (first + count > limit) count = limit - first;
         }
         bindInstanceRows(_renderPass, item, first, count, slot: instanceSlot);
-        _renderPass.setWindingOrder(
+        _renderPass.setTrackedWindingOrder(
           ranges[range + 2] != 0
               ? gpu.WindingOrder.counterClockwise
               : gpu.WindingOrder.clockwise,
@@ -928,7 +929,7 @@ class _DepthPrepassEncoder {
         attributeFloats: attributeFloats,
       );
     }
-    _renderPass.setWindingOrder(
+    _renderPass.setTrackedWindingOrder(
       item.windingFlipped
           ? gpu.WindingOrder.counterClockwise
           : gpu.WindingOrder.clockwise,

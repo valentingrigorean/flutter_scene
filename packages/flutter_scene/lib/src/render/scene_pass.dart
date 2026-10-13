@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:flutter_scene/src/depth_conflicts.dart' show DepthConflictIds;
+import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:vector_math/vector_math.dart';
@@ -463,7 +464,7 @@ class ScenePass extends RenderGraphPass {
     );
 
     final commandBuffer = gpu.gpuContext.createCommandBuffer();
-    final renderPass = commandBuffer.createRenderPass(target);
+    final renderPass = createTrackedRenderPass(commandBuffer, target);
 
     // Draw the background first, behind the geometry. It writes no depth, so
     // the opaque phase (depth-tested against the cleared far value) draws
@@ -572,7 +573,8 @@ class ScenePass extends RenderGraphPass {
         attachment.storeAction = gpu.StoreAction.multisampleResolve;
       }
       commands = gpu.gpuContext.createCommandBuffer();
-      drawing = commands.createRenderPass(
+      drawing = createTrackedRenderPass(
+        commands,
         gpu.RenderTarget.singleColor(
           attachment,
           depthStencilAttachment: gpu.DepthStencilAttachment(
@@ -675,7 +677,8 @@ class ScenePass extends RenderGraphPass {
         ),
       );
       final translucentCommands = gpu.gpuContext.createCommandBuffer();
-      final translucentPass = translucentCommands.createRenderPass(
+      final translucentPass = createTrackedRenderPass(
+        translucentCommands,
         translucentTarget,
       );
       _encodeCopy(translucentPass, currentColor);
@@ -781,7 +784,8 @@ class ScenePass extends RenderGraphPass {
       attachment.storeAction = gpu.StoreAction.multisampleResolve;
     }
     final commands = gpu.gpuContext.createCommandBuffer();
-    final pass = commands.createRenderPass(
+    final pass = createTrackedRenderPass(
+      commands,
       gpu.RenderTarget.singleColor(
         attachment,
         depthStencilAttachment: gpu.DepthStencilAttachment(
@@ -884,14 +888,14 @@ class ScenePass extends RenderGraphPass {
     final ids = _conflictIds;
     if (ids == null) return;
     pass.clearBindings();
-    pass.bindPipeline(
+    pass.bindTrackedPipeline(
       resolvePipeline(_copyVertexShader, _conflictOverlayShader),
     );
-    pass.setDepthWriteEnable(false);
-    pass.setDepthCompareOperation(gpu.CompareFunction.always);
-    pass.setCullMode(gpu.CullMode.none);
-    pass.setColorBlendEnable(true);
-    pass.setColorBlendEquation(
+    pass.setTrackedDepthWriteEnable(false);
+    pass.setTrackedDepthCompareOperation(gpu.CompareFunction.always);
+    pass.setTrackedCullMode(gpu.CullMode.none);
+    pass.setTrackedColorBlendEnable(true);
+    pass.setTrackedColorBlendEquation(
       gpu.ColorBlendEquation(
         colorBlendOperation: gpu.BlendOperation.add,
         sourceColorBlendFactor: gpu.BlendFactor.one,
@@ -1021,11 +1025,11 @@ class ScenePass extends RenderGraphPass {
   /// Copies [source] over a whole color target.
   void _encodeCopy(gpu.RenderPass pass, gpu.Texture source) {
     final pipeline = resolvePipeline(_copyVertexShader, _copyFragmentShader);
-    pass.bindPipeline(pipeline);
-    pass.setDepthWriteEnable(false);
-    pass.setDepthCompareOperation(gpu.CompareFunction.always);
-    pass.setColorBlendEnable(false);
-    pass.setCullMode(gpu.CullMode.none);
+    pass.bindTrackedPipeline(pipeline);
+    pass.setTrackedDepthWriteEnable(false);
+    pass.setTrackedDepthCompareOperation(gpu.CompareFunction.always);
+    pass.setTrackedColorBlendEnable(false);
+    pass.setTrackedCullMode(gpu.CullMode.none);
     bindVertexBufferCompat(pass, _quadView, 6);
     pass.bindTexture(
       _copyFragmentShader.cachedUniformSlot('source_texture'),
@@ -1048,14 +1052,17 @@ class ScenePass extends RenderGraphPass {
     }
 
     final commandBuffer = gpu.gpuContext.createCommandBuffer();
-    final pass = commandBuffer.createRenderPass(
+    final pass = createTrackedRenderPass(
+      commandBuffer,
       gpu.RenderTarget.singleColor(gpu.ColorAttachment(texture: atlas)),
     );
-    pass.bindPipeline(resolvePipeline(_copyVertexShader, _copyFragmentShader));
-    pass.setColorBlendEnable(false);
-    pass.setDepthWriteEnable(false);
-    pass.setDepthCompareOperation(gpu.CompareFunction.always);
-    pass.setCullMode(gpu.CullMode.none);
+    pass.bindTrackedPipeline(
+      resolvePipeline(_copyVertexShader, _copyFragmentShader),
+    );
+    pass.setTrackedColorBlendEnable(false);
+    pass.setTrackedDepthWriteEnable(false);
+    pass.setTrackedDepthCompareOperation(gpu.CompareFunction.always);
+    pass.setTrackedCullMode(gpu.CullMode.none);
     bindVertexBufferCompat(pass, _quadView, 6);
 
     for (var index = 0; index < mips.length; index++) {
@@ -1085,16 +1092,17 @@ class ScenePass extends RenderGraphPass {
     gpu.Texture target,
   ) {
     final commandBuffer = gpu.gpuContext.createCommandBuffer();
-    final pass = commandBuffer.createRenderPass(
+    final pass = createTrackedRenderPass(
+      commandBuffer,
       gpu.RenderTarget.singleColor(gpu.ColorAttachment(texture: target)),
     );
-    pass.bindPipeline(
+    pass.bindTrackedPipeline(
       resolvePipeline(_copyVertexShader, _transmissionFilterShader),
     );
-    pass.setColorBlendEnable(false);
-    pass.setDepthWriteEnable(false);
-    pass.setDepthCompareOperation(gpu.CompareFunction.always);
-    pass.setCullMode(gpu.CullMode.none);
+    pass.setTrackedColorBlendEnable(false);
+    pass.setTrackedDepthWriteEnable(false);
+    pass.setTrackedDepthCompareOperation(gpu.CompareFunction.always);
+    pass.setTrackedCullMode(gpu.CullMode.none);
     bindVertexBufferCompat(pass, _quadView, 6);
     pass.bindTexture(
       _transmissionFilterShader.cachedUniformSlot('source'),

@@ -15,6 +15,7 @@ import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/depth_conflicts.dart'
     as depth_conflicts
     show DepthConflictReport, probeDepthConflicts;
+import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render/near_fit.dart';
@@ -2374,7 +2375,7 @@ base class Scene implements SceneGraph {
     );
     final commandBuffer = gpu.gpuContext.createCommandBuffer();
     final encoder = ShadowEncoder(
-      commandBuffer.createRenderPass(target),
+      createTrackedRenderPass(commandBuffer, target),
       uniformTransients,
       Matrix4.identity(),
       views.first.camera.position,
