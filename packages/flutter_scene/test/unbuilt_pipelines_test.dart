@@ -7,7 +7,10 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter_scene/gpu.dart' as gpu;
 import 'package:flutter_scene/scene.dart';
+import 'package:flutter_scene/src/geometry/primitives.dart'
+    show PrimitiveArrays, buildCuboidArrays;
 import 'package:flutter_scene/src/render/render_scene.dart' show RenderItem;
 import 'package:flutter_scene/src/scene_encoder.dart'
     show evictPipelinesForShaders;
@@ -29,6 +32,31 @@ bool _gpuAvailable() {
 final class _DepthReading extends UnlitMaterial {
   @override
   Set<RenderInput> get sceneInputs => const {RenderInput.depth};
+}
+
+final class _Stenciled extends MeshGeometry {
+  _Stenciled() : this._(buildCuboidArrays(Vector3.all(1)));
+
+  _Stenciled._(PrimitiveArrays arrays)
+    : super.fromArrays(
+        positions: arrays.positions,
+        normals: arrays.normals,
+        texCoords: arrays.texCoords,
+        colors: arrays.colors,
+        indices: arrays.indices,
+      );
+
+  @override
+  void draw(gpu.RenderPass pass, {int instanceCount = 1}) {
+    pass.setTrackedStencilConfig(
+      gpu.StencilConfig(compareFunction: gpu.CompareFunction.equal),
+    );
+    try {
+      super.draw(pass, instanceCount: instanceCount);
+    } finally {
+      pass.setTrackedStencilConfig(gpu.StencilConfig());
+    }
+  }
 }
 
 PerspectiveCamera _camera() => PerspectiveCamera(
@@ -215,6 +243,28 @@ void main() {
     final built = scenePipelinesBuilt;
     _frame(scene, views, _square);
     expect(scenePipelinesBuiltSince(built), isEmpty);
+  });
+
+  test('a geometry that sets its own stencil in its draw counts the state '
+      'it draws in', () async {
+    final scene = await _scene()
+      ..maxGpuFramesInFlight = 0;
+    final material = UnlitMaterial();
+    final marked = Node(name: 'marked', mesh: Mesh(_Stenciled(), material))
+      ..visible = false;
+    scene
+      ..add(_box('box', material: material))
+      ..add(marked);
+    final views = [RenderView(camera: _camera())];
+    _frame(scene, views, _square);
+
+    marked.visible = true;
+    final before = scenePipelinesBuilt;
+    _frame(scene, views, _square);
+    expect(
+      scenePipelinesBuiltSince(before),
+      contains(allOf(contains('UnlitFragment'), contains('stencil'))),
+    );
   });
 
   test(

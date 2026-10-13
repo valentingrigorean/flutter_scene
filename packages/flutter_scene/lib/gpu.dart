@@ -26,4 +26,6 @@ export 'src/generated_assets/generated_asset_lookup.dart'
 
 export 'src/gpu/render_pass_compat.dart' show drawCompat, drawIndexedCompat;
 
+export 'src/render/pass_pipeline_state.dart' show TrackedPassState;
+
 export 'src/gpu/gpu.dart';
