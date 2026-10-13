@@ -58,11 +58,20 @@ ByteData packPostShadowInfo(
 /// passes were added.
 ///
 /// The stages are coarse and stable, so a custom pass keeps working as the
-/// internal pipeline evolves. The first two stages operate on the linear
+/// internal pipeline evolves. The first three stages operate on the linear
 /// HDR scene color (before tone mapping); the last two operate on the
 /// display-referred image (after the resolve/tone-mapping pass).
 /// {@category Rendering}
 enum RenderStage {
+  /// Between the opaque and the translucent draws of the scene, on the linear
+  /// HDR scene color, so the translucent surfaces draw over what the pass
+  /// composes. The opaque draws include the materials that blend in the
+  /// opaque pass (`Material.blendsInOpaquePass`). A pass here splits the scene
+  /// pass around it: the linear depth ([RenderInput.depth]) is present, and
+  /// the depth the scene pass stores ([RenderInput.depthAttachment],
+  /// [RenderInput.depthStored]) is not yet published.
+  afterOpaqueScene,
+
   /// Right after the scene is drawn (opaque and transparent), on the linear
   /// HDR scene color, before bloom and any HDR custom effects.
   afterScene,
@@ -442,10 +451,13 @@ class RenderPassContext {
   }
 
   // Whether this stage operates on the HDR scene color or the display image.
-  Object get _chainKey =>
-      stage == RenderStage.afterScene || stage == RenderStage.beforeToneMapping
-      ? kSceneColorBlackboardKey
-      : kDisplayColorBlackboardKey;
+  Object get _chainKey => switch (stage) {
+    RenderStage.afterOpaqueScene ||
+    RenderStage.afterScene ||
+    RenderStage.beforeToneMapping => kSceneColorBlackboardKey,
+    RenderStage.afterToneMapping ||
+    RenderStage.afterAntiAliasing => kDisplayColorBlackboardKey,
+  };
 
   /// The current color for this stage's chain (HDR at the HDR stages, the
   /// display image at the display stages). [applyShader] binds this as
