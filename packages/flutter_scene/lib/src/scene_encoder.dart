@@ -128,7 +128,6 @@ base class _OpaqueRecord {
         coveragePipeline == null &&
             !material.blendsInOpaquePass &&
             material.instanceAttributes == null &&
-            geometry.bindsModelTransformInstance &&
             item.instanceTransforms == null &&
             !hasMeshDrawSelector(item)
         ? geometry.instanceBatchKey(item.drawTransform)
@@ -2669,7 +2668,9 @@ base class SceneEncoder {
 
   // Draws the records [start, end) of one batch key as one instanced draw:
   // the first record binds the geometry, the material and the uniforms, and
-  // each record packs its own instance record under its anchor.
+  // each record packs its own instance record under its anchor. A geometry
+  // that binds no model-transform instance gets no instance buffer: it binds
+  // what its vertex stage reads per member itself.
   void _encodeInstanceBatch(int start, int end) {
     final record = _opaqueRecords[start];
     final item = record.item;
@@ -2711,10 +2712,12 @@ base class SceneEncoder {
         final materialVertex = material.vertexShaderForGeometry(geometry);
         _describeDraw(item, geometry, material, materialVertex, pipeline);
         _bindGeometry(geometry, item.drawTransform, material, materialVertex);
-        _bindPackedInstances(
-          Float32List.sublistView(records, 0, floats),
-          geometry.vertexStreamCount,
-        );
+        if (geometry.bindsModelTransformInstance) {
+          _bindPackedInstances(
+            Float32List.sublistView(records, 0, floats),
+            geometry.vertexStreamCount,
+          );
+        }
         _bindMaterial(material, materialVertex, 1.0);
         _bindDebugView(material, item, false);
         _setWindingOrder(

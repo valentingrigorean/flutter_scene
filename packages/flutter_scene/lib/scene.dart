@@ -312,7 +312,8 @@ export 'src/render/render_scene.dart'
         SceneMaterialSummary,
         ViewVisibleItems,
         currentDrawAnchor,
-        currentDrawOrigin;
+        currentDrawOrigin,
+        currentDrawWorldTransform;
 export 'src/render/shared_instance_rows.dart'
     show
         InstanceRecordFrame,

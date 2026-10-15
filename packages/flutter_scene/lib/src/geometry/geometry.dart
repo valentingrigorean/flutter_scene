@@ -1128,12 +1128,20 @@ abstract class Geometry with RenderSourceListeners {
   /// and one instance record per member (see [packInstanceBatchMember]), so
   /// an equal key promises that every value a member draws with and the
   /// first member's uniforms do not carry is in its record.
+  ///
+  /// A geometry that binds no model-transform instance (see
+  /// [bindsModelTransformInstance]) joins too, and the joined draw binds no
+  /// instance buffer: its vertex stage reads each member's values by the
+  /// draw's instance index from what [packInstanceBatchMember] kept, bound
+  /// with the first member's buffers and uniforms.
   Object? instanceBatchKey(vm.Matrix4 modelTransform) => null;
 
   /// Writes what this member of an instanced draw (see [instanceBatchKey])
   /// draws with into its instance record at [at] of [records], which holds
   /// the member's model transform and colour. Called with the member's
-  /// anchor stated in `currentDrawAnchor`, before the first member binds.
+  /// anchor stated in `currentDrawAnchor`, before the first member binds, in
+  /// instance order: the member at [at] zero opens the draw, and a member's
+  /// instance index is the index of its record in [records].
   void packInstanceBatchMember(Float32List records, int at) {}
 
   /// Hook for skinned geometries to receive the joints texture computed

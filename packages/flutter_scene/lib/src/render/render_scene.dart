@@ -599,13 +599,15 @@ class RenderItem {
   /// States the anchor of an item whose records hold [worldTransform], a
   /// mesh drawn alone or packed instances, for the draws bound next: the
   /// instance frame adds the anchor less the draw origin, and
-  /// [currentDrawAnchor] and [currentDrawOrigin] state the two points. Pair
-  /// with [endAnchoredDraw].
+  /// [currentDrawAnchor] and [currentDrawOrigin] state the two points, and
+  /// [currentDrawWorldTransform] the transform the records hold. Pair with
+  /// [endAnchoredDraw].
   @internal
   void beginAnchoredDraw() {
     if (!anchored || drawOrigin == null) return;
     _currentDrawAnchor = anchor;
     _currentDrawOrigin = drawOrigin!.at;
+    _currentDrawWorldTransform = worldTransform;
     currentDrawInstanceFrame = (_anchorFrame ??= Matrix4.identity())
       ..setTranslationRaw(drawShift(0), drawShift(1), drawShift(2));
   }
@@ -616,6 +618,7 @@ class RenderItem {
     if (_currentDrawAnchor == null) return;
     _currentDrawAnchor = null;
     _currentDrawOrigin = null;
+    _currentDrawWorldTransform = null;
     currentDrawInstanceFrame = null;
   }
 
@@ -643,6 +646,7 @@ class RenderItem {
   static void endInstanceDraw() {
     _currentDrawAnchor = null;
     _currentDrawOrigin = null;
+    _currentDrawWorldTransform = null;
     currentDrawInstanceFrame = null;
     currentDrawInstanceLocal = null;
     currentDrawInstanceBand = null;
@@ -1387,6 +1391,17 @@ Float64List? _currentDrawAnchor;
 /// or null for an item with no anchor. See [currentDrawAnchor].
 Float64List? get currentDrawOrigin => _currentDrawOrigin;
 Float64List? _currentDrawOrigin;
+
+/// The world transform of the anchored item being bound, the transform its
+/// held record carries, without the anchor; null for an item with no anchor,
+/// whose world transform is the model transform `bind` receives. See
+/// [currentDrawAnchor].
+///
+/// A [Geometry] that binds no model-transform instance (see
+/// [Geometry.bindsModelTransformInstance]) reads it in `bind` in place of the
+/// record its vertex stage does not read.
+Matrix4? get currentDrawWorldTransform => _currentDrawWorldTransform;
+Matrix4? _currentDrawWorldTransform;
 
 /// The point a scene draws from, see `Scene.drawOrigin`.
 @internal
