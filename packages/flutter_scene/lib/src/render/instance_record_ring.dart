@@ -61,7 +61,7 @@ set debugInstanceRecordDevice(InstanceRecordDevice? device) =>
     _device = device ?? const _GpuInstanceRecordDevice();
 
 const int _frameHistory = 8;
-final Int64List _frameStarts = Int64List(_frameHistory);
+final List<int> _frameStarts = List<int>.filled(_frameHistory, 0);
 int _frame = 0;
 
 /// Starts a frame: a buffer a ring bound in an earlier frame comes free once
