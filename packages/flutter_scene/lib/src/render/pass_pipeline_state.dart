@@ -61,6 +61,9 @@ final class _PassState {
   // Whether the pass drew since its pipeline or state last changed, so a run
   // of draws in one state records once.
   bool recorded = false;
+  // Whether the pass drew since its pipeline or state last changed, so a run
+  // of draws in one state meets it once.
+  bool met = false;
   Object? _key;
   gpu.RenderPipeline? pipeline;
   final Map<int, bool> blends = {};
@@ -76,6 +79,7 @@ final class _PassState {
 
   void changed() {
     recorded = false;
+    met = false;
     _key = null;
   }
 
@@ -154,6 +158,32 @@ String? recordPassDraw(gpu.RenderPass pass) {
   return state.description;
 }
 
+final Set<Object> _metStates = {};
+
+/// Whether the draw [pass] issues next meets its render pipeline in a state
+/// no draw met before, so the backend builds a native pipeline inside that
+/// draw. A pipeline's first state counts too, since the backend builds that
+/// one at its first draw as well. A pass whose pipeline was not bound through
+/// [TrackedPassState.bindTrackedPipeline] meets none.
+@internal
+bool meetsNewPassState(gpu.RenderPass pass) {
+  final state = _stateOf(pass);
+  if (state.met) return false;
+  final pipeline = state.pipeline;
+  if (pipeline == null || _metStates.contains((pipeline, state.key))) {
+    state.met = true;
+    return false;
+  }
+  return true;
+}
+
+/// Marks the state [meetsNewPassState] found for [pass] as met.
+@internal
+void meetPassState(gpu.RenderPass pass) {
+  final state = _stateOf(pass)..met = true;
+  _metStates.add((state.pipeline, state.key));
+}
+
 /// The render pass setters that also record the state the scene's pipeline
 /// meter keys a draw by.
 ///
@@ -166,7 +196,8 @@ extension TrackedPassState on gpu.RenderPass {
     bindPipeline(pipeline);
     _stateOf(this)
       ..pipeline = pipeline
-      ..recorded = false;
+      ..recorded = false
+      ..met = false;
   }
 
   void setTrackedColorBlendEnable(bool enable, {int colorAttachmentIndex = 0}) {
