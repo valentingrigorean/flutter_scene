@@ -2238,12 +2238,20 @@ base class Scene implements SceneGraph {
   /// instead of blocking for the whole compile (Android declares an app
   /// that ignores input for ten seconds not responding). A single build
   /// longer than the budget still runs whole.
+  ///
+  /// Lit materials draw with their no-shadow variants in a frame the
+  /// directional light casts no shadow in. Set [allShadowStates] to compile
+  /// both now: where the directional light casts, each warm-up frame encodes
+  /// once more with its shadow off, and restores it before it returns, so a
+  /// light that stops casting later (a sun that sets) does not stall a frame
+  /// on its first draw.
   /// {@category Assets and loading}
   Future<void> warmUp(
     List<RenderView> views, {
     bool includeOffscreen = false,
     Duration? sliceBudget,
     ui.Size? size,
+    bool allShadowStates = false,
   }) async {
     _checkNotDisposed('warmUp');
     currentAnimationTime = animationTime;
@@ -2277,6 +2285,24 @@ base class Scene implements SceneGraph {
           canvas,
           region: const ui.Rect.fromLTWH(0, 0, 64, 64),
         );
+        // The unshadowed frame follows the first while its GPU work still
+        // runs, and a paced frame encodes nothing, so pacing is off for it.
+        final light = renderScene.primaryDirectionalLight?.light;
+        if (allShadowStates && light != null && light.castsShadow) {
+          final framesInFlight = maxGpuFramesInFlight;
+          light.castsShadow = false;
+          maxGpuFramesInFlight = 0;
+          try {
+            renderViews(
+              views,
+              canvas,
+              region: const ui.Rect.fromLTWH(0, 0, 64, 64),
+            );
+          } finally {
+            light.castsShadow = true;
+            maxGpuFramesInFlight = framesInFlight;
+          }
+        }
       } finally {
         _warmUpIncludeOffscreen = false;
         _warmUpSize = null;
