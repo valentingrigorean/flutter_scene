@@ -613,6 +613,32 @@ T withPipelineBuildBudget<T>(Duration budget, T Function() body) {
 @internal
 int get deferredPipelineBuilds => _deferredBuilds;
 
+/// Starts the draw [pass] issues next, and says whether it goes ahead.
+///
+/// The backend builds a native pipeline inside the first draw that meets a
+/// render pipeline in a state no draw met before ([meetsNewPassState]), on
+/// Metal and Vulkan by waiting on the compile. Inside
+/// [withPipelineBuildBudget] that draw's time counts against the budget, and
+/// once the budget is spent such a draw is skipped and counted in
+/// [deferredPipelineBuilds], as a pipeline build is. [endPassDraw] ends a draw
+/// that went ahead.
+@internal
+bool beginPassDraw(gpu.RenderPass pass) {
+  if (!meetsNewPassState(pass)) return true;
+  final budget = _buildBudget;
+  if (budget != null && _buildClock.elapsed >= budget) {
+    _deferredBuilds++;
+    return false;
+  }
+  meetPassState(pass);
+  if (budget != null) _buildClock.start();
+  return true;
+}
+
+/// Ends a draw [beginPassDraw] let go ahead.
+@internal
+void endPassDraw() => _buildClock.stop();
+
 bool _deferBuild(
   (gpu.Shader, gpu.Shader, int) key,
   VertexLayoutDescriptor? vertexLayout,
