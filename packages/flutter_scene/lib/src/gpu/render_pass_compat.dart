@@ -2,7 +2,7 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/draw_recorder.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:flutter_scene/src/scene_encoder.dart'
-    show countArmedPipelineState;
+    show beginPassDraw, countArmedPipelineState, endPassDraw;
 
 void bindVertexBufferCompat(
   gpu.RenderPass pass,
@@ -40,16 +40,21 @@ void _countDraw(int vertexCount, int instanceCount, {required bool indexed}) {
 }
 
 void drawCompat(gpu.RenderPass pass, int vertexCount, {int instanceCount = 1}) {
-  countArmedPipelineState(pass);
-  _countDraw(vertexCount, instanceCount, indexed: false);
-  if (instanceCount != 1) {
-    (pass as dynamic).draw(vertexCount, instanceCount: instanceCount);
-    return;
-  }
+  if (!beginPassDraw(pass)) return;
   try {
-    (pass as dynamic).draw(vertexCount);
-  } on NoSuchMethodError {
-    (pass as dynamic).draw();
+    countArmedPipelineState(pass);
+    _countDraw(vertexCount, instanceCount, indexed: false);
+    if (instanceCount != 1) {
+      (pass as dynamic).draw(vertexCount, instanceCount: instanceCount);
+      return;
+    }
+    try {
+      (pass as dynamic).draw(vertexCount);
+    } on NoSuchMethodError {
+      (pass as dynamic).draw();
+    }
+  } finally {
+    endPassDraw();
   }
 }
 
@@ -58,15 +63,20 @@ void drawIndexedCompat(
   int indexCount, {
   int instanceCount = 1,
 }) {
-  countArmedPipelineState(pass);
-  _countDraw(indexCount, instanceCount, indexed: true);
-  if (instanceCount != 1) {
-    (pass as dynamic).drawIndexed(indexCount, instanceCount: instanceCount);
-    return;
-  }
+  if (!beginPassDraw(pass)) return;
   try {
-    (pass as dynamic).drawIndexed(indexCount);
-  } on NoSuchMethodError {
-    (pass as dynamic).draw();
+    countArmedPipelineState(pass);
+    _countDraw(indexCount, instanceCount, indexed: true);
+    if (instanceCount != 1) {
+      (pass as dynamic).drawIndexed(indexCount, instanceCount: instanceCount);
+      return;
+    }
+    try {
+      (pass as dynamic).drawIndexed(indexCount);
+    } on NoSuchMethodError {
+      (pass as dynamic).draw();
+    }
+  } finally {
+    endPassDraw();
   }
 }
