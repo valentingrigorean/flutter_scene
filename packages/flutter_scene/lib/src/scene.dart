@@ -2252,6 +2252,13 @@ base class Scene implements SceneGraph {
   /// [allShadingTiers] to compile both now, so turning one of those features
   /// on or off later does not stall a frame on its first draw. It roughly
   /// doubles the lit pipelines warm-up compiles.
+  ///
+  /// Lit materials draw with their no-shadow variants in a frame the
+  /// directional light casts no shadow in. Set [allShadowStates] to compile
+  /// both now: where the directional light casts, each warm-up frame encodes
+  /// once more with its shadow off, and restores it before it returns, so a
+  /// light that stops casting later (a sun that sets) does not stall a frame
+  /// on its first draw.
   /// {@category Assets and loading}
   Future<void> warmUp(
     List<RenderView> views, {
@@ -2259,6 +2266,7 @@ base class Scene implements SceneGraph {
     Duration? sliceBudget,
     ui.Size? size,
     bool allShadingTiers = false,
+    bool allShadowStates = false,
   }) async {
     _checkNotDisposed('warmUp');
     currentAnimationTime = animationTime;
@@ -2284,14 +2292,16 @@ base class Scene implements SceneGraph {
       final canvas = ui.Canvas(recorder);
       _warmUpIncludeOffscreen = includeOffscreen;
       _warmUpSize = size == null || size.isEmpty ? null : size;
-      // The tier frames follow the first while its GPU work still runs, and a
-      // paced frame encodes nothing, so pacing is off while they encode.
+      // The tier and unshadowed frames follow the first while its GPU work
+      // still runs, and a paced frame encodes nothing, so pacing is off while
+      // they encode.
       final framesInFlight = maxGpuFramesInFlight;
-      if (allShadingTiers) maxGpuFramesInFlight = 0;
+      if (allShadingTiers || allShadowStates) maxGpuFramesInFlight = 0;
       try {
         // With allShadingTiers, the frame encodes once under each lit tier
         // (one of them is the frame's own), so a later feature toggle that
-        // switches tiers finds its pipelines built.
+        // switches tiers finds its pipelines built. With allShadowStates,
+        // each tier encodes once more with the casting light's shadow off.
         for (final tier
             in allShadingTiers ? const [true, false] : const [null]) {
           shadingTierOverride = tier;
@@ -2304,6 +2314,19 @@ base class Scene implements SceneGraph {
             canvas,
             region: const ui.Rect.fromLTWH(0, 0, 64, 64),
           );
+          final light = renderScene.primaryDirectionalLight?.light;
+          if (allShadowStates && light != null && light.castsShadow) {
+            light.castsShadow = false;
+            try {
+              renderViews(
+                views,
+                canvas,
+                region: const ui.Rect.fromLTWH(0, 0, 64, 64),
+              );
+            } finally {
+              light.castsShadow = true;
+            }
+          }
         }
       } finally {
         shadingTierOverride = null;
