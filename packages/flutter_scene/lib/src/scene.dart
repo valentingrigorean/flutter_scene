@@ -2292,11 +2292,10 @@ base class Scene implements SceneGraph {
       final canvas = ui.Canvas(recorder);
       _warmUpIncludeOffscreen = includeOffscreen;
       _warmUpSize = size == null || size.isEmpty ? null : size;
-      // The tier and unshadowed frames follow the first while its GPU work
-      // still runs, and a paced frame encodes nothing, so pacing is off while
-      // they encode.
+      // The tier frames follow the first while its GPU work still runs, and a
+      // paced frame encodes nothing, so pacing is off while they encode.
       final framesInFlight = maxGpuFramesInFlight;
-      if (allShadingTiers || allShadowStates) maxGpuFramesInFlight = 0;
+      if (allShadingTiers) maxGpuFramesInFlight = 0;
       try {
         // With allShadingTiers, the frame encodes once under each lit tier
         // (one of them is the frame's own), so a later feature toggle that
@@ -2314,9 +2313,12 @@ base class Scene implements SceneGraph {
             canvas,
             region: const ui.Rect.fromLTWH(0, 0, 64, 64),
           );
+          // So does the unshadowed frame, which unpaces itself alone.
           final light = renderScene.primaryDirectionalLight?.light;
           if (allShadowStates && light != null && light.castsShadow) {
+            final paced = maxGpuFramesInFlight;
             light.castsShadow = false;
+            maxGpuFramesInFlight = 0;
             try {
               renderViews(
                 views,
@@ -2325,6 +2327,7 @@ base class Scene implements SceneGraph {
               );
             } finally {
               light.castsShadow = true;
+              maxGpuFramesInFlight = paced;
             }
           }
         }
