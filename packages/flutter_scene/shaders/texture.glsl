@@ -175,8 +175,8 @@ vec3 SamplePrefilteredRadiance(sampler2D atlas, vec3 direction,
     float t = band - b0;
     highp float v0 = (b0 + eq.y) / kPrefilterBands;
     highp float v1 = (b1 + eq.y) / kPrefilterBands;
-    radiance = mix(texture(atlas, vec2(eq.x, v0)).rgb,
-                   texture(atlas, vec2(eq.x, v1)).rgb, t);
+    radiance = mix(textureLod(atlas, vec2(eq.x, v0), 0.0).rgb,
+                   textureLod(atlas, vec2(eq.x, v1), 0.0).rgb, t);
   }
   return radiance;
 }
