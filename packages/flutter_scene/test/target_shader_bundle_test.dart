@@ -1,7 +1,7 @@
 @TestOn('vm')
 library;
 
-import 'package:flutter_scene/src/fmat/target_shader_bundle.dart';
+import 'package:flutter_scene/build_hooks.dart';
 import 'package:flutter_scene/src/gpu/web/shader_bundle_generated.dart' as fb;
 import 'package:flutter_test/flutter_test.dart';
 
