@@ -9,8 +9,9 @@
 /// [buildTargetShaderBundleJson] compiles raw shader
 /// manifests without unused platform backends. A hook that runs `impellerc`
 /// itself passes [engineShaderIncludeDirectory] and [engineGlesLanguageVersion]
-/// so its shaders include the engine's GLSL, and checks the bundle it wrote
-/// with [webShaderBundleDefects]. [buildEngineAssets] is
+/// so its shaders include the engine's GLSL, checks the bundle it wrote
+/// with [webShaderBundleDefects], and keeps only the backends its target loads
+/// with [trimShaderBundle] and [shaderBundleBackendsForBuild]. [buildEngineAssets] is
 /// optional, putting the shaders flutter_scene itself needs in this app's
 /// generated assets rather than in flutter_scene's own.
 ///
@@ -46,7 +47,11 @@ export 'src/fmat/build_materials.dart'
     show MaterialAssetMode, buildMaterials;
 export 'src/fmat/target_shader_bundle.dart'
     if (dart.library.js_interop) 'src/fmat/target_shader_bundle_unsupported.dart'
-    show TargetShaderBundleAssetMode, buildTargetShaderBundleJson;
+    show
+        TargetShaderBundleAssetMode,
+        buildTargetShaderBundleJson,
+        shaderBundleBackendsForBuild,
+        trimShaderBundle;
 export 'src/fmat/framework_shaders.dart'
     if (dart.library.js_interop) 'src/fmat/framework_shaders_unsupported.dart'
     show engineGlesLanguageVersion, engineShaderIncludeDirectory;
@@ -57,6 +62,7 @@ export 'src/texture/build_textures.dart'
 // the WebGL2 backend.
 export 'src/gpu/shared/shader_bundle_web_check.dart'
     show webShaderBundleDefects;
+export 'src/generated_assets/generated_assets.dart' show ShaderBundleBackend;
 // The per-texture downsample rule accepted by [buildTextures]. Also exported
 // by `package:flutter_scene/scene.dart`; re-exported here because hook code
 // runs on the plain Dart VM and cannot import the Flutter library.

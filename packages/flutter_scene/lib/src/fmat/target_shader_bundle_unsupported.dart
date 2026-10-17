@@ -1,3 +1,7 @@
+import 'dart:typed_data';
+
+import '../generated_assets/generated_assets.dart' show ShaderBundleBackend;
+
 enum TargetShaderBundleAssetMode {
   generatedTree,
   dataAssetsRequired,
@@ -29,3 +33,12 @@ Never buildTargetShaderBundleJson({
 }) => throw UnsupportedError(
   'buildTargetShaderBundleJson runs at build time on native hosts only.',
 );
+
+Never shaderBundleBackendsForBuild(Object buildInput) => throw UnsupportedError(
+  'shaderBundleBackendsForBuild runs at build time on native hosts only.',
+);
+
+Never trimShaderBundle(Uint8List bytes, Set<ShaderBundleBackend> backends) =>
+    throw UnsupportedError(
+      'trimShaderBundle runs at build time on native hosts only.',
+    );
