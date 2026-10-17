@@ -58,13 +58,10 @@ final class _PassState {
 
   final (int, gpu.PixelFormat?, int, gpu.PixelFormat?)? _target;
   final bool _depth;
-  // Whether the pass drew since its pipeline or state last changed, so a run
-  // of draws in one state records once.
-  bool recorded = false;
-  // Whether the pass drew since its pipeline or state last changed, so a run
-  // of draws in one state meets it once.
-  bool met = false;
-  Object? _key;
+  // What the draws met in the pipeline and state the pass holds, looked up
+  // once each time they change, so a run of draws in one state reads it
+  // without hashing the state again.
+  _MetState? _met;
   gpu.RenderPipeline? pipeline;
   final Map<int, bool> blends = {};
   final Map<int, _Blend> equations = {};
@@ -77,13 +74,20 @@ final class _PassState {
   gpu.PrimitiveType primitive = gpu.PrimitiveType.triangle;
   gpu.PolygonMode polygon = gpu.PolygonMode.fill;
 
-  void changed() {
-    recorded = false;
-    met = false;
-    _key = null;
+  void changed() => _met = null;
+
+  void bind(gpu.RenderPipeline pipeline) {
+    if (identical(pipeline, this.pipeline)) return;
+    this.pipeline = pipeline;
+    _met = null;
   }
 
-  Object get key => _key ??= _keyOf();
+  _MetState metOf(gpu.RenderPipeline pipeline) {
+    final held = _met;
+    if (held != null) return held;
+    passStateLookups++;
+    return _met = _metStates.putIfAbsent((pipeline, _keyOf()), _MetState.new);
+  }
 
   Object _keyOf() {
     final attachments = _target?.$1 ?? 1;
@@ -121,7 +125,19 @@ final Expando<_PassState> _passStates = Expando('pass pipeline state');
 _PassState _stateOf(gpu.RenderPass pass) =>
     _passStates[pass] ??= _PassState(null);
 
-final Set<Object> _drawnStates = {};
+// Whether a draw met a render pipeline in one native state, which builds the
+// native pipeline, and whether a draw of it was recorded.
+final class _MetState {
+  bool met = false;
+  bool recorded = false;
+}
+
+final Map<Object, _MetState> _metStates = {};
+
+/// The times a pass looked the pipeline and state its draws meet up, once
+/// each time one of them changed.
+@visibleForTesting
+int passStateLookups = 0;
 
 final Expando<bool> _drawnPipelines = Expando('drawn pipeline');
 
@@ -145,20 +161,17 @@ gpu.RenderPass createTrackedRenderPass(
 @internal
 String? recordPassDraw(gpu.RenderPass pass) {
   final state = _stateOf(pass);
-  if (state.recorded) return null;
-  state.recorded = true;
   final pipeline = state.pipeline;
-  if (pipeline == null || !_drawnStates.add((pipeline, state.key))) {
-    return null;
-  }
+  if (pipeline == null) return null;
+  final met = state.metOf(pipeline);
+  if (met.recorded) return null;
+  met.recorded = true;
   if (_drawnPipelines[pipeline] == null) {
     _drawnPipelines[pipeline] = true;
     return null;
   }
   return state.description;
 }
-
-final Set<Object> _metStates = {};
 
 /// Whether the draw [pass] issues next meets its render pipeline in a state
 /// no draw met before, so the backend builds a native pipeline inside that
@@ -168,20 +181,16 @@ final Set<Object> _metStates = {};
 @internal
 bool meetsNewPassState(gpu.RenderPass pass) {
   final state = _stateOf(pass);
-  if (state.met) return false;
   final pipeline = state.pipeline;
-  if (pipeline == null || _metStates.contains((pipeline, state.key))) {
-    state.met = true;
-    return false;
-  }
-  return true;
+  return pipeline != null && !state.metOf(pipeline).met;
 }
 
 /// Marks the state [meetsNewPassState] found for [pass] as met.
 @internal
 void meetPassState(gpu.RenderPass pass) {
-  final state = _stateOf(pass)..met = true;
-  _metStates.add((state.pipeline, state.key));
+  final state = _stateOf(pass);
+  final pipeline = state.pipeline;
+  if (pipeline != null) state.metOf(pipeline).met = true;
 }
 
 /// The render pass setters that also record the state the scene's pipeline
@@ -194,15 +203,14 @@ void meetPassState(gpu.RenderPass pass) {
 extension TrackedPassState on gpu.RenderPass {
   void bindTrackedPipeline(gpu.RenderPipeline pipeline) {
     bindPipeline(pipeline);
-    _stateOf(this)
-      ..pipeline = pipeline
-      ..recorded = false
-      ..met = false;
+    _stateOf(this).bind(pipeline);
   }
 
   void setTrackedColorBlendEnable(bool enable, {int colorAttachmentIndex = 0}) {
     setColorBlendEnable(enable, colorAttachmentIndex: colorAttachmentIndex);
-    _stateOf(this)
+    final state = _stateOf(this);
+    if (state.blends[colorAttachmentIndex] == enable) return;
+    state
       ..blends[colorAttachmentIndex] = enable
       ..changed();
   }
@@ -212,28 +220,35 @@ extension TrackedPassState on gpu.RenderPass {
     int colorAttachmentIndex = 0,
   }) {
     setColorBlendEquation(equation, colorAttachmentIndex: colorAttachmentIndex);
-    _stateOf(this)
-      ..equations[colorAttachmentIndex] = (
-        equation.colorBlendOperation,
-        equation.sourceColorBlendFactor,
-        equation.destinationColorBlendFactor,
-        equation.alphaBlendOperation,
-        equation.sourceAlphaBlendFactor,
-        equation.destinationAlphaBlendFactor,
-      )
+    final blend = (
+      equation.colorBlendOperation,
+      equation.sourceColorBlendFactor,
+      equation.destinationColorBlendFactor,
+      equation.alphaBlendOperation,
+      equation.sourceAlphaBlendFactor,
+      equation.destinationAlphaBlendFactor,
+    );
+    final state = _stateOf(this);
+    if (state.equations[colorAttachmentIndex] == blend) return;
+    state
+      ..equations[colorAttachmentIndex] = blend
       ..changed();
   }
 
   void setTrackedDepthWriteEnable(bool enable) {
     setDepthWriteEnable(enable);
-    _stateOf(this)
+    final state = _stateOf(this);
+    if (state.depthWrite == enable) return;
+    state
       ..depthWrite = enable
       ..changed();
   }
 
   void setTrackedDepthCompareOperation(gpu.CompareFunction compareFunction) {
     setDepthCompareOperation(compareFunction);
-    _stateOf(this)
+    final state = _stateOf(this);
+    if (state.depthCompare == compareFunction) return;
+    state
       ..depthCompare = compareFunction
       ..changed();
   }
@@ -252,35 +267,47 @@ extension TrackedPassState on gpu.RenderPass {
       configuration.writeMask,
     );
     final state = _stateOf(this);
-    if (targetFace != gpu.StencilFace.back) state.front = stencil;
-    if (targetFace != gpu.StencilFace.front) state.back = stencil;
-    state.changed();
+    final front = targetFace != gpu.StencilFace.back ? stencil : state.front;
+    final back = targetFace != gpu.StencilFace.front ? stencil : state.back;
+    if (front == state.front && back == state.back) return;
+    state
+      ..front = front
+      ..back = back
+      ..changed();
   }
 
   void setTrackedCullMode(gpu.CullMode cullMode) {
     setCullMode(cullMode);
-    _stateOf(this)
+    final state = _stateOf(this);
+    if (state.cull == cullMode) return;
+    state
       ..cull = cullMode
       ..changed();
   }
 
   void setTrackedWindingOrder(gpu.WindingOrder windingOrder) {
     setWindingOrder(windingOrder);
-    _stateOf(this)
+    final state = _stateOf(this);
+    if (state.winding == windingOrder) return;
+    state
       ..winding = windingOrder
       ..changed();
   }
 
   void setTrackedPrimitiveType(gpu.PrimitiveType primitiveType) {
     setPrimitiveType(primitiveType);
-    _stateOf(this)
+    final state = _stateOf(this);
+    if (state.primitive == primitiveType) return;
+    state
       ..primitive = primitiveType
       ..changed();
   }
 
   void setTrackedPolygonMode(gpu.PolygonMode polygonMode) {
     setPolygonMode(polygonMode);
-    _stateOf(this)
+    final state = _stateOf(this);
+    if (state.polygon == polygonMode) return;
+    state
       ..polygon = polygonMode
       ..changed();
   }
