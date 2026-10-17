@@ -238,8 +238,13 @@ Future<String> shaderBundleStamp(BuildInput buildInput, String what) async =>
 String shaderBundleTargetKey(BuildInput buildInput) =>
     shaderTargetKey(shaderBundleBackendsForBuild(buildInput));
 
-/// Rebuilds [bytes] with only [backends].
-Uint8List trimShaderBundle(Uint8List bytes, Set<ShaderBundleBackend> backends) {
+/// Rebuilds [bytes] with only [backends], and only the shaders whose name
+/// [keep] accepts when it is given.
+Uint8List trimShaderBundle(
+  Uint8List bytes,
+  Set<ShaderBundleBackend> backends, {
+  bool Function(String name)? keep,
+}) {
   final bundle = fb.ShaderBundle(bytes);
   final shaders = bundle.shaders;
   if (shaders == null) {
@@ -247,7 +252,11 @@ Uint8List trimShaderBundle(Uint8List bytes, Set<ShaderBundleBackend> backends) {
   }
   return fb.ShaderBundleObjectBuilder(
     formatVersion: bundle.formatVersion,
-    shaders: [for (final shader in shaders) _copyShader(shader, backends)],
+    shaders: [
+      for (final shader in shaders)
+        if (keep == null || keep(shader.name ?? ''))
+          _copyShader(shader, backends),
+    ],
   ).toBytes('IPSB');
 }
 
