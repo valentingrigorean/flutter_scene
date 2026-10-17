@@ -38,7 +38,10 @@ Never shaderBundleBackendsForBuild(Object buildInput) => throw UnsupportedError(
   'shaderBundleBackendsForBuild runs at build time on native hosts only.',
 );
 
-Never trimShaderBundle(Uint8List bytes, Set<ShaderBundleBackend> backends) =>
-    throw UnsupportedError(
-      'trimShaderBundle runs at build time on native hosts only.',
-    );
+Never trimShaderBundle(
+  Uint8List bytes,
+  Set<ShaderBundleBackend> backends, {
+  bool Function(String name)? keep,
+}) => throw UnsupportedError(
+  'trimShaderBundle runs at build time on native hosts only.',
+);

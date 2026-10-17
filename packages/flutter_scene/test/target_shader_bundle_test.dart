@@ -42,4 +42,21 @@ void main() {
     expect(shader.openglDesktop, isNull);
     expect(shader.vulkan?.shader, everyElement(5));
   });
+  test('shader bundle trimming keeps only the shaders a filter accepts', () {
+    final source = fb.ShaderBundleObjectBuilder(
+      formatVersion: fb.ShaderBundleFormatVersion.kVersion.value,
+      shaders: [
+        fb.ShaderObjectBuilder(name: 'KeptFragment', metalIos: _backend(1)),
+        fb.ShaderObjectBuilder(name: 'DroppedFragment', metalIos: _backend(2)),
+      ],
+    ).toBytes('IPSB');
+
+    final trimmed = trimShaderBundle(source, const {
+      ShaderBundleBackend.metalIos,
+    }, keep: (name) => name != 'DroppedFragment');
+    final shader = fb.ShaderBundle(trimmed).shaders!.single;
+
+    expect(shader.name, 'KeptFragment');
+    expect(shader.metalIos?.shader, everyElement(1));
+  });
 }
