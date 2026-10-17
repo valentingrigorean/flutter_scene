@@ -23,7 +23,7 @@ import 'dart:io';
 import 'package:flutter_gpu_shaders/build.dart'
     show shaderBundleImpellercArguments;
 import 'package:flutter_gpu_shaders/environment.dart';
-import 'package:flutter_scene/src/generated_assets/build_engine_assets.dart'
+import 'package:flutter_scene/src/fmat/framework_shaders.dart'
     show engineGlesLanguageVersion;
 import 'package:flutter_scene/src/gpu/web/shader_bundle_generated.dart' as fb;
 import 'package:flutter_test/flutter_test.dart';
