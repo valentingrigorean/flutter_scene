@@ -579,7 +579,7 @@ void main() {
       'lib/src/material/preprocessed_material.dart',
     ).readAsStringSync();
 
-    expect(source, contains('pass.setCullMode(renderCullMode);'));
+    expect(source, contains('pass.setTrackedCullMode(renderCullMode);'));
     expect(
       source,
       isNot(contains('doubleSided ? gpu.CullMode.none : renderCullMode')),
