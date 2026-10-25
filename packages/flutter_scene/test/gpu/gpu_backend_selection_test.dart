@@ -17,6 +17,15 @@ final class _UnopenedBackend implements GpuBackend {
   @override
   GpuBackendContext openContext() =>
       throw UnsupportedError('this backend opens no device');
+
+  @override
+  bool get presents => false;
+
+  @override
+  Future<GpuBackendPresenter> openPresenter({
+    required int width,
+    required int height,
+  }) => throw UnsupportedError('this backend presents nothing');
 }
 
 void main() {
@@ -36,12 +45,12 @@ void main() {
 
   test('a registered backend can be chosen and changed before first use', () {
     final backend = _UnopenedBackend();
-    registerGpuBackend(backend);
-    expect(registeredGpuBackend, same(backend));
-    gpu.selectGpuBackend(GpuBackendKind.wgpu);
+    useGpuBackend(backend);
     expect(gpu.gpuBackend, GpuBackendKind.wgpu);
+    expect(activeGpuBackend, same(backend));
     gpu.selectGpuBackend(GpuBackendKind.impeller);
     expect(gpu.gpuBackend, GpuBackendKind.impeller);
+    expect(activeGpuBackend, isNull);
   });
 
   test('the first GPU object fixes the backend and the registration', () async {

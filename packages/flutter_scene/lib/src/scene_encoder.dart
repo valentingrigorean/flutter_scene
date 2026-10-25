@@ -2341,8 +2341,9 @@ base class SceneEncoder {
           fade,
           sortBackToFrontFrom: sortBackToFrontFrom == null || !nodeSpace
               ? sortBackToFrontFrom
-              : Matrix4.inverted(item.drawTransform)
-                    .transformed3(sortBackToFrontFrom),
+              : Matrix4.inverted(
+                  item.drawTransform,
+                ).transformed3(sortBackToFrontFrom),
           instanceLimit: selection.instanceCount,
           fallback:
               debugFallback ?? _usesDebugFallback(item, material, geometry),

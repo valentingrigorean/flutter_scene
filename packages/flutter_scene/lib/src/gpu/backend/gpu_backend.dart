@@ -51,6 +51,46 @@ abstract interface class GpuBackend {
   /// Opens the device every GPU object of the process is created on. The shim
   /// calls it once, on the first GPU object.
   GpuBackendContext openContext();
+
+  /// Whether [openPresenter] shows frames on this platform. Where false, an
+  /// app reads its frames back into `ui.Image`s instead.
+  bool get presents;
+
+  /// Opens a presenter whose Flutter external texture shows frames of [width]
+  /// by [height] physical pixels. Throws where it cannot open, as in a test
+  /// process with no platform side.
+  Future<GpuBackendPresenter> openPresenter({
+    required int width,
+    required int height,
+  });
+}
+
+/// Shows frames rendered on a [GpuBackend] in a Flutter external texture,
+/// with no readback.
+@experimental
+abstract interface class GpuBackendPresenter {
+  /// The id to pass to Flutter's `Texture` widget.
+  int get textureId;
+
+  /// The frame width in physical pixels.
+  int get width;
+
+  /// The frame height in physical pixels.
+  int get height;
+
+  /// The native graphics API the frames reach the screen through, such as
+  /// `metal` or `vulkan`, or null where unknown.
+  String? get deviceApi;
+
+  /// Resizes later frames to [width] by [height] physical pixels.
+  Future<void> resize(int width, int height);
+
+  /// Draws [frame], a texture of the same backend, scaled to the presenter
+  /// size, into the Flutter texture.
+  void present(GpuBackendTexture frame);
+
+  /// Releases the Flutter texture and its buffers.
+  Future<void> dispose();
 }
 
 /// One color attachment of a backend render pass.

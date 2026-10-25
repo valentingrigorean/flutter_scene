@@ -18,9 +18,13 @@ GpuBackend? _registered;
 /// The backend the shim renders through.
 GpuBackendKind get gpuBackend => _kind;
 
-/// The backend [registerGpuBackend] registered, or null.
+/// The registered backend the shim renders through, or null while it renders
+/// through Impeller.
 @experimental
-GpuBackend? get registeredGpuBackend => _registered;
+GpuBackend? get activeGpuBackend =>
+    _kind == GpuBackendKind.impeller || _registered?.kind != _kind
+    ? null
+    : _registered;
 
 /// Registers [backend], the implementation [selectGpuBackend] and the
 /// `FLUTTER_SCENE_GPU_BACKEND` define use for its [GpuBackend.kind].
@@ -46,6 +50,14 @@ void registerGpuBackend(GpuBackend backend) {
     );
   }
   _registered = backend;
+}
+
+/// Registers [backend] and chooses it, as [registerGpuBackend] then
+/// [selectGpuBackend] with its [GpuBackend.kind] do.
+@experimental
+void useGpuBackend(GpuBackend backend) {
+  registerGpuBackend(backend);
+  selectGpuBackend(backend.kind);
 }
 
 /// Chooses the backend the shim renders through.
