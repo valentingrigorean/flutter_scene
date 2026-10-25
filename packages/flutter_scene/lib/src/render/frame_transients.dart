@@ -142,7 +142,7 @@ int debugRecordSubmission() => rendererSubmissions.record();
 void debugCompleteSubmission(int id) => rendererSubmissions.complete(id);
 
 /// How many `beginFrame` calls a pooled transient buffer may sit unused
-/// before it is released. Pools reuse their most recently used buffer first,
+/// before it is released. Pools reuse the buffers the latest frame used first,
 /// so a steady workload keeps cycling the same buffers and never allocates,
 /// while buffers left over from a spike go idle and age out.
 ///
@@ -502,20 +502,35 @@ class TransientArena implements FrameTransients {
     return capacity;
   }
 
-  /// Reuses a completed pooled block, most recently used first so surplus
-  /// blocks age out, or creates a new one.
+  /// Reuses a completed pooled block, or creates a new one.
+  ///
+  /// Among the blocks the most recent frame used, the one sealed earliest
+  /// goes first, so each pass of a repeating frame gets the block it had the
+  /// frame before and binds the same buffers; a backend that replays a
+  /// recorded run of draws whose bindings repeat (wgpu render bundles) then
+  /// finds a still frame unchanged. Surplus blocks, last used by an older
+  /// frame, are picked only when the working set runs out, so they age out.
   _TransientBlock _acquireBlock(int length, {bool oversize = false}) {
     final completed = _tracker.completedThrough;
-    for (var i = _sealed.length - 1; i >= 0; i--) {
+    var pick = -1;
+    for (var i = 0; i < _sealed.length; i++) {
       final block = _sealed[i];
       if (block.stamp > completed) continue;
       if (block.oversize != oversize) continue;
       if (block.length != length) continue;
-      _sealed.removeAt(i);
-      block
+      if (pick >= 0) {
+        final best = _sealed[pick];
+        if (block.lastUsed < best.lastUsed) continue;
+        if (block.lastUsed == best.lastUsed && block.stamp >= best.stamp) {
+          continue;
+        }
+      }
+      pick = i;
+    }
+    if (pick >= 0) {
+      return _sealed.removeAt(pick)
         ..cursor = 0
         ..lastUsed = _frame;
-      return block;
     }
     buffersCreated++;
     final device = gpu.gpuContext.createDeviceBuffer(
