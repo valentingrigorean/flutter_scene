@@ -22,3 +22,17 @@ dev_dependencies:
   flutter_lints: ^5.0.0
   flutter_test:
     sdk: flutter
+
+# The plugin registers the external textures the presenter renders into
+# (lib/src/present). The native library itself is a code asset built by
+# hook/build.dart.
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: dev.fscene.flutter_scene_wgpu
+        pluginClass: FlutterSceneWgpuPlugin
+      ios:
+        pluginClass: FlutterSceneWgpuPlugin
+      macos:
+        pluginClass: FlutterSceneWgpuPlugin

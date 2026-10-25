@@ -167,7 +167,12 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 name = "flutter_scene_wgpu_native"
 version = "0.0.1"
 dependencies = [
+ "bytemuck",
+ "objc2",
+ "objc2-io-surface",
+ "objc2-metal",
  "pollster",
+ "raw-window-handle",
  "wgpu",
 ]
 
@@ -531,6 +536,7 @@ dependencies = [
  "block2",
  "objc2",
  "objc2-foundation",
+ "objc2-io-surface",
 ]
 
 [[package]]

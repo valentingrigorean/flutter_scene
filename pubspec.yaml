@@ -10,6 +10,7 @@ workspace:
   - packages/flutter_scene_codegen
   - packages/flutter_scene_rapier
   - packages/flutter_scene_wgpu
+  - packages/flutter_scene_wgpu/example
   - packages/flutter_scene_soloud
   - packages/flutter_scene_fmod
   - packages/flutter_scene_net
