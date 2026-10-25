@@ -3,8 +3,8 @@
 //! A presenter owns a render target the platform plugin handed over
 //! (IOSurfaces on macOS and iOS, a SurfaceProducer's window on Android)
 //! and draws the example cube into it with one synchronous call per
-//! frame. It keeps its own wgpu device, independent of the general device
-//! API.
+//! frame. It renders on the process's shared wgpu device, the one the
+//! device API hands out.
 
 #[cfg(target_os = "android")]
 mod android;

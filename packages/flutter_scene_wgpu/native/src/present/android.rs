@@ -88,8 +88,22 @@ fn create_surface(instance: &wgpu::Instance, window: &NativeWindow) -> Result<wg
 }
 
 /// Opens the shared device on an adapter that can present to `window`:
-/// Vulkan first, then GLES. `prefer_gl` skips Vulkan.
+/// Vulkan first, then GLES. `prefer_gl` skips Vulkan. When the device API
+/// opened the shared device first, its adapter must present to `window`.
 pub fn open_gpu(window: &NativeWindow, prefer_gl: bool) -> Result<Gpu, String> {
+    let gpu = Gpu::open(|| choose_adapter(window, prefer_gl))?;
+    let surface = create_surface(&gpu.instance, window)?;
+    if surface.get_capabilities(&gpu.adapter).formats.is_empty() {
+        return Err(
+            "the shared wgpu device's adapter cannot present to this surface; create the \
+             presenter before the first wgpu device"
+                .into(),
+        );
+    }
+    Ok(gpu)
+}
+
+fn choose_adapter(window: &NativeWindow, prefer_gl: bool) -> Result<(wgpu::Instance, wgpu::Adapter), String> {
     let mut errors = Vec::new();
     let order: &[wgpu::Backends] = if prefer_gl {
         &[wgpu::Backends::GL]
@@ -114,7 +128,7 @@ pub fn open_gpu(window: &NativeWindow, prefer_gl: bool) -> Result<Gpu, String> {
         }));
         drop(surface);
         match adapter {
-            Ok(adapter) => return Gpu::open(instance, adapter),
+            Ok(adapter) => return Ok((instance, adapter)),
             Err(e) => errors.push(format!("{backends:?}: {e}")),
         }
     }

@@ -401,7 +401,7 @@ impl<'r> Decoder<'r> {
             }
             15 | 16 => {
                 let to_texture = op == 15;
-                let mut buffer_layout = |r: &mut Reader| -> Result<(u64, u64, u32, u32)> {
+                let buffer_layout = |r: &mut Reader| -> Result<(u64, u64, u32, u32)> {
                     Ok((r.u64()?, r.u64()?, r.u32()?, r.u32()?))
                 };
                 let (buffer_handle, offset, bytes_per_row, rows_per_image, texture, size) = if to_texture {

@@ -1,5 +1,6 @@
-//! The presenter's own wgpu device, shared by every presenter in the
-//! process, and the thread that turns finished GPU work into callbacks.
+//! The presenters' view of the process's shared wgpu device (the one the
+//! device API hands out), and the thread that turns finished GPU work into
+//! callbacks.
 
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
@@ -14,18 +15,22 @@ pub struct Gpu {
 }
 
 impl Gpu {
-    /// Opens a device on `adapter` and starts the completion poller.
-    pub fn open(instance: wgpu::Instance, adapter: wgpu::Adapter) -> Result<Gpu, String> {
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("flutter_scene_wgpu present"),
-            required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                .using_resolution(adapter.limits()),
-            ..Default::default()
-        }))
-        .map_err(|e| format!("request_device failed: {e}"))?;
-        device.on_uncaptured_error(std::sync::Arc::new(|e| {
-            eprintln!("flutter_scene_wgpu present: wgpu error: {e}");
-        }));
+    /// Takes the process's shared device, opening it on the adapter
+    /// [choose] returns when nothing opened it yet, and starts the
+    /// completion poller.
+    pub fn open(
+        choose: impl FnOnce() -> Result<(wgpu::Instance, wgpu::Adapter), String>,
+    ) -> Result<Gpu, String> {
+        let state = crate::shared_device(|| {
+            choose().map_err(|e| crate::error::FswError::new(crate::error::Code::NoAdapter, e))
+        })
+        .map_err(|e| e.message)?;
+        let (instance, adapter, device, queue) = (
+            state.instance.clone(),
+            state.adapter.clone(),
+            state.device.clone(),
+            state.queue.clone(),
+        );
 
         let (poke, wake) = channel::<()>();
         let poll_device = device.clone();

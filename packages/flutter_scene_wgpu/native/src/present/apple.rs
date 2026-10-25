@@ -23,13 +23,19 @@ pub type ReadyFn = extern "C" fn(context: *mut c_void, generation: u32, index: u
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 
 pub fn open_gpu() -> Result<Gpu, String> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    let adapter = pollster::block_on(instance.request_adapter(&Default::default()))
-        .map_err(|e| format!("no Metal adapter: {e}"))?;
-    Gpu::open(instance, adapter)
+    let gpu = Gpu::open(|| {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default()))
+            .map_err(|e| format!("no Metal adapter: {e}"))?;
+        Ok((instance, adapter))
+    })?;
+    if gpu.adapter.get_info().backend != wgpu::Backend::Metal {
+        return Err("the shared wgpu device is not on Metal, which IOSurfaces need".into());
+    }
+    Ok(gpu)
 }
 
 #[derive(Default)]

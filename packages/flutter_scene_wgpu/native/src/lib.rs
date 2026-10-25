@@ -54,52 +54,77 @@ const FEATURE_DEPTH32_STENCIL8: u64 = 1 << 8;
 const FEATURE_FLOAT32_FILTERABLE: u64 = 1 << 9;
 const FEATURE_INDIRECT_FIRST_INSTANCE: u64 = 1 << 10;
 
-/// Creates a headless device on the adapter wgpu prefers. `backends` is a
-/// wgpu `Backends` bit set (Vulkan 1, GL 2, Metal 4, DX12 8); 0 means all.
+/// The process's one wgpu device, which the device API and every presenter
+/// share, so a scene renders straight into a presenter's textures.
+static SHARED_DEVICE: Mutex<Option<Arc<DeviceState>>> = Mutex::new(None);
+
+/// The shared device, opened on the instance and adapter [choose] returns
+/// when nothing opened it yet. A presenter chooses an adapter that can
+/// present to its surface; the device API takes wgpu's preferred one.
+pub(crate) fn shared_device(
+    choose: impl FnOnce() -> Result<(wgpu::Instance, wgpu::Adapter)>,
+) -> Result<Arc<DeviceState>> {
+    let mut shared = SHARED_DEVICE.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(state) = shared.as_ref() {
+        return Ok(state.clone());
+    }
+    let (instance, adapter) = choose()?;
+    let wanted = wgpu::Features::TEXTURE_COMPRESSION_BC
+        | wgpu::Features::TEXTURE_COMPRESSION_ETC2
+        | wgpu::Features::TEXTURE_COMPRESSION_ASTC
+        | wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR
+        | wgpu::Features::DEPTH32FLOAT_STENCIL8
+        | wgpu::Features::TIMESTAMP_QUERY
+        | wgpu::Features::TEXTURE_BINDING_ARRAY
+        | wgpu::Features::FLOAT32_FILTERABLE
+        | wgpu::Features::INDIRECT_FIRST_INSTANCE;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("flutter_scene_wgpu"),
+        required_features: adapter.features() & wanted,
+        required_limits: adapter.limits(),
+        ..Default::default()
+    }))
+    .map_err(|e| FswError::new(Code::NoAdapter, e.to_string()))?;
+    // Errors outside an error scope must not reach wgpu's default handler,
+    // which panics.
+    device.on_uncaptured_error(Arc::new(|error| {
+        eprintln!("flutter_scene_wgpu: uncaptured wgpu error: {error}");
+    }));
+    let state = Arc::new(DeviceState {
+        instance,
+        adapter,
+        device,
+        queue,
+        mipmaps: Mutex::new(Default::default()),
+        defaults: Default::default(),
+    });
+    *shared = Some(state.clone());
+    Ok(state)
+}
+
+/// Returns a handle on the shared device, opening it headless on the
+/// adapter wgpu prefers when no presenter opened it first. `backends` is a
+/// wgpu `Backends` bit set (Vulkan 1, GL 2, Metal 4, DX12 8), 0 for all; it
+/// only applies when this call opens the device.
 #[no_mangle]
 pub extern "C" fn fsw_device_create(backends: u32, out_device: *mut u64) -> i32 {
     guard(|| {
-        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
-        if backends != 0 {
-            desc.backends = wgpu::Backends::from_bits_truncate(backends);
-        }
-        let instance = wgpu::Instance::new(desc);
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: None,
-            ..Default::default()
-        }))
-        .map_err(|e| FswError::new(Code::NoAdapter, e.to_string()))?;
-        let wanted = wgpu::Features::TEXTURE_COMPRESSION_BC
-            | wgpu::Features::TEXTURE_COMPRESSION_ETC2
-            | wgpu::Features::TEXTURE_COMPRESSION_ASTC
-            | wgpu::Features::TEXTURE_COMPRESSION_ASTC_HDR
-            | wgpu::Features::DEPTH32FLOAT_STENCIL8
-            | wgpu::Features::TIMESTAMP_QUERY
-            | wgpu::Features::TEXTURE_BINDING_ARRAY
-            | wgpu::Features::FLOAT32_FILTERABLE
-            | wgpu::Features::INDIRECT_FIRST_INSTANCE;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("flutter_scene_wgpu"),
-            required_features: adapter.features() & wanted,
-            required_limits: adapter.limits(),
-            ..Default::default()
-        }))
-        .map_err(|e| FswError::new(Code::NoAdapter, e.to_string()))?;
-        // Errors outside an error scope must not reach wgpu's default
-        // handler, which panics.
-        device.on_uncaptured_error(Arc::new(|error| {
-            eprintln!("flutter_scene_wgpu: uncaptured wgpu error: {error}");
-        }));
-        let state = DeviceState {
-            adapter,
-            device,
-            queue,
-            mipmaps: Mutex::new(Default::default()),
-            defaults: Default::default(),
-        };
-        let handle = registry::lock().insert(0, Object::Device(Arc::new(state)));
+        let state = shared_device(|| {
+            let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+            if backends != 0 {
+                desc.backends = wgpu::Backends::from_bits_truncate(backends);
+            }
+            let instance = wgpu::Instance::new(desc);
+            let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                force_fallback_adapter: false,
+                compatible_surface: None,
+                ..Default::default()
+            }))
+            .map_err(|e| FswError::new(Code::NoAdapter, e.to_string()))?;
+            Ok((instance, adapter))
+        })?;
+        let handle = registry::lock().insert(0, Object::Device(state));
         out(out_device, handle)
     })
 }
