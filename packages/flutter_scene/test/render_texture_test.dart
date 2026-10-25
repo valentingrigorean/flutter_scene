@@ -7,6 +7,7 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart' show SizedBox;
+import 'package:flutter_scene/gpu.dart' as gpu;
 import 'package:flutter_scene/scene.dart';
 import 'package:flutter_scene/src/material/physical_material_variant.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
@@ -184,6 +185,45 @@ void main() {
     expect(target.texture, isNotNull);
     expect(target.texture!.width, 16);
     expect(notified, 1);
+  });
+
+  testWidgets('a texture view renders its next frame into a lent texture', (
+    tester,
+  ) async {
+    await tester.runAsync(Scene.initializeStaticResources);
+
+    final scene = Scene();
+    addTearDown(scene.dispose);
+    final target = RenderTexture(width: 16, height: 16);
+    scene.views.add(
+      RenderView(
+        camera: PerspectiveCamera(position: Vector3(0, 0, 5)),
+        target: target,
+      ),
+    );
+    final lent = gpu.gpuContext.createTexture(
+      gpu.StorageMode.devicePrivate,
+      16,
+      16,
+      format: gpu.PixelFormat.b8g8r8a8UNormInt,
+      enableRenderTargetUsage: true,
+      enableShaderReadUsage: true,
+    );
+    target.renderNextInto(lent);
+    final recorder = ui.PictureRecorder();
+    scene.render(
+      PerspectiveCamera(position: Vector3(0, 0, 5)),
+      ui.Canvas(recorder),
+      viewport: const ui.Rect.fromLTWH(0, 0, 32, 32),
+      pixelRatio: 1.0,
+    );
+    recorder.endRecording();
+    expect(target.texture, same(lent));
+
+    // Only the next frame renders into it; the one after takes the ring's.
+    final next = target.acquireNextTexture();
+    expect(next, isNot(same(lent)));
+    expect(next.format, gpu.PixelFormat.r8g8b8a8UNormInt);
   });
 
   group('GPU pacing', () {

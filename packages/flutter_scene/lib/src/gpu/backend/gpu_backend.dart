@@ -85,12 +85,36 @@ abstract interface class GpuBackendPresenter {
   /// Resizes later frames to [width] by [height] physical pixels.
   Future<void> resize(int width, int height);
 
+  /// Lends the buffer the next frame shows in, so the frame renders its final
+  /// pass straight into it with no copy; or null where no buffer can be lent
+  /// this frame (none is free, or the platform's buffers hold a format a frame
+  /// cannot render into), and the frame renders into a texture of its own
+  /// that [present] copies.
+  GpuBackendPresenterFrame? acquireFrame();
+
   /// Draws [frame], a texture of the same backend, scaled to the presenter
-  /// size, into the Flutter texture.
+  /// size, into the Flutter texture: the copy for a frame that rendered
+  /// elsewhere than a buffer [acquireFrame] lent.
   void present(GpuBackendTexture frame);
 
   /// Releases the Flutter texture and its buffers.
   Future<void> dispose();
+}
+
+/// One buffer of a [GpuBackendPresenter], lent for one frame.
+@experimental
+abstract interface class GpuBackendPresenterFrame {
+  /// The buffer: a single-sampled, display-referred 8-bit color texture of
+  /// the presenter's size that a render pass can write and a copy can write
+  /// into.
+  GpuBackendTexture get texture;
+
+  /// Shows the buffer in the Flutter frame that calls this, once the GPU work
+  /// submitted before the call has finished. The frame is lent no longer.
+  void present();
+
+  /// Returns the buffer unshown.
+  void discard();
 }
 
 /// One color attachment of a backend render pass.

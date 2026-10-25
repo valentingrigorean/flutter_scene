@@ -6,6 +6,7 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/render_graph.dart';
 import 'package:flutter_scene/src/surface.dart';
 import 'package:flutter_scene/src/texture/texture2d.dart';
+import 'package:meta/meta.dart' show experimental;
 
 /// When a [RenderTexture] re-renders.
 ///
@@ -157,6 +158,7 @@ class RenderTexture extends ChangeNotifier implements TextureSource {
   bool _hasRendered = false;
   gpu.Texture? _latest;
   gpu.Texture? _pending;
+  gpu.Texture? _lent;
 
   /// The target width in physical pixels.
   int get width => _size.width.toInt();
@@ -224,16 +226,44 @@ class RenderTexture extends ChangeNotifier implements TextureSource {
     }
   }
 
-  /// The next ring texture to render into. Advances the ring and the
-  /// transient pool's frame. [texture] keeps returning the previous frame
-  /// until [markUpdated] publishes the new one.
+  /// Renders the next frame into [texture] in place of a texture of this
+  /// target's own ring, such as a buffer a GPU backend's presenter lends, so
+  /// the frame needs no copy to reach it.
+  ///
+  /// [texture] is a single-sampled 8-bit color texture of [width] by
+  /// [height] with render target usage, which its owner keeps alive; the
+  /// target never releases it. It holds the display-referred image, so a
+  /// [linearColor] target cannot take one. The texture applies to the next
+  /// render only; the one after renders into the ring again unless it is
+  /// lent a texture too.
+  @experimental
+  void renderNextInto(gpu.Texture texture) {
+    assert(
+      texture.width == width && texture.height == height,
+      'A lent texture must be the size of the RenderTexture',
+    );
+    assert(
+      !linearColor,
+      'A linear RenderTexture cannot render into a lent texture',
+    );
+    _lent = texture;
+  }
+
+  /// The next texture to render into: the one [renderNextInto] lent, or the
+  /// next of the ring. Advances the ring and the transient pool's frame.
+  /// [texture] keeps returning the previous frame until [markUpdated]
+  /// publishes the new one.
   @internal
-  gpu.Texture acquireNextTexture() =>
-      _pending = _surface.getNextSwapchainColorTexture(
-        _size,
-        0,
-        linearColor ? gpu.PixelFormat.r16g16b16a16Float : null,
-      );
+  gpu.Texture acquireNextTexture() {
+    final lent = _lent;
+    _lent = null;
+    return _pending = _surface.getNextSwapchainColorTexture(
+      _size,
+      0,
+      lent?.format ?? (linearColor ? gpu.PixelFormat.r16g16b16a16Float : null),
+      lent,
+    );
+  }
 
   /// The transient texture pool for this target's render passes.
   @internal
@@ -248,6 +278,7 @@ class RenderTexture extends ChangeNotifier implements TextureSource {
     _surface.dispose();
     _latest = null;
     _pending = null;
+    _lent = null;
     super.dispose();
   }
 

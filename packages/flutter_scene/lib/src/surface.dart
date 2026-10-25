@@ -68,12 +68,15 @@ class Surface {
 
   /// Returns the next 8-bit swapchain color texture for view [viewIndex] at
   /// [size], advancing that view's frame. A new [size] gets its own ring and
-  /// transient pool; the previous size's are kept for a return.
+  /// transient pool; the previous size's are kept for a return. A [lent]
+  /// texture of [size] and [format], which its owner keeps alive, is issued
+  /// in place of the ring's next.
   gpu.Texture getNextSwapchainColorTexture(
     Size size, [
     int viewIndex = 0,
     gpu.PixelFormat? format,
-  ]) => _view(viewIndex).nextSwapchainColor(size, format);
+    gpu.Texture? lent,
+  ]) => _view(viewIndex).nextSwapchainColor(size, format, lent);
 
   /// The color texture most recently issued for [viewIndex] (the previous
   /// frame's output once the next frame begins), or null before the first
@@ -249,7 +252,11 @@ class _ViewSurface {
     return bytes;
   }
 
-  gpu.Texture nextSwapchainColor(Size size, [gpu.PixelFormat? format]) {
+  gpu.Texture nextSwapchainColor(
+    Size size, [
+    gpu.PixelFormat? format,
+    gpu.Texture? lent,
+  ]) {
     _frame++;
     var sized = _sizes.isEmpty ? null : _sizes.last;
     if (sized == null || sized.size != size || sized.format != format) {
@@ -267,6 +274,7 @@ class _ViewSurface {
     sized.lastUsed = _frame;
     _sizes.removeWhere((s) => _frame - s.lastUsed > _idleFrames);
     sized.pool.beginFrame();
+    if (lent != null) return _lastIssued = lent;
     final colors = sized.swapchainColors;
     if (sized.cursor == colors.length) {
       colors.add(

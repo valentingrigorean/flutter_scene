@@ -99,3 +99,10 @@ GpuBackendKind _useBackend() {
 /// is an Impeller texture.
 @experimental
 GpuBackendTexture? gpuBackendTextureOf(Texture texture) => texture._backend;
+
+/// A shim texture over [texture], a texture of the registered backend, such
+/// as a buffer a [GpuBackendPresenter] lends; the shim texture does not own
+/// it.
+@experimental
+Texture gpuTextureOfBackend(GpuBackendTexture texture) =>
+    Texture._backend(texture);

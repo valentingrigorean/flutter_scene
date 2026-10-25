@@ -54,11 +54,27 @@ abstract interface class GpuBackendPresenter {
   /// Resizes later frames to [width] by [height] physical pixels.
   Future<void> resize(int width, int height);
 
+  /// Lends the buffer the next frame shows in, or null.
+  GpuBackendPresenterFrame? acquireFrame();
+
   /// Draws [frame] into the Flutter texture.
   void present(GpuBackendTexture frame);
 
   /// Releases the Flutter texture and its buffers.
   Future<void> dispose();
+}
+
+/// One buffer of a [GpuBackendPresenter], lent for one frame.
+@experimental
+abstract interface class GpuBackendPresenterFrame {
+  /// The buffer to render the frame into.
+  GpuBackendTexture get texture;
+
+  /// Shows the buffer.
+  void present();
+
+  /// Returns the buffer unshown.
+  void discard();
 }
 
 /// Throws an [UnsupportedError]: the web shim picks its own backend.
@@ -78,3 +94,8 @@ GpuBackend? get activeGpuBackend => null;
 /// Always null on web, where every texture is the web shim's own.
 @experimental
 GpuBackendTexture? gpuBackendTextureOf(Texture texture) => null;
+
+/// Throws an [UnsupportedError]: no backend texture exists on web.
+@experimental
+Texture gpuTextureOfBackend(GpuBackendTexture texture) =>
+    throw UnsupportedError('A GPU backend texture exists on native only.');
