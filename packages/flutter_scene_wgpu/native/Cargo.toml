@@ -1,0 +1,17 @@
+[package]
+name = "flutter_scene_wgpu_native"
+version = "0.0.1"
+edition = "2021"
+publish = false
+description = "Native side of the flutter_scene_wgpu Flutter package. Wraps wgpu behind a synchronous, handle-based C ABI."
+
+[lib]
+name = "flutter_scene_wgpu_native"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+wgpu = "30.0.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
