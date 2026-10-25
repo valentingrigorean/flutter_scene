@@ -42,6 +42,7 @@ class GpuCapabilities {
     this.textureArrays = false,
     this.timestampQueries = false,
     this.aheadOfTimePipelines = false,
+    this.float32Blending = true,
   });
 
   /// A rendered texture can be handed to Flutter as a `ui.Image` without a
@@ -76,6 +77,12 @@ class GpuCapabilities {
   /// caller can know it is ready before the frame that needs it.
   final bool aheadOfTimePipelines;
 
+  /// A pipeline blends into an r32Float or r32g32b32a32Float color target.
+  ///
+  /// Where this is false, a blended draw into such a target throws, and a
+  /// caller that sums into a float target picks a 16-bit float one instead.
+  final bool float32Blending;
+
   /// The tier these capabilities add up to.
   GpuHostTier get hostTier {
     if (!textureToImage && !presentAsImage) return GpuHostTier.headless;
@@ -89,7 +96,8 @@ class GpuCapabilities {
       'imageToTexture: $imageToTexture, presentAsImage: $presentAsImage, '
       'compute: $compute, indirectDraw: $indirectDraw, '
       'textureArrays: $textureArrays, timestampQueries: $timestampQueries, '
-      'aheadOfTimePipelines: $aheadOfTimePipelines)';
+      'aheadOfTimePipelines: $aheadOfTimePipelines, '
+      'float32Blending: $float32Blending)';
 }
 
 /// A native GPU backend the shim can render through.
