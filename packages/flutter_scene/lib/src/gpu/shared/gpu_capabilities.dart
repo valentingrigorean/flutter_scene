@@ -38,6 +38,10 @@ class GpuCapabilities {
     required this.imageToTexture,
     required this.presentAsImage,
     required this.compute,
+    this.indirectDraw = false,
+    this.textureArrays = false,
+    this.timestampQueries = false,
+    this.aheadOfTimePipelines = false,
   });
 
   /// A rendered texture can be handed to Flutter as a `ui.Image` without a
@@ -58,6 +62,19 @@ class GpuCapabilities {
   /// Compute pipelines and dispatches are available.
   final bool compute;
 
+  /// Draws can take their counts from a GPU buffer (indirect draw).
+  final bool indirectDraw;
+
+  /// Textures can hold an array of 2D layers, bound as one texture.
+  final bool textureArrays;
+
+  /// The GPU can write timestamps into a query set that is read back later.
+  final bool timestampQueries;
+
+  /// A pipeline can be compiled ahead of the draw that first uses it, so a
+  /// caller can know it is ready before the frame that needs it.
+  final bool aheadOfTimePipelines;
+
   /// The tier these capabilities add up to.
   GpuHostTier get hostTier {
     if (!textureToImage && !presentAsImage) return GpuHostTier.headless;
@@ -69,5 +86,19 @@ class GpuCapabilities {
   String toString() =>
       'GpuCapabilities(${hostTier.name}, textureToImage: $textureToImage, '
       'imageToTexture: $imageToTexture, presentAsImage: $presentAsImage, '
-      'compute: $compute)';
+      'compute: $compute, indirectDraw: $indirectDraw, '
+      'textureArrays: $textureArrays, timestampQueries: $timestampQueries, '
+      'aheadOfTimePipelines: $aheadOfTimePipelines)';
+}
+
+/// A native GPU backend the shim can render through.
+///
+/// The backend is chosen once, with `selectGpuBackend`, before the first GPU
+/// object exists.
+enum GpuBackendKind {
+  /// Flutter GPU over Impeller, the default.
+  impeller,
+
+  /// wgpu through the `flutter_scene_wgpu` native library.
+  wgpu,
 }
