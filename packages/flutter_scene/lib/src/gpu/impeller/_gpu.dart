@@ -85,6 +85,7 @@ export 'package:flutter_gpu/gpu.dart'
 part 'backend_selection.dart';
 part 'buffer.dart';
 part 'command_buffer.dart';
+part 'compute.dart';
 part 'context.dart';
 part 'encoded_image.dart';
 part 'host.dart';

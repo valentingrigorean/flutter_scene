@@ -59,7 +59,8 @@ final class TextureDestinationRegion {
   final int slice;
 }
 
-/// Records render passes and copies, then submits them to the GPU.
+/// Records render passes, compute passes and copies, then submits them to the
+/// GPU.
 final class CommandBuffer {
   CommandBuffer._impeller(fg.CommandBuffer this._impeller) : _backend = null;
   CommandBuffer._backend(GpuBackendCommandBuffer this._backend)
@@ -88,6 +89,15 @@ final class CommandBuffer {
         depthStencil: renderTarget.depthStencilAttachment?._toBackend(),
       ),
     );
+  }
+
+  /// Starts a compute pass, ending the pass before it.
+  ///
+  /// Throws an [UnsupportedError] where `gpuHost.capabilities.compute` is
+  /// false, as on Impeller.
+  ComputePass createComputePass() {
+    _computeOf(gpuContext._backend);
+    return ComputePass._(_backend!.createComputePass());
   }
 
   /// Copies tightly packed texel data from [source] into [destination].
