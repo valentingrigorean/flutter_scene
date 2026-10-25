@@ -347,7 +347,9 @@ final class WgpuDeviceBuffer {
             fsw.WgpuBufferUsage.index |
             fsw.WgpuBufferUsage.uniform |
             fsw.WgpuBufferUsage.storage |
-            fsw.WgpuBufferUsage.indirect,
+            // A device without indirect execution (the iOS Simulator)
+            // refuses every buffer that asks for the indirect usage.
+            (context.features.indirectDraw ? fsw.WgpuBufferUsage.indirect : 0),
       ),
       _shadow = Uint8List((sizeInBytes + 3) & ~3);
 
@@ -365,7 +367,10 @@ final class WgpuDeviceBuffer {
 
   /// Copies [sourceBytes] into the buffer from [destinationOffsetInBytes].
   /// Returns false when the range does not fit.
-  bool overwrite(ByteData sourceBytes, {required int destinationOffsetInBytes}) {
+  bool overwrite(
+    ByteData sourceBytes, {
+    required int destinationOffsetInBytes,
+  }) {
     final length = sourceBytes.lengthInBytes;
     if (destinationOffsetInBytes < 0 ||
         destinationOffsetInBytes + length > sizeInBytes) {
@@ -410,8 +415,10 @@ final class WgpuHostBuffer {
     final length = bytes.lengthInBytes;
     final alignment = _context.minimumUniformByteAlignment;
     if (length > _blockLength) {
-      final buffer = _context.createDeviceBuffer(StorageMode.hostVisible, length)
-        ..overwrite(bytes, destinationOffsetInBytes: 0);
+      final buffer = _context.createDeviceBuffer(
+        StorageMode.hostVisible,
+        length,
+      )..overwrite(bytes, destinationOffsetInBytes: 0);
       return (buffer: buffer, offsetInBytes: 0, lengthInBytes: length);
     }
     final blocks = _frames[_frame];
@@ -518,10 +525,8 @@ final class WgpuTexture {
       PixelFormat.r8g8b8a8UNormIntSRGB => (4, ui.PixelFormat.rgba8888),
       PixelFormat.b8g8r8a8UNormInt ||
       PixelFormat.b8g8r8a8UNormIntSRGB => (4, ui.PixelFormat.bgra8888),
-      PixelFormat.r8UNormInt || PixelFormat.a8UNormInt => (
-        1,
-        ui.PixelFormat.rgba8888,
-      ),
+      PixelFormat.r8UNormInt ||
+      PixelFormat.a8UNormInt => (1, ui.PixelFormat.rgba8888),
       PixelFormat.r8g8UNormInt => (2, ui.PixelFormat.rgba8888),
       PixelFormat.r16g16b16a16Float => (8, ui.PixelFormat.rgbaFloat32),
       PixelFormat.r32g32b32a32Float => (16, ui.PixelFormat.rgbaFloat32),
@@ -762,7 +767,8 @@ final class WgpuShader {
     _uniforms
       ..clear()
       ..addAll({
-        for (final u in entry.uniformStructs ?? const <fb.ShaderUniformStruct>[])
+        for (final u
+            in entry.uniformStructs ?? const <fb.ShaderUniformStruct>[])
           if (u.name case final name?)
             name: (
               group: u.$set,
@@ -780,7 +786,8 @@ final class WgpuShader {
       ..addAll({
         for (final t
             in entry.uniformTextures ?? const <fb.ShaderUniformTexture>[])
-          if (t.name case final name?) name: (group: t.$set, binding: t.binding),
+          if (t.name case final name?)
+            name: (group: t.$set, binding: t.binding),
       });
     _inputs
       ..clear()
@@ -1086,8 +1093,12 @@ final class WgpuCommandBuffer {
         ),
       },
     );
-    final first = colors.isNotEmpty ? colors.first.texture : depthStencil!.texture;
-    final mip = colors.isNotEmpty ? colors.first.mipLevel : depthStencil!.mipLevel;
+    final first = colors.isNotEmpty
+        ? colors.first.texture
+        : depthStencil!.texture;
+    final mip = colors.isNotEmpty
+        ? colors.first.mipLevel
+        : depthStencil!.mipLevel;
     return _active = WgpuRenderPass._(
       this,
       _TargetShape(
@@ -1486,7 +1497,8 @@ final class WgpuRenderPass {
     }
     final emitted = _commands._emitted;
     for (final shader in [pipeline._vertex, pipeline._fragment]) {
-      for (final MapEntry(key: name, value: block) in shader._uniforms.entries) {
+      for (final MapEntry(key: name, value: block)
+          in shader._uniforms.entries) {
         final bound =
             _uniforms[(block.group, block.binding)] ?? _uniformsByName[name];
         if (bound == null) continue;
