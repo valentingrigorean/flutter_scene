@@ -103,9 +103,15 @@ final class ShaderLibrary {
     }
   }
 
-  /// Loads a shader bundle from [bytes].
-  static Future<ShaderLibrary?> fromBytes(ByteData bytes) async {
-    switch (_useBackend()) {
+  /// Loads a shader bundle from [bytes] for [context], by default
+  /// [gpuContext].
+  static Future<ShaderLibrary?> fromBytes(
+    ByteData bytes, {
+    GpuContext? context,
+  }) async {
+    switch (context?._impeller != null
+        ? GpuBackendKind.impeller
+        : _useBackend()) {
       case GpuBackendKind.impeller:
         return _ofImpeller(
           await Future.value(fg.ShaderLibrary.fromBytes(bytes)),

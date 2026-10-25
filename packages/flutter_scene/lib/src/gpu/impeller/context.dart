@@ -15,6 +15,17 @@ GpuContext _openGpuContext() {
   return context;
 }
 
+/// Flutter's own Impeller context, whatever backend [gpuContext] renders
+/// through.
+///
+/// A texture made on it is one Flutter composites without a copy, so a pass
+/// that paints its target onto a canvas draws here. Reading it never opens a
+/// registered backend and does not fix the backend choice. The first read
+/// throws where Flutter GPU is unavailable, as on Skia or without the Flutter
+/// GPU flag. On Impeller it wraps the same device as [gpuContext]. Load its
+/// shaders with `loadShaderLibraryFromBytesAsync(bytes, context: ...)`.
+final GpuContext flutterGpuContext = GpuContext._impeller(fg.gpuContext);
+
 /// A handle on the GPU device that creates every other GPU object.
 final class GpuContext {
   GpuContext._impeller(fg.GpuContext this._impeller) : _backend = null;

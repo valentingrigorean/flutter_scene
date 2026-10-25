@@ -11,12 +11,16 @@ import 'package:flutter_scene/gpu_backend.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 final class _UnopenedBackend implements GpuBackend {
+  int opens = 0;
+
   @override
   GpuBackendKind get kind => GpuBackendKind.wgpu;
 
   @override
-  GpuBackendContext openContext() =>
-      throw UnsupportedError('this backend opens no device');
+  GpuBackendContext openContext() {
+    opens++;
+    throw UnsupportedError('this backend opens no device');
+  }
 
   @override
   bool get presents => false;
@@ -52,6 +56,26 @@ void main() {
     expect(gpu.gpuBackend, GpuBackendKind.impeller);
     expect(activeGpuBackend, isNull);
   });
+
+  test(
+    'a load for the Flutter context leaves the chosen backend unopened',
+    () async {
+      final backend = _UnopenedBackend();
+      useGpuBackend(backend);
+      try {
+        await gpu.loadShaderLibraryFromBytesAsync(
+          ByteData(0),
+          context: gpu.flutterGpuContext,
+        );
+      } on Object {
+        // Without Flutter GPU the context throws; on Impeller an empty bundle
+        // fails to load. Neither reaches the chosen backend.
+      }
+      expect(backend.opens, 0);
+      gpu.selectGpuBackend(GpuBackendKind.impeller);
+      expect(gpu.gpuBackend, GpuBackendKind.impeller);
+    },
+  );
 
   test('the first GPU object fixes the backend and the registration', () async {
     try {

@@ -29,9 +29,15 @@ Future<ShaderLibrary?> loadShaderLibraryAsync(String assetName) async {
   return library;
 }
 
-/// Loads a shader bundle directly from [bytes].
-Future<ShaderLibrary?> loadShaderLibraryFromBytesAsync(ByteData bytes) async {
-  final library = await Future.value(ShaderLibrary.fromBytes(bytes));
+/// Loads a shader bundle directly from [bytes], for [context] where given
+/// ([flutterGpuContext]), else for [gpuContext].
+Future<ShaderLibrary?> loadShaderLibraryFromBytesAsync(
+  ByteData bytes, {
+  GpuContext? context,
+}) async {
+  final library = await Future.value(
+    ShaderLibrary.fromBytes(bytes, context: context),
+  );
   if (library != null) {
     registerShaderLibrarySource(library, ShaderLibrarySource(bytes: bytes));
   }

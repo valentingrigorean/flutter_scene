@@ -70,6 +70,10 @@ Future<void> initializeGpuBackend() => _backend.initialize();
 /// The active backend's context.
 GpuContext get gpuContext => _backend.context;
 
+/// The context whose textures Flutter composites without a copy. The web has
+/// one context, so this is [gpuContext].
+GpuContext get flutterGpuContext => gpuContext;
+
 /// The active backend's host integration.
 GpuHost get gpuHost => _backend.host;
 
@@ -286,8 +290,12 @@ abstract base class GpuHost {
 Future<ShaderLibrary?> loadShaderLibraryAsync(String assetName) =>
     _backend.loadShaderLibraryAsync(assetName);
 
-Future<ShaderLibrary?> loadShaderLibraryFromBytesAsync(ByteData bytes) =>
-    _backend.loadShaderLibraryFromBytesAsync(bytes);
+/// Loads a shader bundle from [bytes]. The web has one context, so [context]
+/// is [gpuContext] wherever it is given.
+Future<ShaderLibrary?> loadShaderLibraryFromBytesAsync(
+  ByteData bytes, {
+  GpuContext? context,
+}) => _backend.loadShaderLibraryFromBytesAsync(bytes);
 
 Future<void> reinitializeShaderLibraryAsync(String assetKey) =>
     _backend.reinitializeShaderLibraryAsync(assetKey);
