@@ -10,10 +10,12 @@ use crate::pipeline::PipelineSlot;
 use crate::reflect::Resource;
 
 pub struct DeviceState {
+    pub instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub mipmaps: Mutex<crate::mipmap::MipmapGenerator>,
+    pub defaults: crate::defaults::Defaults,
 }
 
 pub struct BufferObj {

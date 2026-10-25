@@ -114,8 +114,10 @@ Future<void> buildTargetShaderBundleJson({
   );
   final output = File.fromUri(result.outputFile);
   final untrimmed = output.readAsBytesSync();
-  final backends = shaderBundleBackendsForBuild(buildInput);
-  final bytes = trimShaderBundle(untrimmed, backends);
+  final bytes = trimShaderBundle(
+    untrimmed,
+    shaderBundleShippedBackendsForBuild(buildInput),
+  );
   output.writeAsBytesSync(bytes);
   // Translated before trimming, since a web build keeps no Vulkan SPIR-V.
   final wgsl = File(wgslSidecarPathFor(output.path));
@@ -232,6 +234,30 @@ Set<ShaderBundleBackend> shaderBundleBackendsForBuild(BuildInput buildInput) =>
     ? shaderBundleBackendsForOS(_targetOSName(buildInput) ?? _unnamedTargetOS)
     : shaderBundleBackendsForOS(null);
 
+/// The pubspec user-define that keeps the Vulkan SPIR-V the wgpu backend
+/// loads in every native bundle, as `wgpu` under flutter_scene's own name or
+/// `flutter_scene_wgpu` for an app hook building engine assets or materials.
+const String kWgpuUserDefine = 'wgpu';
+
+/// Whether [buildInput]'s package asked for wgpu-loadable bundles.
+bool wgpuShadersRequested(BuildInput buildInput) =>
+    buildInput.userDefines[kWgpuUserDefine] == true ||
+    buildInput.userDefines['flutter_scene_$kWgpuUserDefine'] == true;
+
+/// The backends a bundle built for [buildInput] keeps: the target's set, plus
+/// Vulkan for a native target when [wgpuShadersRequested]. The extra entries
+/// leave [shaderBundleTargetKey] as it is, so the runtime finds the bundle
+/// under the same key whichever GPU backend reads it.
+Set<ShaderBundleBackend> shaderBundleShippedBackendsForBuild(
+  BuildInput buildInput,
+) {
+  final backends = shaderBundleBackendsForBuild(buildInput);
+  if (!buildInput.config.buildCodeAssets || !wgpuShadersRequested(buildInput)) {
+    return backends;
+  }
+  return {...backends, ShaderBundleBackend.vulkan};
+}
+
 /// Stands in for a code-asset config that names no target OS.
 ///
 /// No arm claims it, so it selects the portable set, which is what an
@@ -268,11 +294,12 @@ String? _targetOSName(BuildInput buildInput) {
 /// The engine belongs in the stamp because a shader bundle is only valid for
 /// the engine that consumes it, so switching Flutter versions must recompile
 /// even when every shader source is untouched. [what] names the bundle. The
-/// WGSL switch is in it too, so turning `flutter_scene_webgpu` on recompiles.
+/// WGSL and wgpu switches are in it too, so turning either on recompiles.
 Future<String> shaderBundleStamp(BuildInput buildInput, String what) async =>
     'rev=$buildCacheRevision $what target=${shaderBundleTargetKey(buildInput)} '
     '${await engineIdentity()}'
-    '${wgslSidecarsForBuild(buildInput) ? ' wgsl=$kTintReleaseTag' : ''}';
+    '${wgslSidecarsForBuild(buildInput) ? ' wgsl=$kTintReleaseTag' : ''}'
+    '${shaderBundleShippedBackendsForBuild(buildInput).length != shaderBundleBackendsForBuild(buildInput).length ? ' wgpu' : ''}';
 
 /// Stable build-cache key for the selected shader backends. Recorded on every
 /// output that is only valid for them, and matched against

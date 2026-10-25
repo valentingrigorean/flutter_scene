@@ -54,6 +54,12 @@ enum Bound {
     Sampler(u64),
 }
 
+enum Owned {
+    Buffer(wgpu::Buffer, u64, u64),
+    View(wgpu::TextureView),
+    Sampler(wgpu::Sampler),
+}
+
 struct Decoder<'r> {
     reg: &'r Registry,
     device_handle: u64,
@@ -63,7 +69,7 @@ struct Decoder<'r> {
     pipeline: Option<Arc<Built>>,
     bindings: HashMap<(u32, u32), Bound>,
     groups_dirty: bool,
-    cache: HashMap<(usize, Vec<Bound>), wgpu::BindGroup>,
+    cache: HashMap<(usize, Vec<Option<Bound>>), wgpu::BindGroup>,
 }
 
 fn view_2d(texture: &wgpu::Texture, mip: u32, slice: u32) -> wgpu::TextureView {
@@ -194,58 +200,82 @@ impl<'r> Decoder<'r> {
         for (index, group) in built.groups.iter().enumerate() {
             let mut key = Vec::with_capacity(group.entries.len());
             for &(binding, kind) in &group.entries {
-                let bound = self.bindings.get(&(index as u32, binding)).copied().ok_or_else(|| {
-                    invalid(format!("@group({index}) @binding({binding}) is not bound"))
-                })?;
-                let fits = matches!(
-                    (kind, bound),
-                    (ResourceKind::UniformBuffer | ResourceKind::StorageBuffer { .. }, Bound::Buffer { .. })
-                        | (ResourceKind::Texture { .. }, Bound::Texture(_))
-                        | (ResourceKind::Sampler { .. }, Bound::Sampler(_))
-                );
-                if !fits {
-                    return Err(invalid(format!(
-                        "@group({index}) @binding({binding}) is bound to the wrong kind of resource"
-                    )));
-                }
+                // An unbound slot, or one bound to a resource of another
+                // kind, takes the device's placeholder for that kind.
+                let bound = self.bindings.get(&(index as u32, binding)).copied().filter(|bound| {
+                    matches!(
+                        (kind, bound),
+                        (ResourceKind::UniformBuffer | ResourceKind::StorageBuffer { .. }, Bound::Buffer { .. })
+                            | (ResourceKind::Texture { .. }, Bound::Texture(_))
+                            | (ResourceKind::Sampler { .. }, Bound::Sampler(_))
+                    )
+                });
                 key.push(bound);
             }
             let cache_key = (Arc::as_ptr(&built) as usize + index, key);
             if !self.cache.contains_key(&cache_key) {
-                let mut views = Vec::new();
+                let device = &self.state.device;
+                let defaults = &self.state.defaults;
+                let mut owned = Vec::with_capacity(group.entries.len());
                 for (&(_, kind), bound) in group.entries.iter().zip(&cache_key.1) {
-                    if let (ResourceKind::Texture { view_dimension, .. }, Bound::Texture(h)) =
-                        (kind, bound)
-                    {
-                        views.push(self.texture(*h)?.texture.create_view(
-                            &wgpu::TextureViewDescriptor {
+                    owned.push(match (kind, *bound) {
+                        (_, Some(Bound::Buffer { handle, offset, size })) => Owned::Buffer(
+                            self.reg.buffer(self.device_handle, handle)?.buffer.clone(),
+                            offset,
+                            size,
+                        ),
+                        (ResourceKind::Texture { view_dimension, .. }, Some(Bound::Texture(h))) => {
+                            let texture = &self.texture(h)?.texture;
+                            let aspect = if texture.format().is_combined_depth_stencil_format() {
+                                wgpu::TextureAspect::DepthOnly
+                            } else {
+                                wgpu::TextureAspect::All
+                            };
+                            Owned::View(texture.create_view(&wgpu::TextureViewDescriptor {
                                 dimension: Some(view_dimension),
+                                aspect,
                                 ..Default::default()
+                            }))
+                        }
+                        (_, Some(Bound::Sampler(h))) => {
+                            Owned::Sampler(self.reg.sampler(self.device_handle, h)?.clone())
+                        }
+                        (ResourceKind::UniformBuffer | ResourceKind::StorageBuffer { .. }, _) => {
+                            Owned::Buffer(defaults.buffer(device), 0, 0)
+                        }
+                        (
+                            ResourceKind::Texture {
+                                sample_type,
+                                view_dimension,
+                                multisampled,
                             },
-                        ));
-                    }
+                            _,
+                        ) => Owned::View(defaults.texture(device, sample_type, view_dimension, multisampled)),
+                        (ResourceKind::Sampler { comparison, .. }, _) => {
+                            Owned::Sampler(defaults.sampler(device, comparison))
+                        }
+                    });
                 }
-                let mut views_iter = views.iter();
-                let mut entries = Vec::new();
-                for (&(binding, _), bound) in group.entries.iter().zip(&cache_key.1) {
-                    let resource = match *bound {
-                        Bound::Buffer { handle, offset, size } => {
-                            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                buffer: &self.reg.buffer(self.device_handle, handle)?.buffer,
-                                offset,
-                                size: size_or_rest(size),
-                            })
-                        }
-                        Bound::Texture(_) => {
-                            wgpu::BindingResource::TextureView(views_iter.next().unwrap())
-                        }
-                        Bound::Sampler(h) => {
-                            wgpu::BindingResource::Sampler(self.reg.sampler(self.device_handle, h)?)
-                        }
-                    };
-                    entries.push(wgpu::BindGroupEntry { binding, resource });
-                }
-                let bind_group = self.state.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                let entries: Vec<_> = group
+                    .entries
+                    .iter()
+                    .zip(&owned)
+                    .map(|(&(binding, _), resource)| wgpu::BindGroupEntry {
+                        binding,
+                        resource: match resource {
+                            Owned::Buffer(buffer, offset, size) => {
+                                wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                    buffer,
+                                    offset: *offset,
+                                    size: size_or_rest(*size),
+                                })
+                            }
+                            Owned::View(view) => wgpu::BindingResource::TextureView(view),
+                            Owned::Sampler(sampler) => wgpu::BindingResource::Sampler(sampler),
+                        },
+                    })
+                    .collect();
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: None,
                     layout: &group.layout,
                     entries: &entries,
@@ -369,33 +399,52 @@ impl<'r> Decoder<'r> {
                 let size = r.u64()?;
                 self.encoder()?.copy_buffer_to_buffer(src, src_offset, dst, dst_offset, size);
             }
-            15 => {
-                let buffer = &self.reg.buffer(self.device_handle, r.u64()?)?.buffer;
-                let layout = wgpu::TexelCopyBufferLayout {
-                    offset: r.u64()?,
-                    bytes_per_row: Some(r.u32()?),
-                    rows_per_image: Some(r.u32()?),
+            15 | 16 => {
+                let to_texture = op == 15;
+                let buffer_layout = |r: &mut Reader| -> Result<(u64, u64, u32, u32)> {
+                    Ok((r.u64()?, r.u64()?, r.u32()?, r.u32()?))
                 };
-                let (texture, size) = self.texture_region(r)?;
-                self.encoder()?.copy_buffer_to_texture(
-                    wgpu::TexelCopyBufferInfo { buffer, layout },
-                    texture,
-                    size,
-                );
-            }
-            16 => {
-                let (texture, size) = self.texture_region(r)?;
-                let buffer = &self.reg.buffer(self.device_handle, r.u64()?)?.buffer;
-                let layout = wgpu::TexelCopyBufferLayout {
-                    offset: r.u64()?,
-                    bytes_per_row: Some(r.u32()?),
-                    rows_per_image: Some(r.u32()?),
+                let (buffer_handle, offset, bytes_per_row, rows_per_image, texture, size) = if to_texture {
+                    let (b, o, bpr, rpi) = buffer_layout(r)?;
+                    let (texture, size) = self.texture_region(r)?;
+                    (b, o, bpr, rpi, texture, size)
+                } else {
+                    let (texture, size) = self.texture_region(r)?;
+                    let (b, o, bpr, rpi) = buffer_layout(r)?;
+                    (b, o, bpr, rpi, texture, size)
                 };
-                self.encoder()?.copy_texture_to_buffer(
-                    texture,
-                    wgpu::TexelCopyBufferInfo { buffer, layout },
-                    size,
-                );
+                let buffer = &self.reg.buffer(self.device_handle, buffer_handle)?.buffer;
+                // flutter_gpu copies are tightly packed; wgpu wants rows on
+                // 256-byte strides, so an unaligned copy goes row by row.
+                let rows: Vec<(u64, u32, Option<u32>, Option<u32>, u32)> =
+                    if bytes_per_row % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0 || size.height <= 1 {
+                        let bpr = (size.height > 1 || bytes_per_row % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0)
+                            .then_some(bytes_per_row);
+                        vec![(offset, 0, bpr, Some(rows_per_image), size.height)]
+                    } else {
+                        (0..size.height)
+                            .map(|row| (offset + row as u64 * bytes_per_row as u64, row, None, None, 1))
+                            .collect()
+                    };
+                let encoder = self.encoder()?;
+                for (offset, row, bytes_per_row, rows_per_image, height) in rows {
+                    let mut texture = texture;
+                    texture.origin.y += row;
+                    let copy_size = wgpu::Extent3d { height, ..size };
+                    let info = wgpu::TexelCopyBufferInfo {
+                        buffer,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset,
+                            bytes_per_row,
+                            rows_per_image,
+                        },
+                    };
+                    if to_texture {
+                        encoder.copy_buffer_to_texture(info, texture, copy_size);
+                    } else {
+                        encoder.copy_texture_to_buffer(texture, info, copy_size);
+                    }
+                }
             }
             17 => {
                 let src = self.texture_origin(r)?;

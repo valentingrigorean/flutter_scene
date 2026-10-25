@@ -15,7 +15,7 @@ pub enum ResourceKind {
         view_dimension: wgpu::TextureViewDimension,
         multisampled: bool,
     },
-    Sampler { comparison: bool },
+    Sampler { comparison: bool, filtering: bool },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -37,6 +37,7 @@ pub fn resources(module: &naga::Module) -> Result<Vec<Resource>> {
             naga::AddressSpace::Handle => match &module.types[var.ty].inner {
                 naga::TypeInner::Sampler { comparison } => ResourceKind::Sampler {
                     comparison: *comparison,
+                    filtering: true,
                 },
                 naga::TypeInner::Image { dim, arrayed, class } => {
                     let view_dimension = match (dim, arrayed) {
@@ -110,11 +111,59 @@ impl ResourceKind {
                 view_dimension,
                 multisampled,
             },
-            ResourceKind::Sampler { comparison } => wgpu::BindingType::Sampler(if comparison {
-                wgpu::SamplerBindingType::Comparison
-            } else {
-                wgpu::SamplerBindingType::Filtering
-            }),
+            ResourceKind::Sampler { comparison, filtering } => {
+                wgpu::BindingType::Sampler(if comparison {
+                    wgpu::SamplerBindingType::Comparison
+                } else if filtering {
+                    wgpu::SamplerBindingType::Filtering
+                } else {
+                    wgpu::SamplerBindingType::NonFiltering
+                })
+            }
         }
+    }
+}
+
+impl ResourceKind {
+    /// This kind with a texture's sample type or a sampler's binding type
+    /// replaced by [code]: textures take 0 filterable float, 1 unfilterable
+    /// float, 2 depth, 3 sint, 4 uint; samplers take 16 filtering, 17
+    /// non-filtering, 18 comparison.
+    ///
+    /// Only a float texture and a non-comparison sampler change: a depth or
+    /// integer texture, or a comparison sampler, is already what the shader
+    /// declares it to be.
+    pub fn overridden(self, code: u32) -> Result<Self> {
+        Ok(match (self, code) {
+            (
+                ResourceKind::Texture {
+                    sample_type:
+                        wgpu::TextureSampleType::Depth
+                        | wgpu::TextureSampleType::Sint
+                        | wgpu::TextureSampleType::Uint,
+                    ..
+                },
+                0..=4,
+            )
+            | (ResourceKind::Sampler { comparison: true, .. }, 16..=18) => self,
+            (ResourceKind::Texture { view_dimension, multisampled, .. }, 0..=4) => ResourceKind::Texture {
+                sample_type: match code {
+                    0 => wgpu::TextureSampleType::Float { filterable: true },
+                    1 => wgpu::TextureSampleType::Float { filterable: false },
+                    2 => wgpu::TextureSampleType::Depth,
+                    3 => wgpu::TextureSampleType::Sint,
+                    _ => wgpu::TextureSampleType::Uint,
+                },
+                view_dimension,
+                multisampled,
+            },
+            (ResourceKind::Sampler { .. }, 16..=18) => ResourceKind::Sampler {
+                comparison: code == 18,
+                filtering: code == 16,
+            },
+            _ => return Err(crate::error::invalid(format!(
+                "binding override {code} does not fit a {self:?} binding"
+            ))),
+        })
     }
 }
