@@ -284,7 +284,8 @@ void main() {
       tracker.record();
       arena.beginFrame();
 
-      // Everything completed: a pooled block is reused, most recent first.
+      // Everything completed: a pooled block is reused, the latest frame's
+      // first.
       tracker.complete(1);
       tracker.complete(2);
       final third = arena.emplace(_bytes(100));
@@ -360,6 +361,34 @@ void main() {
       }
       expect(seen.length, 1);
       expect(arena.blockCount, 1);
+    });
+
+    test('each submission of a repeating frame gets its block of the frame '
+        'before', () {
+      final tracker = GpuSubmissionTracker();
+      final arena = TransientArena(
+        tracker,
+        alignment: 256,
+        blockLengthInBytes: 1024,
+      );
+      // The GPU completes a frame only after all its submissions are made.
+      List<Object> frame() {
+        arena.beginFrame();
+        final ids = <int>[];
+        final buffers = <Object>[];
+        for (var i = 0; i < 3; i++) {
+          buffers.add(arena.emplace(_bytes(100)).buffer);
+          ids.add(tracker.record());
+        }
+        ids.forEach(tracker.complete);
+        return buffers;
+      }
+
+      final first = frame();
+      for (var i = 0; i < 4; i++) {
+        expect(frame(), first);
+      }
+      expect(arena.blockCount, 3);
     });
 
     test('paced frames and lighter frames keep the pool', () {
