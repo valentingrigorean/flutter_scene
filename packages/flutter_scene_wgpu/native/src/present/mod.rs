@@ -2,14 +2,15 @@
 //!
 //! A presenter owns a render target the platform plugin handed over
 //! (IOSurfaces on macOS and iOS, a SurfaceProducer's window on Android)
-//! and draws the example cube into it with one synchronous call per
-//! frame. It renders on the process's shared wgpu device, the one the
-//! device API hands out.
+//! and draws into it with one synchronous call per frame: the example
+//! cube, or any colour texture of the device API's registry. It renders on
+//! the process's shared wgpu device, the one the device API hands out.
 
 #[cfg(target_os = "android")]
 mod android;
 #[cfg(target_vendor = "apple")]
 mod apple;
+mod blit;
 mod cube;
 mod device;
 
@@ -17,6 +18,7 @@ use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CString};
 use std::sync::{LazyLock, Mutex, OnceLock};
 
+use blit::Blitter;
 use cube::{CubeRenderer, FswPresentFrame};
 use device::Gpu;
 
@@ -36,6 +38,7 @@ struct State {
 struct Presenter {
     target: Target,
     renderer: Option<CubeRenderer>,
+    blitter: Option<Blitter>,
 }
 
 enum Target {
@@ -115,6 +118,7 @@ pub unsafe extern "C" fn fsw_present_create_apple(
         Ok(Presenter {
             target: Target::Apple(target),
             renderer: Some(CubeRenderer::new(&gpu.device, apple::FORMAT)),
+            blitter: None,
         })
     });
     match result {
@@ -189,6 +193,7 @@ pub extern "C" fn fsw_present_create_android(
             Presenter {
                 target: Target::Android(android::WindowTarget::new(texture_id, width, height)),
                 renderer: None,
+                blitter: None,
             },
         ),
         Err(e) => {
@@ -230,25 +235,126 @@ pub unsafe extern "C" fn fsw_present_render(handle: u64, frame: *const FswPresen
     let Some(p) = state.presenters.get_mut(&handle) else { return FAILED };
     match &mut p.target {
         #[cfg(target_vendor = "apple")]
-        Target::Apple(t) => {
-            if t.render(gpu, p.renderer.as_mut().unwrap(), frame) {
-                RENDERED
-            } else {
-                SKIPPED
-            }
-        }
+        Target::Apple(t) => apple_status(t.render(gpu, p.renderer.as_mut().unwrap(), frame)),
         #[cfg(target_os = "android")]
         Target::Android(t) => {
             let slot = state.windows.get(&t.texture_id);
-            match t.render(gpu, &mut p.renderer, slot, frame) {
-                Ok(android::Rendered::Presented) => RENDERED,
-                Ok(android::Rendered::Skipped) => SKIPPED,
-                Ok(android::Rendered::NoSurface) => NO_SURFACE,
-                Err(e) => {
-                    fail(e);
-                    FAILED
-                }
+            android_status(t.render(gpu, &mut p.renderer, slot, frame))
+        }
+    }
+}
+
+#[cfg(target_vendor = "apple")]
+fn apple_status(result: Result<bool, String>) -> i32 {
+    match result {
+        Ok(true) => RENDERED,
+        Ok(false) => SKIPPED,
+        Err(e) => {
+            fail(e);
+            FAILED
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+fn android_status(result: Result<android::Rendered, String>) -> i32 {
+    match result {
+        Ok(android::Rendered::Presented) => RENDERED,
+        Ok(android::Rendered::Skipped) => SKIPPED,
+        Ok(android::Rendered::NoSurface) => NO_SURFACE,
+        Err(e) => {
+            fail(e);
+            FAILED
+        }
+    }
+}
+
+/// Draws the registry texture `texture` (a single-sampled 2D colour
+/// texture the device API created on the shared device: 8-bit, sRGB or
+/// float) over the presenter's next free buffer or surface image, scaled
+/// to the presenter size, and submits it. An sRGB or float texture holds
+/// linear values and is sRGB-encoded; an 8-bit UNorm one is shown as
+/// stored. Returns as [`fsw_present_render`] does.
+#[no_mangle]
+pub extern "C" fn fsw_present_texture(handle: u64, texture: u64) -> i32 {
+    let Some(gpu) = GPU.get() else { return FAILED };
+    let source = {
+        let reg = crate::registry::lock();
+        let owned_by_shared = reg.owner(texture).map(|(_, state)| state.device == gpu.device);
+        match (reg.texture(0, texture), owned_by_shared) {
+            (Ok(t), Ok(true)) => t.texture.clone(),
+            (Ok(_), _) => {
+                fail(format!("texture {texture} is not on the device presenters render with"));
+                return FAILED;
             }
+            (Err(e), _) => {
+                fail(e.message);
+                return FAILED;
+            }
+        }
+    };
+    let mut state = STATE.lock().unwrap();
+    let state = &mut *state;
+    let Some(p) = state.presenters.get_mut(&handle) else { return FAILED };
+    let blitter = p.blitter.get_or_insert_with(|| Blitter::new(&gpu.device));
+    match &mut p.target {
+        #[cfg(target_vendor = "apple")]
+        Target::Apple(t) => apple_status(
+            t.render_with(gpu, |view, _, _| blitter.encode(&gpu.device, &source, view, apple::FORMAT)),
+        ),
+        #[cfg(target_os = "android")]
+        Target::Android(t) => {
+            let slot = state.windows.get(&t.texture_id);
+            android_status(t.render_with(gpu, slot, |view, format, _, _| {
+                blitter.encode(&gpu.device, &source, view, format)
+            }))
+        }
+    }
+}
+
+/// Creates an Apple presenter over `count` IOSurfaces of its own, with no
+/// Flutter texture, whose buffers [`fsw_present_read_latest`] reads back.
+/// Returns 0 on failure.
+#[cfg(target_vendor = "apple")]
+#[no_mangle]
+pub extern "C" fn fsw_present_create_offscreen(width: u32, height: u32, count: u32) -> u64 {
+    let result = gpu_or_open(apple::open_gpu).and_then(|gpu| {
+        Ok(Presenter {
+            target: Target::Apple(apple::offscreen(gpu, width, height, count)?),
+            renderer: Some(CubeRenderer::new(&gpu.device, apple::FORMAT)),
+            blitter: None,
+        })
+    });
+    match result {
+        Ok(p) => insert(&mut STATE.lock().unwrap(), p),
+        Err(e) => {
+            fail(e);
+            0
+        }
+    }
+}
+
+/// Waits for an offscreen presenter's frames and copies its most recently
+/// finished buffer (`width * height * 4` bytes, BGRA) into `out`. Returns
+/// the buffer index, or -1 on failure.
+///
+/// # Safety
+/// `out` must point to `len` writable bytes.
+#[cfg(target_vendor = "apple")]
+#[no_mangle]
+pub unsafe extern "C" fn fsw_present_read_latest(handle: u64, out: *mut u8, len: usize) -> i32 {
+    let Some(gpu) = GPU.get() else { return FAILED };
+    if out.is_null() {
+        return FAILED;
+    }
+    let out = unsafe { std::slice::from_raw_parts_mut(out, len) };
+    let state = STATE.lock().unwrap();
+    let Some(Presenter { target: Target::Apple(t), .. }) = state.presenters.get(&handle) else { return FAILED };
+    match t.read_latest(gpu, out) {
+        Ok(index) => index as i32,
+        Err(e) => {
+            fail(e);
+            FAILED
         }
     }
 }

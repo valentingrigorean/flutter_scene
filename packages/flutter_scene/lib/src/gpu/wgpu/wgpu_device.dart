@@ -451,6 +451,9 @@ final class WgpuTexture {
 
   final fsw.WgpuTexture _texture;
 
+  /// The device API texture behind this one.
+  fsw.WgpuTexture get native => _texture;
+
   /// How the memory is reachable from the host.
   final StorageMode storageMode;
 

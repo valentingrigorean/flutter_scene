@@ -76,3 +76,16 @@ external int fswPresentRender(int handle, Pointer<FswPresentFrame> frame);
 
 @Native<Void Function(Uint64)>(symbol: 'fsw_present_dispose')
 external void fswPresentDispose(int handle);
+
+@Native<Int32 Function(Uint64, Uint64)>(symbol: 'fsw_present_texture')
+external int fswPresentTexture(int handle, int texture);
+
+@Native<Uint64 Function(Uint32, Uint32, Uint32)>(
+  symbol: 'fsw_present_create_offscreen',
+)
+external int fswPresentCreateOffscreen(int width, int height, int count);
+
+@Native<Int32 Function(Uint64, Pointer<Uint8>, Size)>(
+  symbol: 'fsw_present_read_latest',
+)
+external int fswPresentReadLatest(int handle, Pointer<Uint8> out, int len);

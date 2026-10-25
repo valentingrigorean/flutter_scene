@@ -24,7 +24,8 @@ features = ["derive"]
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2 = "0.6"
-objc2-io-surface = { version = "0.3.2", default-features = false, features = ["std", "IOSurfaceRef"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFBase", "CFDictionary", "CFNumber", "CFString"] }
+objc2-io-surface = { version = "0.3.2", default-features = false, features = ["std", "IOSurfaceRef", "IOSurfaceTypes", "libc", "objc2-core-foundation"] }
 objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLDevice", "MTLTexture", "MTLAllocation", "MTLResource", "MTLPixelFormat", "MTLTypes", "objc2-io-surface"] }
 
 [target.'cfg(target_os = "android")'.dependencies]

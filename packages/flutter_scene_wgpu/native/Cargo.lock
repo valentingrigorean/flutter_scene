@@ -169,6 +169,7 @@ version = "0.0.1"
 dependencies = [
  "bytemuck",
  "objc2",
+ "objc2-core-foundation",
  "objc2-io-surface",
  "objc2-metal",
  "pollster",
@@ -522,6 +523,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "180788110936d59bab6bd83b6060ffdfffb3b922ba1396b312ae795e1de9d81d"
 dependencies = [
  "bitflags",
+ "libc",
  "objc2",
  "objc2-core-foundation",
 ]

@@ -8,7 +8,11 @@ use std::sync::{Arc, Mutex};
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2_io_surface::IOSurfaceRef;
+use objc2_core_foundation::{CFDictionary, CFNumber, CFRetained, CFString};
+use objc2_io_surface::{
+    kIOSurfaceBytesPerElement, kIOSurfaceHeight, kIOSurfacePixelFormat, kIOSurfaceWidth, IOSurfaceLockOptions,
+    IOSurfaceRef,
+};
 use objc2_metal::{
     MTLDevice, MTLPixelFormat, MTLTexture, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage,
 };
@@ -60,7 +64,13 @@ pub struct IoSurfaceTarget {
     generation: u32,
     pub width: u32,
     pub height: u32,
+    // The IOSurfaces of an offscreen target; the plugin owns the others.
+    owned: Vec<OwnedSurface>,
 }
+
+// IOSurfaces are safe to use from any thread.
+struct OwnedSurface(CFRetained<IOSurfaceRef>);
+unsafe impl Send for OwnedSurface {}
 
 impl IoSurfaceTarget {
     /// Wraps `count` IOSurfaces of `width` x `height` BGRA pixels.
@@ -144,29 +154,41 @@ impl IoSurfaceTarget {
             generation,
             width,
             height,
+            owned: Vec::new(),
         })
     }
 
-    /// Renders into a free buffer and reports it ready once the GPU is done.
-    /// Returns false when every buffer is displayed or still in flight.
-    pub fn render(&self, gpu: &Gpu, renderer: &mut CubeRenderer, frame: &FswPresentFrame) -> bool {
+    /// Renders the cube into a free buffer; see [`Self::render_with`].
+    pub fn render(&self, gpu: &Gpu, renderer: &mut CubeRenderer, frame: &FswPresentFrame) -> Result<bool, String> {
+        self.render_with(gpu, |view, width, height| {
+            Ok(renderer.encode(&gpu.device, &gpu.queue, view, width, height, frame))
+        })
+    }
+
+    /// Records `encode` into a free buffer, submits it and reports the
+    /// buffer ready once the GPU is done. Returns false when every buffer
+    /// is displayed or still in flight.
+    pub fn render_with(
+        &self,
+        gpu: &Gpu,
+        encode: impl FnOnce(&wgpu::TextureView, u32, u32) -> Result<wgpu::CommandBuffer, String>,
+    ) -> Result<bool, String> {
         let index = {
             let mut s = self.slots.lock().unwrap();
             let free = (0..self.views.len())
                 .filter(|&i| !s.in_flight[i] && s.latest != Some(i))
                 .min_by_key(|&i| s.finished_at[i]);
-            let Some(i) = free else { return false };
+            let Some(i) = free else { return Ok(false) };
             s.in_flight[i] = true;
             i
         };
-        let commands = renderer.encode(
-            &gpu.device,
-            &gpu.queue,
-            &self.views[index],
-            self.width,
-            self.height,
-            frame,
-        );
+        let commands = match encode(&self.views[index], self.width, self.height) {
+            Ok(c) => c,
+            Err(e) => {
+                self.slots.lock().unwrap().in_flight[index] = false;
+                return Err(e);
+            }
+        };
         gpu.queue.submit([commands]);
         let slots = self.slots.clone();
         let context = self.context.clone();
@@ -183,8 +205,72 @@ impl IoSurfaceTarget {
             on_ready(context.0, generation, index as u32);
         });
         gpu.poke();
-        true
+        Ok(true)
     }
+
+    /// Copies the most recently finished buffer, tightly packed BGRA, into
+    /// `out` once no frame is in flight. Returns its index.
+    pub fn read_latest(&self, gpu: &Gpu, out: &mut [u8]) -> Result<u32, String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let index = loop {
+            gpu.wait_idle();
+            let s = self.slots.lock().unwrap();
+            if !s.in_flight.iter().any(|&f| f) {
+                break s.latest.ok_or("no frame has been presented")?;
+            }
+            drop(s);
+            if std::time::Instant::now() > deadline {
+                return Err("frames are still in flight".into());
+            }
+            std::thread::yield_now();
+        };
+        let surface = &self.owned.get(index).ok_or("the presenter does not own its IOSurfaces")?.0;
+        let row = self.width as usize * 4;
+        if out.len() < row * self.height as usize {
+            return Err("the readback buffer is too small".into());
+        }
+        unsafe {
+            surface.lock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut());
+            let base = surface.base_address().as_ptr() as *const u8;
+            let stride = surface.bytes_per_row();
+            for y in 0..self.height as usize {
+                std::ptr::copy_nonoverlapping(base.add(y * stride), out.as_mut_ptr().add(y * row), row);
+            }
+            surface.unlock(IOSurfaceLockOptions::ReadOnly, std::ptr::null_mut());
+        }
+        Ok(index as u32)
+    }
+}
+
+extern "C" fn ignore_ready(_: *mut c_void, _: u32, _: u32) {}
+
+/// A target over `count` IOSurfaces it allocates and owns, for a presenter
+/// with no platform texture (tests read its buffers back).
+pub fn offscreen(gpu: &Gpu, width: u32, height: u32, count: u32) -> Result<IoSurfaceTarget, String> {
+    let number = |v: i32| CFNumber::new_i32(v);
+    let (w, h, bpe, fmt) = (
+        number(width as i32),
+        number(height as i32),
+        number(4),
+        number(i32::from_be_bytes(*b"BGRA")),
+    );
+    let keys: [&CFString; 4] = unsafe { [kIOSurfaceWidth, kIOSurfaceHeight, kIOSurfaceBytesPerElement, kIOSurfacePixelFormat] };
+    let values: [&CFNumber; 4] = [&w, &h, &bpe, &fmt];
+    let props = CFDictionary::<CFString, CFNumber>::from_slices(&keys, &values);
+    let mut owned = Vec::new();
+    for _ in 0..count {
+        let surface = unsafe { IOSurfaceRef::new(props.as_opaque()) }.ok_or("IOSurfaceCreate failed")?;
+        owned.push(OwnedSurface(surface));
+    }
+    let raw: Vec<*mut c_void> = owned
+        .iter()
+        .map(|s| CFRetained::as_ptr(&s.0).as_ptr() as *mut c_void)
+        .collect();
+    let mut target = unsafe {
+        IoSurfaceTarget::new(gpu, raw.as_ptr(), count, width, height, 0, ignore_ready, std::ptr::null_mut())
+    }?;
+    target.owned = owned;
+    Ok(target)
 }
 
 unsafe fn wrap_iosurface(

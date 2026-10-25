@@ -2,12 +2,21 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter_scene/gpu.dart' as gpu;
 import 'package:flutter_scene_wgpu/present.dart';
 import 'package:vector_math/vector_math.dart' as vm;
 
+import 'scene_page.dart';
+
+const _sceneMode = bool.fromEnvironment('FSW_PRESENT_SCENE');
+
 void main() {
+  if (_sceneMode) gpu.selectGpuBackend(gpu.GpuBackendKind.wgpu);
   runApp(
-    const MaterialApp(debugShowCheckedModeBanner: false, home: CubePage()),
+    MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: _sceneMode ? const ScenePage() : const CubePage(),
+    ),
   );
 }
 

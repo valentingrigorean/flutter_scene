@@ -174,6 +174,22 @@ impl WindowTarget {
         slot: Option<&WindowSlot>,
         frame: &FswPresentFrame,
     ) -> Result<Rendered, String> {
+        self.render_with(gpu, slot, |view, format, width, height| {
+            if renderer.as_ref().map(|r| r.format()) != Some(format) {
+                *renderer = Some(CubeRenderer::new(&gpu.device, format));
+            }
+            Ok(renderer.as_mut().unwrap().encode(&gpu.device, &gpu.queue, view, width, height, frame))
+        })
+    }
+
+    /// Records `encode` into the surface's next image (of the format the
+    /// surface was configured with), submits it and presents it.
+    pub fn render_with(
+        &mut self,
+        gpu: &Gpu,
+        slot: Option<&WindowSlot>,
+        encode: impl FnOnce(&wgpu::TextureView, wgpu::TextureFormat, u32, u32) -> Result<wgpu::CommandBuffer, String>,
+    ) -> Result<Rendered, String> {
         let Some(slot) = slot else { return Ok(Rendered::NoSurface) };
         let Some(window) = &slot.window else { return Ok(Rendered::NoSurface) };
         if self.surface.is_none() || self.generation != slot.generation {
@@ -205,9 +221,6 @@ impl WindowTarget {
             };
             surface.configure(&gpu.device, &config);
             eprintln!("flutter_scene_wgpu present: surface {format:?} {present_mode:?} {}x{}", self.width, self.height);
-            if renderer.as_ref().map(|r| r.format()) != Some(format) {
-                *renderer = Some(CubeRenderer::new(&gpu.device, format));
-            }
             self.surface = Some((surface, config));
             self.generation = slot.generation;
         }
@@ -221,14 +234,7 @@ impl WindowTarget {
             _ => return Ok(Rendered::Skipped),
         };
         let view = texture.texture.create_view(&Default::default());
-        let commands = renderer.as_mut().unwrap().encode(
-            &gpu.device,
-            &gpu.queue,
-            &view,
-            self.width,
-            self.height,
-            frame,
-        );
+        let commands = encode(&view, config.format, self.width, self.height)?;
         gpu.queue.submit([commands]);
         gpu.queue.present(texture);
         Ok(Rendered::Presented)

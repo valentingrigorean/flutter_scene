@@ -3,8 +3,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../device.dart';
 import 'bindings.dart';
 
 const _channel = MethodChannel('flutter_scene_wgpu/present');
@@ -26,7 +28,8 @@ enum PresentResult {
 /// Renders wgpu frames into a Flutter external texture.
 ///
 /// Show it with `Texture(textureId: presenter.textureId)` and call [render]
-/// once per Flutter frame. On macOS and iOS the frames land in
+/// or [presentWgpuTexture] once per Flutter frame. flutter_scene's GPU shim
+/// adds `presentTexture`, which takes the shim's own texture. On macOS and iOS the frames land in
 /// IOSurface-backed pixel buffers with no copy; on Android they go to a
 /// wgpu surface on the texture's SurfaceProducer.
 class WgpuPresenter {
@@ -83,6 +86,37 @@ class WgpuPresenter {
     return WgpuPresenter._(textureId, handle, width, height);
   }
 
+  /// Creates a presenter over IOSurfaces of its own with no Flutter texture
+  /// ([textureId] is -1), whose buffers [readLatestFrame] reads back.
+  /// macOS and iOS only.
+  @visibleForTesting
+  static WgpuPresenter createOffscreen({
+    required int width,
+    required int height,
+  }) {
+    final handle = fswPresentCreateOffscreen(width, height, _bufferCount);
+    if (handle == 0) {
+      throw StateError('Presenter creation failed: ${_lastError()}');
+    }
+    return WgpuPresenter._(-1, handle, width, height);
+  }
+
+  /// Waits for the GPU and returns the most recently finished buffer of an
+  /// offscreen presenter as tightly packed BGRA bytes.
+  @visibleForTesting
+  Uint8List readLatestFrame() {
+    final length = width * height * 4;
+    final out = calloc<Uint8>(length);
+    try {
+      if (fswPresentReadLatest(_handle, out, length) < 0) {
+        throw StateError('Readback failed: ${_lastError()}');
+      }
+      return Uint8List.fromList(out.asTypedList(length));
+    } finally {
+      calloc.free(out);
+    }
+  }
+
   /// Resizes the target; frames requested meanwhile are skipped.
   Future<void> resize(int width, int height) async {
     if (width == this.width && height == this.height) return;
@@ -133,13 +167,19 @@ class WgpuPresenter {
       ..markerX = markerX
       ..markerY = markerY
       ..markerBlock = markerBlock;
-    final status = fswPresentRender(_handle, _frame);
-    return switch (status) {
-      0 => PresentResult.rendered,
-      1 => PresentResult.skipped,
-      2 => PresentResult.noSurface,
-      _ => throw StateError('Render failed: ${_lastError()}'),
-    };
+    return _result(fswPresentRender(_handle, _frame));
+  }
+
+  /// Draws [texture] over the next free buffer, scaled to [width] by
+  /// [height], and submits it synchronously.
+  ///
+  /// [texture] is a single-sampled 2D colour texture of the shared wgpu
+  /// device: 8-bit UNorm (shown as stored), sRGB or 16-bit float (linear,
+  /// sRGB-encoded for display). A frame the texture's pending GPU work
+  /// writes is presented after that work, since both run on one queue.
+  PresentResult presentWgpuTexture(WgpuTexture texture) {
+    if (_busy || _handle == 0) return PresentResult.skipped;
+    return _result(fswPresentTexture(_handle, texture.handle));
   }
 
   /// Releases the presenter and its texture.
@@ -148,8 +188,16 @@ class WgpuPresenter {
     fswPresentDispose(_handle);
     _handle = 0;
     calloc.free(_frame);
+    if (textureId < 0) return;
     await _channel.invokeMethod('dispose', {'textureId': textureId});
   }
+
+  static PresentResult _result(int status) => switch (status) {
+    0 => PresentResult.rendered,
+    1 => PresentResult.skipped,
+    2 => PresentResult.noSurface,
+    _ => throw StateError('Present failed: ${_lastError()}'),
+  };
 
   static int _withSurfaces(
     Map<String, Object?> info,

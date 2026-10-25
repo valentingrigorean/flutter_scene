@@ -13,3 +13,12 @@ flutter build ios --simulator --debug
 flutter build apk --debug                            # Vulkan
 flutter build apk --debug --dart-define=FSW_PRESENT_GL=true   # GLES
 ```
+
+`--dart-define=FSW_PRESENT_SCENE=true` runs flutter_scene on its wgpu
+backend instead: the scene renders into a `RenderTexture`, and the presenter
+draws that texture with `presentTexture` (flutter_scene's GPU shim). The
+status line names the backend and the texture's format.
+
+`flutter test` runs `test/present_texture_test.dart`, which presents shim
+textures of known patterns through an offscreen presenter and checks the
+pixels read back from its IOSurface.

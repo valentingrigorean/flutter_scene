@@ -36,6 +36,8 @@ import 'package:flutter_gpu/gpu.dart'
         WindingOrder;
 import 'package:flutter_scene/src/gpu/shared/encoded_image_types.dart';
 import 'package:flutter_scene/src/gpu/shared/shader_library_sources.dart';
+import 'package:flutter_scene_wgpu/present.dart';
+import 'package:meta/meta.dart' show experimental;
 import 'package:vector_math/vector_math.dart' as vm;
 
 import '../shared/gpu_capabilities.dart';
@@ -92,3 +94,4 @@ part 'shader_library_inline.dart';
 part 'shader_names.dart';
 part 'surface.dart';
 part 'texture.dart';
+part '../wgpu/wgpu_present.dart';
