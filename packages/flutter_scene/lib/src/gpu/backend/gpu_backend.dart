@@ -584,6 +584,12 @@ abstract interface class GpuBackendRenderPass {
   /// Draws [indexCount] indices from the bound index buffer, [instanceCount]
   /// times.
   void drawIndexed(int indexCount, {required int instanceCount});
+
+  /// Draws indexed primitives with the five 32-bit draw arguments held in
+  /// [buffer] at [offsetInBytes]: index count, instance count, first index,
+  /// base vertex and first instance. The device's capabilities report
+  /// `indirectDraw`.
+  void drawIndexedIndirect(GpuBackendDeviceBuffer buffer, int offsetInBytes);
 }
 
 /// A ring of textures whose presented frame Flutter draws as a `ui.Image`.

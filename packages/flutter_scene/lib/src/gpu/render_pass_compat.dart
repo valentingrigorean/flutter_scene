@@ -80,3 +80,21 @@ void drawIndexedCompat(
     endPassDraw();
   }
 }
+
+/// Draws [indexCount] indices with the draw arguments at the start of
+/// [arguments], whose instance count the GPU wrote; the frame counters count
+/// the draw and no instances.
+void drawIndexedIndirectCompat(
+  gpu.RenderPass pass,
+  gpu.BufferView arguments, {
+  required int indexCount,
+}) {
+  if (!beginPassDraw(pass)) return;
+  try {
+    countArmedPipelineState(pass);
+    _countDraw(indexCount, 0, indexed: true);
+    (pass as dynamic).drawIndexedIndirect(arguments);
+  } finally {
+    endPassDraw();
+  }
+}

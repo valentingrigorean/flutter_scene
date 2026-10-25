@@ -354,4 +354,20 @@ final class RenderPass {
       _backend!.drawIndexed(indexCount, instanceCount: instanceCount);
     }
   }
+
+  /// Draws indexed primitives with the five 32-bit draw arguments at the
+  /// start of [arguments]: index count, instance count, first index, base
+  /// vertex and first instance, which a compute pass may have written.
+  ///
+  /// Throws an [UnsupportedError] on Impeller, which draws no indirect
+  /// arguments; check `gpuHost.capabilities.indirectDraw` first.
+  void drawIndexedIndirect(BufferView arguments) {
+    final backend =
+        _backend ??
+        (throw UnsupportedError('Impeller draws no indirect arguments.'));
+    backend.drawIndexedIndirect(
+      arguments.buffer._backend!,
+      arguments.offsetInBytes,
+    );
+  }
 }
