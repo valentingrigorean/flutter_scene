@@ -1,6 +1,16 @@
 part of '_gpu.dart';
 
-GpuBackendKind _backend = GpuBackendKind.impeller;
+/// The backend a process starts on: Impeller, or wgpu when built with
+/// `--dart-define=FLUTTER_SCENE_GPU_BACKEND=wgpu`. A test file runs on either
+/// backend unchanged through this define, for example
+/// `flutter test --dart-define=FLUTTER_SCENE_GPU_BACKEND=wgpu <file>`.
+const String gpuBackendDefine = String.fromEnvironment(
+  'FLUTTER_SCENE_GPU_BACKEND',
+);
+
+GpuBackendKind _backend = gpuBackendDefine == 'wgpu'
+    ? GpuBackendKind.wgpu
+    : GpuBackendKind.impeller;
 bool _backendInUse = false;
 
 /// The backend the shim renders through.

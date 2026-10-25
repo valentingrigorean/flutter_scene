@@ -368,6 +368,7 @@ class WgpuPipelineDescriptor {
     this.windingOrder = WindingOrder.counterClockwise,
     this.polygonMode = PolygonMode.fill,
     this.sampleCount = 1,
+    this.bindingOverrides = const [],
   });
 
   /// The vertex stage module.
@@ -405,6 +406,9 @@ class WgpuPipelineDescriptor {
 
   /// MSAA sample count of the attachments.
   final int sampleCount;
+
+  /// Replaces the layout type reflection gives a binding.
+  final List<WgpuBindingOverride> bindingOverrides;
 
   void _write(PackedWriter w) {
     w.u64(vertexShader.handle);
@@ -455,8 +459,51 @@ class WgpuPipelineDescriptor {
       w.u32(ds.stencilFront.readMask);
       w.u32(ds.stencilFront.writeMask);
     }
+    w.u32(bindingOverrides.length);
+    for (final o in bindingOverrides) {
+      w.u32(o.group);
+      w.u32(o.binding);
+      w.u32(o.type.code);
+    }
   }
 }
+
+/// The layout type of a texture or sampler binding, which reflection alone
+/// cannot tell: whether a float texture is filterable depends on the texture
+/// bound, and a sampler's type on the texture it samples.
+enum WgpuBindingType {
+  /// A filterable float texture.
+  floatTexture(0),
+
+  /// A float texture sampled without filtering, such as a 32-bit float one.
+  unfilterableFloatTexture(1),
+
+  /// A depth texture.
+  depthTexture(2),
+
+  /// A signed integer texture.
+  sintTexture(3),
+
+  /// An unsigned integer texture.
+  uintTexture(4),
+
+  /// A sampler that may filter.
+  filteringSampler(16),
+
+  /// A sampler that does not filter.
+  nonFilteringSampler(17),
+
+  /// A comparison sampler.
+  comparisonSampler(18);
+
+  const WgpuBindingType(this.code);
+
+  /// The code the native pipeline descriptor carries.
+  final int code;
+}
+
+/// A binding whose layout type replaces the reflected one.
+typedef WgpuBindingOverride = ({int group, int binding, WgpuBindingType type});
 
 /// A render pipeline, compiled synchronously or on a worker thread.
 class WgpuPipeline extends WgpuObject {

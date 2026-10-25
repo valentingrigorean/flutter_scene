@@ -9,6 +9,7 @@
 //! ([`commands`]).
 
 mod commands;
+mod defaults;
 mod error;
 mod format;
 mod mipmap;
@@ -17,6 +18,7 @@ mod present;
 mod reader;
 mod reflect;
 mod registry;
+mod spirv_split;
 
 use std::sync::{Arc, Mutex};
 
@@ -95,6 +97,7 @@ pub extern "C" fn fsw_device_create(backends: u32, out_device: *mut u64) -> i32 
             device,
             queue,
             mipmaps: Mutex::new(Default::default()),
+            defaults: Default::default(),
         };
         let handle = registry::lock().insert(0, Object::Device(Arc::new(state)));
         out(out_device, handle)
@@ -440,9 +443,14 @@ pub extern "C" fn fsw_texture_read(
         if format.block_dimensions() != (1, 1) {
             return Err(unsupported("readback of block-compressed textures"));
         }
+        let aspect = if format.is_combined_depth_stencil_format() {
+            wgpu::TextureAspect::DepthOnly
+        } else {
+            wgpu::TextureAspect::All
+        };
         let bpp = format
-            .block_copy_size(None)
-            .ok_or_else(|| unsupported("readback of combined depth/stencil formats"))?;
+            .block_copy_size(Some(aspect))
+            .ok_or_else(|| unsupported(format!("readback of {format:?}")))?;
         let tight = width * bpp;
         let padded = tight.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let needed = tight as usize * height as usize;
@@ -585,7 +593,13 @@ pub extern "C" fn fsw_shader_create_wgsl(device: u64, source: *const u8, len: us
 pub extern "C" fn fsw_shader_create_spirv(device: u64, words: *const u8, len: usize, out_shader: *mut u64) -> i32 {
     guard(|| {
         let bytes = unsafe { slice(words, len)? };
-        let module = naga::front::spv::parse_u8_slice(bytes, &Default::default())
+        let split = spirv_split::split(bytes)?;
+        let options = naga::front::spv::Options {
+            adjust_coordinate_space: false,
+            strict_capabilities: false,
+            block_ctx_dump_prefix: None,
+        };
+        let module = naga::front::spv::parse_u8_slice(&split, &options)
             .map_err(|e| FswError::new(Code::ShaderCompile, e.to_string()));
         create_shader(device, module, out_shader)
     })

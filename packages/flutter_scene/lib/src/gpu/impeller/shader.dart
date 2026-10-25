@@ -94,7 +94,7 @@ final class ShaderLibrary {
       case GpuBackendKind.wgpu:
         final cached = _wgpuByAsset[assetName];
         if (cached != null) return cached;
-        final library = gpuContext._wgpu!.loadShaderLibraryFromAsset(
+        final library = await gpuContext._wgpu!.loadShaderLibraryFromAsset(
           assetName,
         );
         if (library == null) return null;

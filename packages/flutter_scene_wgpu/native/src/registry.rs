@@ -14,6 +14,7 @@ pub struct DeviceState {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub mipmaps: Mutex<crate::mipmap::MipmapGenerator>,
+    pub defaults: crate::defaults::Defaults,
 }
 
 pub struct BufferObj {

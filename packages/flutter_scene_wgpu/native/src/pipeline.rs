@@ -24,6 +24,8 @@
 //!     front: compare, fail op, depth fail op, pass op,
 //!     back: compare, fail op, depth fail op, pass op,
 //!     stencil read mask, stencil write mask
+//! optionally: binding override count, then per override:
+//!     group, binding, code (see `ResourceKind::overridden`)
 //! ```
 
 use std::collections::BTreeMap;
@@ -191,6 +193,12 @@ pub fn prepare(reg: &Registry, device_handle: u64, desc: &[u8]) -> Result<Prepar
     } else {
         None
     };
+    let mut overrides = BTreeMap::new();
+    if !r.done() {
+        for _ in 0..r.u32()? {
+            overrides.insert((r.u32()?, r.u32()?), r.u32()?);
+        }
+    }
     if !r.done() {
         return Err(invalid("pipeline descriptor has trailing bytes"));
     }
@@ -214,6 +222,11 @@ pub fn prepare(reg: &Registry, device_handle: u64, desc: &[u8]) -> Result<Prepar
                 )));
             }
             slot.1 |= stage;
+        }
+    }
+    for ((group, binding), code) in overrides {
+        if let Some(slot) = merged.get_mut(&group).and_then(|g| g.get_mut(&binding)) {
+            slot.0 = slot.0.overridden(code)?;
         }
     }
     let group_count = merged.keys().next_back().map_or(0, |g| g + 1);
