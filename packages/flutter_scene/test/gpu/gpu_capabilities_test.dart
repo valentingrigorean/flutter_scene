@@ -72,9 +72,12 @@ void main() {
       }
     });
 
-    test('never claims compute, which no backend implements yet', () {
-      expect(gpu.gpuHost.capabilities.compute, isFalse);
-    });
+    test(
+      'on Impeller claims no compute, which flutter_gpu does not expose',
+      () {
+        expect(gpu.gpuHost.capabilities.compute, isFalse);
+      },
+    );
 
     test('exposes a host tier without touching a GPU context', () {
       // Reading capabilities must never construct a context, since that throws

@@ -269,6 +269,18 @@ abstract base class GpuHost {
 
   /// Presents [texture] through the backend's own offscreen canvas path.
   Future<ui.Image> present(Texture texture, {bool transferOwnership = false});
+
+  /// Completes once every render pipeline asked for so far has compiled. A
+  /// web backend compiles where a pipeline is first drawn, so this completes
+  /// at once.
+  Future<void> pipelinesReady() => Future.value();
+
+  /// Runs [record] and returns 0: a web backend records every draw, compiling
+  /// its pipeline where it is first drawn.
+  int skipCompilingDraws(void Function() record) {
+    record();
+    return 0;
+  }
 }
 
 Future<ShaderLibrary?> loadShaderLibraryAsync(String assetName) =>

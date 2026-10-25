@@ -130,23 +130,33 @@ Future<bool> measureStoredDepthRead({required gpu.PixelFormat format}) async {
     rendererSubmissions.submit(commandBuffer);
   }
 
-  draw(
-    gpu.RenderTarget.singleColor(
-      gpu.ColorAttachment(texture: color(), clearValue: Vector4.zero()),
-      depthStencilAttachment: gpu.DepthStencilAttachment(
-        texture: stored,
-        depthClearValue: _probeDepth,
-        depthStoreAction: gpu.StoreAction.store,
+  void probe() {
+    draw(
+      gpu.RenderTarget.singleColor(
+        gpu.ColorAttachment(texture: color(), clearValue: Vector4.zero()),
+        depthStencilAttachment: gpu.DepthStencilAttachment(
+          texture: stored,
+          depthClearValue: _probeDepth,
+          depthStoreAction: gpu.StoreAction.store,
+        ),
       ),
-    ),
-    check: false,
-  );
-  draw(
-    gpu.RenderTarget.singleColor(
-      gpu.ColorAttachment(texture: verdict, clearValue: Vector4.zero()),
-    ),
-    check: true,
-  );
+      check: false,
+    );
+    draw(
+      gpu.RenderTarget.singleColor(
+        gpu.ColorAttachment(texture: verdict, clearValue: Vector4.zero()),
+      ),
+      check: true,
+    );
+  }
+
+  // A backend that compiles off this thread skips a draw whose pipeline
+  // still compiles; the probe then draws again once it has compiled, so its
+  // submits wait for no compile.
+  if (gpu.gpuHost.skipCompilingDraws(probe) > 0) {
+    await gpu.gpuHost.pipelinesReady();
+    probe();
+  }
   await awaitRasterThread();
 
   final ui.Image image = gpu.gpuHost.textureToImage(verdict);

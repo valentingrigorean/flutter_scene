@@ -23,6 +23,30 @@ class GpuHost {
     compute: false,
   );
 
+  /// Completes once every render pipeline asked for so far has compiled.
+  ///
+  /// Impeller compiles a pipeline where it is first drawn, so this completes
+  /// at once; on a registered backend it is
+  /// `GpuBackendContext.pipelinesReady`.
+  Future<void> pipelinesReady() => switch (_kind) {
+    GpuBackendKind.impeller => Future.value(),
+    GpuBackendKind.wgpu => gpuContext._backend!.pipelinesReady(),
+  };
+
+  /// Runs [record], during which a draw whose pipeline is still compiling
+  /// records nothing, and returns how many draws it skipped.
+  ///
+  /// Impeller compiles a pipeline where it is first drawn, so every draw
+  /// records and this returns 0; on a registered backend it is
+  /// `GpuBackendContext.skipCompilingDraws`.
+  int skipCompilingDraws(void Function() record) {
+    if (_kind == GpuBackendKind.impeller) {
+      record();
+      return 0;
+    }
+    return gpuContext._backend!.skipCompilingDraws(record);
+  }
+
   /// Hands [texture] to Flutter as a `ui.Image`, without a copy.
   ui.Image textureToImage(Texture texture) => texture.asImage();
 

@@ -59,7 +59,8 @@ class GpuCapabilities {
   /// own present path rather than through [textureToImage].
   final bool presentAsImage;
 
-  /// Compute pipelines and dispatches are available.
+  /// Compute pipelines and dispatches are available, through
+  /// `GpuContext.createComputePipeline` and `CommandBuffer.createComputePass`.
   final bool compute;
 
   /// Draws can take their counts from a GPU buffer (indirect draw).

@@ -166,6 +166,10 @@ abstract interface class GpuBackendContext {
   /// What the device can do; `gpuHost.capabilities` on this backend.
   GpuCapabilities get capabilities;
 
+  /// The compute extension; non-null exactly where [capabilities] reports
+  /// `compute`.
+  GpuBackendCompute? get compute;
+
   /// The color format Flutter's own rendering uses.
   PixelFormat get defaultColorFormat;
 
@@ -231,6 +235,23 @@ abstract interface class GpuBackendContext {
   /// Creates a command buffer.
   GpuBackendCommandBuffer createCommandBuffer();
 
+  /// Completes once every pipeline variant the device was asked for so far
+  /// has finished compiling, whether it compiled or failed.
+  ///
+  /// A backend with [GpuCapabilities.aheadOfTimePipelines] compiles off the
+  /// calling thread, so a caller that recorded draws ahead of a frame awaits
+  /// this before the frame that binds the same variants, and that frame's
+  /// submit waits for no compile. A compile error still surfaces where the
+  /// variant is bound.
+  Future<void> pipelinesReady();
+
+  /// Runs [record], during which a draw whose pipeline variant is still
+  /// compiling records nothing, and returns how many draws it skipped.
+  ///
+  /// A warm-up that discards its frame records through this, awaits
+  /// [pipelinesReady] and records again, so its submits wait for no compile.
+  int skipCompilingDraws(void Function() record);
+
   /// Creates a pipeline from a vertex and a fragment shader.
   GpuBackendRenderPipeline createRenderPipeline(
     GpuBackendShader vertexShader,
@@ -252,6 +273,65 @@ abstract interface class GpuBackendContext {
     int height, {
     required PixelFormat format,
   });
+}
+
+/// The compute half of a [GpuBackendContext]: pipelines compiled from WGSL
+/// and reading results back. A [GpuBackendCommandBuffer] records the passes
+/// that dispatch them.
+@experimental
+abstract interface class GpuBackendCompute {
+  /// Compiles the compute entry point [entryPoint] of the WGSL [source]; an
+  /// empty [entryPoint] picks the only one. Throws when it does not compile.
+  GpuBackendComputePipeline createComputePipeline(
+    String source, {
+    required String entryPoint,
+  });
+
+  /// Reads [lengthInBytes] of [buffer] from [offsetInBytes] once the work
+  /// submitted before the call completes, blocking until then. Both are
+  /// multiples of 4.
+  ByteData readDeviceBuffer(
+    GpuBackendDeviceBuffer buffer, {
+    required int offsetInBytes,
+    required int lengthInBytes,
+  });
+}
+
+/// A compute pipeline; a compute pass of the same backend binds it.
+@experimental
+abstract interface class GpuBackendComputePipeline {}
+
+/// Dispatches compute pipelines within one compute pass. Resources bind by
+/// their WGSL `@group` and `@binding`, and the pass starts with none bound.
+@experimental
+abstract interface class GpuBackendComputePass {
+  /// Binds [pipeline] for the following dispatches.
+  void bindPipeline(GpuBackendComputePipeline pipeline);
+
+  /// Binds a uniform or storage buffer range at [group] and [binding].
+  void bindBuffer(
+    int group,
+    int binding,
+    GpuBackendDeviceBuffer buffer,
+    int offsetInBytes,
+    int lengthInBytes,
+  );
+
+  /// Binds mip level [mipLevel] of [texture], created with shader write
+  /// usage, as the storage texture at [group] and [binding].
+  void bindStorageTexture(
+    int group,
+    int binding,
+    GpuBackendTexture texture, {
+    required int mipLevel,
+  });
+
+  /// Dispatches [x] by [y] by [z] workgroups.
+  void dispatch(int x, int y, int z);
+
+  /// Dispatches the workgroup counts held as three 32-bit unsigned integers
+  /// in [buffer] at [offsetInBytes].
+  void dispatchIndirect(GpuBackendDeviceBuffer buffer, int offsetInBytes);
 }
 
 /// A region of GPU memory.
@@ -369,7 +449,8 @@ abstract interface class GpuBackendShader {
 @experimental
 abstract interface class GpuBackendRenderPipeline {}
 
-/// Records render passes and copies, then submits them to the GPU.
+/// Records render passes, compute passes and copies, then submits them to the
+/// GPU.
 @experimental
 abstract interface class GpuBackendCommandBuffer {
   /// Starts a render pass into [colors] and [depthStencil], ending the pass
@@ -378,6 +459,10 @@ abstract interface class GpuBackendCommandBuffer {
     required List<GpuBackendColorTarget> colors,
     GpuBackendDepthStencilTarget? depthStencil,
   });
+
+  /// Starts a compute pass, ending the pass before it. Called only where
+  /// the context's [GpuBackendContext.compute] is non-null.
+  GpuBackendComputePass createComputePass();
 
   /// Copies tightly packed texel data from [source] into [destination].
   void copyBufferToTexture(

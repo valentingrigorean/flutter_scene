@@ -203,6 +203,29 @@ final class GpuContext {
     return CommandBuffer._backend(_backend!.createCommandBuffer());
   }
 
+  /// Compiles the compute entry point [entryPoint] of the WGSL [source]; an
+  /// empty [entryPoint] picks the only one.
+  ///
+  /// Throws an [UnsupportedError] where `gpuHost.capabilities.compute` is
+  /// false, as on Impeller.
+  ComputePipeline createComputePipeline(
+    String source, {
+    String entryPoint = '',
+  }) => ComputePipeline._(
+    _computeOf(_backend).createComputePipeline(source, entryPoint: entryPoint),
+  );
+
+  /// Reads [view] back once the work submitted before the call completes,
+  /// blocking until then. Its offset and length are multiples of 4.
+  ///
+  /// Throws an [UnsupportedError] where `gpuHost.capabilities.compute` is
+  /// false, as on Impeller.
+  ByteData readBuffer(BufferView view) => _computeOf(_backend).readDeviceBuffer(
+    view.buffer._backend!,
+    offsetInBytes: view.offsetInBytes,
+    lengthInBytes: view.lengthInBytes,
+  );
+
   /// Creates a pipeline from a vertex and a fragment shader.
   RenderPipeline createRenderPipeline(
     Shader vertexShader,
