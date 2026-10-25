@@ -4,7 +4,7 @@ part of '_gpu.dart';
 /// shader library or has not handed [shader] out.
 String? loadedShaderName(Object library, Shader shader) {
   if (library is! ShaderLibrary) return null;
-  for (final MapEntry(:key, :value) in library.shaders_.entries) {
+  for (final MapEntry(:key, :value) in library._shaders.entries) {
     if (identical(value, shader)) return key;
   }
   return null;
