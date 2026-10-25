@@ -15,3 +15,19 @@ wgpu = "30.0.1"
 [profile.release]
 lto = true
 codegen-units = 1
+
+# Presentation into a Flutter external texture (src/present).
+[dependencies.pollster]
+version = "0.4"
+
+[dependencies.bytemuck]
+version = "1"
+features = ["derive"]
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc2 = "0.6"
+objc2-io-surface = { version = "0.3.2", default-features = false, features = ["std", "IOSurfaceRef"] }
+objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLDevice", "MTLTexture", "MTLAllocation", "MTLResource", "MTLPixelFormat", "MTLTypes", "objc2-io-surface"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+raw-window-handle = "0.6"
