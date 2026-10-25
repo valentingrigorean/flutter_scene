@@ -207,6 +207,23 @@ abstract interface class GpuBackendContext {
   /// Creates a command buffer.
   GpuBackendCommandBuffer createCommandBuffer();
 
+  /// Completes once every pipeline variant the device was asked for so far
+  /// has finished compiling, whether it compiled or failed.
+  ///
+  /// A backend with [GpuCapabilities.aheadOfTimePipelines] compiles off the
+  /// calling thread, so a caller that recorded draws ahead of a frame awaits
+  /// this before the frame that binds the same variants, and that frame's
+  /// submit waits for no compile. A compile error still surfaces where the
+  /// variant is bound.
+  Future<void> pipelinesReady();
+
+  /// Runs [record], during which a draw whose pipeline variant is still
+  /// compiling records nothing, and returns how many draws it skipped.
+  ///
+  /// A warm-up that discards its frame records through this, awaits
+  /// [pipelinesReady] and records again, so its submits wait for no compile.
+  int skipCompilingDraws(void Function() record);
+
   /// Creates a pipeline from a vertex and a fragment shader.
   GpuBackendRenderPipeline createRenderPipeline(
     GpuBackendShader vertexShader,

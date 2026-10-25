@@ -201,8 +201,18 @@ Future<bool> measureLinearDepthRead({required bool split}) async {
     rendererSubmissions.submit(commandBuffer);
   }
 
-  draw(written, verdict, check: false);
-  draw(verdict, written, check: true);
+  void probe() {
+    draw(written, verdict, check: false);
+    draw(verdict, written, check: true);
+  }
+
+  // A backend that compiles off this thread skips a draw whose pipeline
+  // still compiles; the probe then draws again once it has compiled, so its
+  // submits wait for no compile.
+  if (gpu.gpuHost.skipCompilingDraws(probe) > 0) {
+    await gpu.gpuHost.pipelinesReady();
+    probe();
+  }
   await awaitRasterThread();
 
   final ui.Image image = gpu.gpuHost.textureToImage(verdict);

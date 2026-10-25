@@ -2243,7 +2243,11 @@ base class Scene implements SceneGraph {
   /// device then keeps answering input and animating its loading screen
   /// instead of blocking for the whole compile (Android declares an app
   /// that ignores input for ten seconds not responding). A single build
-  /// longer than the budget still runs whole.
+  /// longer than the budget still runs whole. On a backend that compiles its
+  /// pipelines off the calling thread (`GpuCapabilities.aheadOfTimePipelines`)
+  /// each slice also skips the draws whose pipeline still compiles and awaits
+  /// `gpuHost.pipelinesReady` before the next, so no warm-up submit waits for
+  /// a compile.
   ///
   /// Lit materials draw with a lean shader while the scene uses none of the
   /// features it leaves out (ambient occlusion, rect area lights, the
@@ -2358,12 +2362,20 @@ base class Scene implements SceneGraph {
       if (slice > 0) await awaitRasterThread();
       if (_disposed) return;
       final paced = _pacedFrameCount;
-      withPipelineBuildBudget(sliceBudget, encode);
-      if (_pacedFrameCount == paced && deferredPipelineBuilds == 0) {
-        _buildListedShadowCasters(views, querySize);
-        _buildShadowTileCopy();
+      final compiling = gpu.gpuHost.skipCompilingDraws(
+        () => withPipelineBuildBudget(sliceBudget, encode),
+      );
+      if (_pacedFrameCount == paced &&
+          deferredPipelineBuilds == 0 &&
+          compiling == 0) {
+        final building = gpu.gpuHost.skipCompilingDraws(() {
+          _buildListedShadowCasters(views, querySize);
+          _buildShadowTileCopy();
+        });
+        if (building > 0) await gpu.gpuHost.pipelinesReady();
         return;
       }
+      if (compiling > 0) await gpu.gpuHost.pipelinesReady();
       await Future<void>.delayed(const Duration(milliseconds: 16));
     }
   }
