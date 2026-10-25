@@ -33,9 +33,9 @@ final class ColorAttachment {
     slice: slice,
   );
 
-  WgpuColorTarget _toWgpu() => (
-    texture: texture._wgpu!,
-    resolveTexture: resolveTexture?._wgpu,
+  GpuBackendColorTarget _toBackend() => (
+    texture: texture._backend!,
+    resolveTexture: resolveTexture?._backend,
     loadAction: loadAction,
     storeAction: storeAction,
     clearValue: clearValue,
@@ -80,8 +80,8 @@ final class DepthStencilAttachment {
     slice: slice,
   );
 
-  WgpuDepthStencilTarget _toWgpu() => (
-    texture: texture._wgpu!,
+  GpuBackendDepthStencilTarget _toBackend() => (
+    texture: texture._backend!,
     depthLoadAction: depthLoadAction,
     depthStoreAction: depthStoreAction,
     depthClearValue: depthClearValue,
@@ -122,18 +122,18 @@ final class RenderTarget {
 
 /// Draws into a [RenderTarget]; created by [CommandBuffer.createRenderPass].
 final class RenderPass {
-  RenderPass._impeller(fg.RenderPass this._impeller) : _wgpu = null;
-  RenderPass._wgpu(WgpuRenderPass this._wgpu) : _impeller = null;
+  RenderPass._impeller(fg.RenderPass this._impeller) : _backend = null;
+  RenderPass._backend(GpuBackendRenderPass this._backend) : _impeller = null;
 
   final fg.RenderPass? _impeller;
-  final WgpuRenderPass? _wgpu;
+  final GpuBackendRenderPass? _backend;
 
   void bindPipeline(RenderPipeline pipeline) {
     final impeller = _impeller;
     if (impeller != null) {
       impeller.bindPipeline(pipeline._impeller!);
     } else {
-      _wgpu!.bindPipeline(pipeline._wgpu!);
+      _backend!.bindPipeline(pipeline._backend!);
     }
   }
 
@@ -142,8 +142,8 @@ final class RenderPass {
     if (impeller != null) {
       impeller.bindVertexBuffer(bufferView._impeller!, slot: slot);
     } else {
-      _wgpu!.bindVertexBuffer(
-        bufferView.buffer._wgpu!,
+      _backend!.bindVertexBuffer(
+        bufferView.buffer._backend!,
         bufferView.offsetInBytes,
         bufferView.lengthInBytes,
         slot: slot,
@@ -156,8 +156,8 @@ final class RenderPass {
     if (impeller != null) {
       impeller.bindIndexBuffer(bufferView._impeller!, indexType);
     } else {
-      _wgpu!.bindIndexBuffer(
-        bufferView.buffer._wgpu!,
+      _backend!.bindIndexBuffer(
+        bufferView.buffer._backend!,
         bufferView.offsetInBytes,
         bufferView.lengthInBytes,
         indexType,
@@ -170,10 +170,10 @@ final class RenderPass {
     if (impeller != null) {
       impeller.bindUniform(slot._impeller!, bufferView._impeller!);
     } else {
-      _wgpu!.bindUniform(
-        slot.shader._wgpu!,
+      _backend!.bindUniform(
+        slot.shader._backend!,
         slot.uniformName,
-        bufferView.buffer._wgpu!,
+        bufferView.buffer._backend!,
         bufferView.offsetInBytes,
         bufferView.lengthInBytes,
       );
@@ -193,10 +193,10 @@ final class RenderPass {
         sampler: sampler,
       );
     } else {
-      _wgpu!.bindTexture(
-        slot.shader._wgpu!,
+      _backend!.bindTexture(
+        slot.shader._backend!,
         slot.uniformName,
-        texture._wgpu!,
+        texture._backend!,
         sampler,
       );
     }
@@ -207,7 +207,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.clearBindings();
     } else {
-      _wgpu!.clearBindings();
+      _backend!.clearBindings();
     }
   }
 
@@ -219,7 +219,7 @@ final class RenderPass {
         colorAttachmentIndex: colorAttachmentIndex,
       );
     } else {
-      _wgpu!.setColorBlendEnable(
+      _backend!.setColorBlendEnable(
         enable,
         colorAttachmentIndex: colorAttachmentIndex,
       );
@@ -237,7 +237,7 @@ final class RenderPass {
         colorAttachmentIndex: colorAttachmentIndex,
       );
     } else {
-      _wgpu!.setColorBlendEquation(
+      _backend!.setColorBlendEquation(
         equation,
         colorAttachmentIndex: colorAttachmentIndex,
       );
@@ -249,7 +249,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.setDepthWriteEnable(enable);
     } else {
-      _wgpu!.setDepthWriteEnable(enable);
+      _backend!.setDepthWriteEnable(enable);
     }
   }
 
@@ -258,7 +258,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.setDepthCompareOperation(compareFunction);
     } else {
-      _wgpu!.setDepthCompareOperation(compareFunction);
+      _backend!.setDepthCompareOperation(compareFunction);
     }
   }
 
@@ -267,7 +267,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.setStencilReference(referenceValue);
     } else {
-      _wgpu!.setStencilReference(referenceValue);
+      _backend!.setStencilReference(referenceValue);
     }
   }
 
@@ -279,7 +279,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.setStencilConfig(configuration, targetFace: targetFace);
     } else {
-      _wgpu!.setStencilConfig(configuration, targetFace);
+      _backend!.setStencilConfig(configuration, targetFace);
     }
   }
 
@@ -288,7 +288,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.setCullMode(cullMode);
     } else {
-      _wgpu!.setCullMode(cullMode);
+      _backend!.setCullMode(cullMode);
     }
   }
 
@@ -297,7 +297,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.setPolygonMode(polygonMode);
     } else {
-      _wgpu!.setPolygonMode(polygonMode);
+      _backend!.setPolygonMode(polygonMode);
     }
   }
 
@@ -306,7 +306,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.setPrimitiveType(primitiveType);
     } else {
-      _wgpu!.setPrimitiveType(primitiveType);
+      _backend!.setPrimitiveType(primitiveType);
     }
   }
 
@@ -315,7 +315,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.setWindingOrder(windingOrder);
     } else {
-      _wgpu!.setWindingOrder(windingOrder);
+      _backend!.setWindingOrder(windingOrder);
     }
   }
 
@@ -324,7 +324,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.setScissor(scissor);
     } else {
-      _wgpu!.setScissor(scissor);
+      _backend!.setScissor(scissor);
     }
   }
 
@@ -333,7 +333,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.setViewport(viewport);
     } else {
-      _wgpu!.setViewport(viewport);
+      _backend!.setViewport(viewport);
     }
   }
 
@@ -342,7 +342,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.draw(vertexCount, instanceCount: instanceCount);
     } else {
-      _wgpu!.draw(vertexCount, instanceCount: instanceCount);
+      _backend!.draw(vertexCount, instanceCount: instanceCount);
     }
   }
 
@@ -351,7 +351,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.drawIndexed(indexCount, instanceCount: instanceCount);
     } else {
-      _wgpu!.drawIndexed(indexCount, instanceCount: instanceCount);
+      _backend!.drawIndexed(indexCount, instanceCount: instanceCount);
     }
   }
 }

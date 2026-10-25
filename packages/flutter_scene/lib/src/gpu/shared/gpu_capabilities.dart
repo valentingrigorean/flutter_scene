@@ -99,6 +99,6 @@ enum GpuBackendKind {
   /// Flutter GPU over Impeller, the default.
   impeller,
 
-  /// wgpu through the `flutter_scene_wgpu` native library.
+  /// wgpu, through the backend an app registers with `registerGpuBackend`.
   wgpu,
 }

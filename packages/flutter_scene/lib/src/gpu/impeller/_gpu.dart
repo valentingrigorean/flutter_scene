@@ -1,9 +1,12 @@
 /// The native GPU shim: flutter_gpu's API over the backend chosen at start-up,
-/// Flutter GPU (Impeller) by default or wgpu (see [selectGpuBackend]).
+/// Flutter GPU (Impeller) by default or a backend the app registers (see
+/// [registerGpuBackend] and [selectGpuBackend]).
 ///
 /// The resource classes are final wrappers that hold either a flutter_gpu
-/// object or a wgpu handle, and forward each member to it with a direct call.
-/// Enums and the value types that hold no resource are flutter_gpu's own.
+/// object, which each member calls directly, or an object of the registered
+/// backend's contract (`package:flutter_scene/gpu_backend.dart`), which each
+/// member calls through its interface. Enums and the value types that hold no
+/// resource are flutter_gpu's own.
 library;
 
 import 'dart:typed_data';
@@ -36,12 +39,11 @@ import 'package:flutter_gpu/gpu.dart'
         WindingOrder;
 import 'package:flutter_scene/src/gpu/shared/encoded_image_types.dart';
 import 'package:flutter_scene/src/gpu/shared/shader_library_sources.dart';
-import 'package:flutter_scene_wgpu/present.dart';
 import 'package:meta/meta.dart' show experimental;
 import 'package:vector_math/vector_math.dart' as vm;
 
 import '../shared/gpu_capabilities.dart';
-import '../wgpu/wgpu_device.dart';
+import '../backend/gpu_backend.dart';
 
 export 'package:flutter_gpu/gpu.dart'
     show
@@ -94,4 +96,3 @@ part 'shader_library_inline.dart';
 part 'shader_names.dart';
 part 'surface.dart';
 part 'texture.dart';
-part '../wgpu/wgpu_present.dart';

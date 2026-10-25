@@ -62,9 +62,6 @@ dependencies:
   # 0.4.5 includes the DataAssets shader-bundle mode used by the new
   # zero-manifest .fmat workflow.
   flutter_gpu_shaders: ^0.5.1
-  # Native-only: the wgpu device behind the GPU shim's second backend.
-  flutter_scene_wgpu:
-    path: ../flutter_scene_wgpu
   hooks: ^2.0.0
   # Offline glTF texture decoding (build hook), and runtime OpenEXR decoding
   # for HDR environment maps. WASM-safe (no dart:io/dart:html on its web graph).

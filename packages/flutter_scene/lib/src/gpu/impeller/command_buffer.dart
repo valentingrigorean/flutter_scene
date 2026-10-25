@@ -31,8 +31,8 @@ final class TextureRegion {
     slice: slice,
   );
 
-  WgpuTextureRegion get _wgpu => (
-    texture: texture._wgpu!,
+  GpuBackendTextureRegion get _backend => (
+    texture: texture._backend!,
     x: x,
     y: y,
     width: width == -1 ? texture.getMipLevelWidth(mipLevel) : width,
@@ -61,15 +61,16 @@ final class TextureDestinationRegion {
 
 /// Records render passes and copies, then submits them to the GPU.
 final class CommandBuffer {
-  CommandBuffer._impeller(fg.CommandBuffer this._impeller) : _wgpu = null;
-  CommandBuffer._wgpu(WgpuCommandBuffer this._wgpu) : _impeller = null;
+  CommandBuffer._impeller(fg.CommandBuffer this._impeller) : _backend = null;
+  CommandBuffer._backend(GpuBackendCommandBuffer this._backend)
+    : _impeller = null;
 
   final fg.CommandBuffer? _impeller;
-  final WgpuCommandBuffer? _wgpu;
-  bool _wgpuSubmitted = false;
+  final GpuBackendCommandBuffer? _backend;
+  bool _backendSubmitted = false;
 
   /// Whether [submit] has run.
-  bool get submitted => _impeller?.submitted ?? _wgpuSubmitted;
+  bool get submitted => _impeller?.submitted ?? _backendSubmitted;
 
   /// Starts a render pass into [renderTarget].
   RenderPass createRenderPass(RenderTarget renderTarget) {
@@ -79,12 +80,12 @@ final class CommandBuffer {
         impeller.createRenderPass(renderTarget._toImpeller()),
       );
     }
-    return RenderPass._wgpu(
-      _wgpu!.createRenderPass(
+    return RenderPass._backend(
+      _backend!.createRenderPass(
         colors: [
-          for (final color in renderTarget.colorAttachments) color._toWgpu(),
+          for (final color in renderTarget.colorAttachments) color._toBackend(),
         ],
-        depthStencil: renderTarget.depthStencilAttachment?._toWgpu(),
+        depthStencil: renderTarget.depthStencilAttachment?._toBackend(),
       ),
     );
   }
@@ -95,7 +96,7 @@ final class CommandBuffer {
     if (impeller != null) {
       impeller.copyBufferToTexture(source._impeller!, destination._impeller);
     } else {
-      _wgpu!.copyBufferToTexture(source._wgpu, destination._wgpu);
+      _backend!.copyBufferToTexture(source._backend, destination._backend);
     }
   }
 
@@ -105,7 +106,7 @@ final class CommandBuffer {
     if (impeller != null) {
       impeller.copyTextureToBuffer(source._impeller, destination._impeller!);
     } else {
-      _wgpu!.copyTextureToBuffer(source._wgpu, destination._wgpu);
+      _backend!.copyTextureToBuffer(source._backend, destination._backend);
     }
   }
 
@@ -127,9 +128,9 @@ final class CommandBuffer {
         ),
       );
     } else {
-      _wgpu!.copyTextureToTexture(
-        source._wgpu,
-        destination.texture._wgpu!,
+      _backend!.copyTextureToTexture(
+        source._backend,
+        destination.texture._backend!,
         x: destination.x,
         y: destination.y,
         mipLevel: destination.mipLevel,
@@ -146,10 +147,10 @@ final class CommandBuffer {
       impeller.submit(completionCallback: completionCallback);
       return;
     }
-    if (_wgpuSubmitted) {
+    if (_backendSubmitted) {
       throw StateError('CommandBuffer has already been submitted.');
     }
-    _wgpu!.submit(completionCallback: completionCallback);
-    _wgpuSubmitted = true;
+    _backend!.submit(completionCallback: completionCallback);
+    _backendSubmitted = true;
   }
 }

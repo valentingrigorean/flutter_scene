@@ -8,9 +8,9 @@ class GpuHost {
   const GpuHost._();
 
   /// See [GpuCapabilities].
-  GpuCapabilities get capabilities => switch (_backend) {
+  GpuCapabilities get capabilities => switch (_kind) {
     GpuBackendKind.impeller => _impellerCapabilities,
-    GpuBackendKind.wgpu => gpuContext._wgpu!.capabilities,
+    GpuBackendKind.wgpu => gpuContext._backend!.capabilities,
   };
 
   static const _impellerCapabilities = GpuCapabilities(

@@ -33,8 +33,8 @@ final class BufferView {
   // Built once with the view, so binding it on Impeller allocates nothing.
   final fg.BufferView? _impeller;
 
-  WgpuBufferRange get _wgpu => (
-    buffer: buffer._wgpu!,
+  GpuBackendBufferRange get _backend => (
+    buffer: buffer._backend!,
     offsetInBytes: offsetInBytes,
     lengthInBytes: lengthInBytes,
   );
@@ -42,20 +42,22 @@ final class BufferView {
 
 /// A region of GPU memory.
 final class DeviceBuffer {
-  DeviceBuffer._impeller(fg.DeviceBuffer this._impeller) : _wgpu = null;
-  DeviceBuffer._wgpu(WgpuDeviceBuffer this._wgpu) : _impeller = null;
+  DeviceBuffer._impeller(fg.DeviceBuffer this._impeller) : _backend = null;
+  DeviceBuffer._backend(GpuBackendDeviceBuffer this._backend)
+    : _impeller = null;
 
   final fg.DeviceBuffer? _impeller;
-  final WgpuDeviceBuffer? _wgpu;
+  final GpuBackendDeviceBuffer? _backend;
 
   /// How the memory is reachable from the host.
-  StorageMode get storageMode => _impeller?.storageMode ?? _wgpu!.storageMode;
+  StorageMode get storageMode =>
+      _impeller?.storageMode ?? _backend!.storageMode;
 
   /// The buffer's size.
-  int get sizeInBytes => _impeller?.sizeInBytes ?? _wgpu!.sizeInBytes;
+  int get sizeInBytes => _impeller?.sizeInBytes ?? _backend!.sizeInBytes;
 
   /// Whether the buffer is still backed by GPU memory.
-  bool get isValid => _impeller?.isValid ?? _wgpu!.isValid;
+  bool get isValid => _impeller?.isValid ?? _backend!.isValid;
 
   /// Copies [sourceBytes] into the buffer from [destinationOffsetInBytes].
   /// Returns false when the copy did not happen.
@@ -64,7 +66,7 @@ final class DeviceBuffer {
         sourceBytes,
         destinationOffsetInBytes: destinationOffsetInBytes,
       ) ??
-      _wgpu!.overwrite(
+      _backend!.overwrite(
         sourceBytes,
         destinationOffsetInBytes: destinationOffsetInBytes,
       );
@@ -73,9 +75,15 @@ final class DeviceBuffer {
   void flush({int offsetInBytes = 0, int lengthInBytes = -1}) {
     final impeller = _impeller;
     if (impeller != null) {
-      impeller.flush(offsetInBytes: offsetInBytes, lengthInBytes: lengthInBytes);
+      impeller.flush(
+        offsetInBytes: offsetInBytes,
+        lengthInBytes: lengthInBytes,
+      );
     } else {
-      _wgpu!.flush(offsetInBytes: offsetInBytes, lengthInBytes: lengthInBytes);
+      _backend!.flush(
+        offsetInBytes: offsetInBytes,
+        lengthInBytes: lengthInBytes,
+      );
     }
   }
 }
@@ -83,29 +91,33 @@ final class DeviceBuffer {
 /// A per-frame bump allocator for transient data such as uniforms.
 final class HostBuffer {
   HostBuffer._impeller(fg.HostBuffer this._impeller)
-    : _wgpu = null,
+    : _backend = null,
       blockLengthInBytes = _impeller.blockLengthInBytes;
-  HostBuffer._wgpu(WgpuHostBuffer this._wgpu, this.blockLengthInBytes)
-    : _impeller = null;
+  HostBuffer._backend(
+    GpuBackendHostBuffer this._backend,
+    this.blockLengthInBytes,
+  ) : _impeller = null;
 
   /// The block size [GpuContext.createHostBuffer] uses by default.
   static const int kDefaultBlockLengthInBytes =
       fg.HostBuffer.kDefaultBlockLengthInBytes;
 
   final fg.HostBuffer? _impeller;
-  final WgpuHostBuffer? _wgpu;
+  final GpuBackendHostBuffer? _backend;
 
   /// The size of each block the allocator draws from.
   final int blockLengthInBytes;
 
   /// How many frames of blocks the allocator rotates through.
-  int get frameCount => _impeller?.frameCount ?? _wgpu!.frameCount;
+  int get frameCount => _impeller?.frameCount ?? _backend!.frameCount;
 
   // The blocks Impeller allocates are its own buffers; each gets one wrapper,
   // and the last one is kept so a run of emplaces into a block does not look
   // it up again.
   static final Expando<DeviceBuffer> _blocks = Expando('HostBuffer block');
-  static final Expando<DeviceBuffer> _wgpuBlocks = Expando('HostBuffer block');
+  static final Expando<DeviceBuffer> _backendBlocks = Expando(
+    'HostBuffer block',
+  );
   fg.DeviceBuffer? _lastBlock;
   DeviceBuffer? _lastWrapped;
 
@@ -123,9 +135,9 @@ final class HostBuffer {
       }
       return BufferView._fromImpeller(wrapped, view);
     }
-    final range = _wgpu!.emplace(bytes);
+    final range = _backend!.emplace(bytes);
     return BufferView(
-      _wgpuBlocks[range.buffer] ??= DeviceBuffer._wgpu(range.buffer),
+      _backendBlocks[range.buffer] ??= DeviceBuffer._backend(range.buffer),
       offsetInBytes: range.offsetInBytes,
       lengthInBytes: range.lengthInBytes,
     );
@@ -137,7 +149,7 @@ final class HostBuffer {
     if (impeller != null) {
       impeller.reset();
     } else {
-      _wgpu!.reset();
+      _backend!.reset();
     }
   }
 }

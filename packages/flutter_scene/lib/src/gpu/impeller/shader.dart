@@ -17,24 +17,24 @@ final class UniformSlot {
   int? get sizeInBytes {
     final impeller = _impeller;
     if (impeller != null) return impeller.sizeInBytes;
-    return shader._wgpu!.uniformStructSize(uniformName);
+    return shader._backend!.uniformStructSize(uniformName);
   }
 
   /// Where [memberName] sits in the uniform's struct, or null when absent.
   int? getMemberOffsetInBytes(String memberName) {
     final impeller = _impeller;
     if (impeller != null) return impeller.getMemberOffsetInBytes(memberName);
-    return shader._wgpu!.uniformMemberOffset(uniformName, memberName);
+    return shader._backend!.uniformMemberOffset(uniformName, memberName);
   }
 }
 
 /// One compiled shader stage from a [ShaderLibrary].
 final class Shader {
-  Shader._impeller(fg.Shader this._impeller) : _wgpu = null;
-  Shader._wgpu(WgpuShader this._wgpu) : _impeller = null;
+  Shader._impeller(fg.Shader this._impeller) : _backend = null;
+  Shader._backend(GpuBackendShader this._backend) : _impeller = null;
 
   final fg.Shader? _impeller;
-  final WgpuShader? _wgpu;
+  final GpuBackendShader? _backend;
 
   // One slot per name, so a draw that looks a slot up again allocates nothing.
   final Map<String, UniformSlot> _slots = {};
@@ -50,11 +50,11 @@ final class RenderPipeline {
     this.vertexShader,
     this.fragmentShader,
     fg.RenderPipeline this._impeller,
-  ) : _wgpu = null;
-  RenderPipeline._wgpu(
+  ) : _backend = null;
+  RenderPipeline._backend(
     this.vertexShader,
     this.fragmentShader,
-    WgpuRenderPipeline this._wgpu,
+    GpuBackendRenderPipeline this._backend,
   ) : _impeller = null;
 
   /// The vertex stage.
@@ -64,20 +64,21 @@ final class RenderPipeline {
   final Shader fragmentShader;
 
   final fg.RenderPipeline? _impeller;
-  final WgpuRenderPipeline? _wgpu;
+  final GpuBackendRenderPipeline? _backend;
 }
 
 /// A loaded shader bundle.
 final class ShaderLibrary {
-  ShaderLibrary._impeller(fg.ShaderLibrary this._impeller) : _wgpu = null;
-  ShaderLibrary._wgpu(WgpuShaderLibrary this._wgpu) : _impeller = null;
+  ShaderLibrary._impeller(fg.ShaderLibrary this._impeller) : _backend = null;
+  ShaderLibrary._backend(GpuBackendShaderLibrary this._backend)
+    : _impeller = null;
 
   final fg.ShaderLibrary? _impeller;
-  final WgpuShaderLibrary? _wgpu;
+  final GpuBackendShaderLibrary? _backend;
   final Map<String, Shader?> _shaders = {};
 
   static final Expando<ShaderLibrary> _wrapped = Expando('ShaderLibrary');
-  static final Map<String, ShaderLibrary> _wgpuByAsset = {};
+  static final Map<String, ShaderLibrary> _backendByAsset = {};
 
   static ShaderLibrary? _ofImpeller(fg.ShaderLibrary? library) {
     if (library == null) return null;
@@ -92,13 +93,13 @@ final class ShaderLibrary {
           await Future.value(fg.ShaderLibrary.fromAsset(assetName)),
         );
       case GpuBackendKind.wgpu:
-        final cached = _wgpuByAsset[assetName];
+        final cached = _backendByAsset[assetName];
         if (cached != null) return cached;
-        final library = await gpuContext._wgpu!.loadShaderLibraryFromAsset(
+        final library = await gpuContext._backend!.loadShaderLibraryFromAsset(
           assetName,
         );
         if (library == null) return null;
-        return _wgpuByAsset[assetName] = ShaderLibrary._wgpu(library);
+        return _backendByAsset[assetName] = ShaderLibrary._backend(library);
     }
   }
 
@@ -106,17 +107,19 @@ final class ShaderLibrary {
   static Future<ShaderLibrary?> fromBytes(ByteData bytes) async {
     switch (_useBackend()) {
       case GpuBackendKind.impeller:
-        return _ofImpeller(await Future.value(fg.ShaderLibrary.fromBytes(bytes)));
+        return _ofImpeller(
+          await Future.value(fg.ShaderLibrary.fromBytes(bytes)),
+        );
       case GpuBackendKind.wgpu:
-        final library = gpuContext._wgpu!.loadShaderLibraryFromBytes(bytes);
-        return library == null ? null : ShaderLibrary._wgpu(library);
+        final library = gpuContext._backend!.loadShaderLibraryFromBytes(bytes);
+        return library == null ? null : ShaderLibrary._backend(library);
     }
   }
 
   /// Reloads the asset-loaded library for [assetKey] in place, keeping every
   /// [Shader] it has handed out. Does nothing when it is not loaded.
   static void reinitialize(String assetKey) {
-    switch (_backend) {
+    switch (_kind) {
       case GpuBackendKind.impeller:
         // TODO(shader-reload): drop the ignore once ShaderLibrary.reinitialize
         // reaches a released Flutter channel. The API exists only on master,
@@ -124,9 +127,8 @@ final class ShaderLibrary {
         // ignore: undefined_method
         fg.ShaderLibrary.reinitialize(assetKey);
       case GpuBackendKind.wgpu:
-        final error = _wgpuByAsset[assetKey]?._wgpu!.reinitializeFromAsset(
-          assetKey,
-        );
+        final error = _backendByAsset[assetKey]?._backend!
+            .reinitializeFromAsset(assetKey);
         if (error != null) {
           throw Exception('Failed to reinitialize ShaderLibrary: $error');
         }
@@ -141,8 +143,8 @@ final class ShaderLibrary {
           final shader = impeller[shaderName];
           return shader == null ? null : Shader._impeller(shader);
         }
-        final shader = _wgpu![shaderName];
-        return shader == null ? null : Shader._wgpu(shader);
+        final shader = _backend![shaderName];
+        return shader == null ? null : Shader._backend(shader);
       });
 
   /// Reloads the library in place from the asset [assetName]. Returns an
@@ -150,7 +152,7 @@ final class ShaderLibrary {
   String? debugReinitializeFromAsset(String assetName) =>
       // ignore: undefined_method
       _impeller?.debugReinitializeFromAsset(assetName) ??
-      _wgpu?.reinitializeFromAsset(assetName);
+      _backend?.reinitializeFromAsset(assetName);
 
   /// Reloads the library in place from regenerated bundle [bytes]. Returns an
   /// error description, or null on success.
@@ -160,6 +162,6 @@ final class ShaderLibrary {
       // ignore: undefined_method
       return impeller.reinitializeFromBytes(bytes);
     }
-    return _wgpu!.reinitializeFromBytes(bytes);
+    return _backend!.reinitializeFromBytes(bytes);
   }
 }

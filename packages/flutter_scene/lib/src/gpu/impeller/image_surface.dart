@@ -21,25 +21,27 @@ sealed class GpuSurfaceFrame {
 /// A surface whose frames Flutter draws as `ui.Image`s; created by
 /// [GpuContext.createImageSurface].
 final class GpuImageSurface implements GpuSurface {
-  GpuImageSurface._impeller(fg.GpuImageSurface this._impeller) : _wgpu = null;
-  GpuImageSurface._wgpu(WgpuImageSurface this._wgpu) : _impeller = null;
+  GpuImageSurface._impeller(fg.GpuImageSurface this._impeller)
+    : _backend = null;
+  GpuImageSurface._backend(GpuBackendImageSurface this._backend)
+    : _impeller = null;
 
   final fg.GpuImageSurface? _impeller;
-  final WgpuImageSurface? _wgpu;
+  final GpuBackendImageSurface? _backend;
 
-  int get width => _impeller?.width ?? _wgpu!.width;
-  int get height => _impeller?.height ?? _wgpu!.height;
-  PixelFormat get format => _impeller?.format ?? _wgpu!.format;
+  int get width => _impeller?.width ?? _backend!.width;
+  int get height => _impeller?.height ?? _backend!.height;
+  PixelFormat get format => _impeller?.format ?? _backend!.format;
 
   /// How many textures back the surface.
   int get debugBackingTextureCount =>
-      _impeller?.debugBackingTextureCount ?? _wgpu!.debugBackingTextureCount;
+      _impeller?.debugBackingTextureCount ?? _backend!.debugBackingTextureCount;
 
   /// The most recently presented frame, or null before the first.
   ui.Image? get currentImage {
     final impeller = _impeller;
     if (impeller != null) return impeller.currentImage;
-    return _wgpu!.currentImage;
+    return _backend!.currentImage;
   }
 
   void resize(int width, int height) {
@@ -47,7 +49,7 @@ final class GpuImageSurface implements GpuSurface {
     if (impeller != null) {
       impeller.resize(width, height);
     } else {
-      _wgpu!.resize(width, height);
+      _backend!.resize(width, height);
     }
   }
 
@@ -61,9 +63,13 @@ final class GpuImageSurface implements GpuSurface {
         Texture._impeller(frame.colorTexture),
       );
     }
-    final wgpu = _wgpu!;
-    final texture = wgpu.acquireNextFrame();
-    return GpuImageSurfaceFrame._wgpu(wgpu, texture, Texture._wgpu(texture));
+    final backend = _backend!;
+    final texture = backend.acquireNextFrame();
+    return GpuImageSurfaceFrame._backend(
+      backend,
+      texture,
+      Texture._backend(texture),
+    );
   }
 }
 
@@ -72,17 +78,17 @@ final class GpuImageSurfaceFrame implements GpuSurfaceFrame {
   GpuImageSurfaceFrame._impeller(
     fg.GpuImageSurfaceFrame this._impeller,
     this.colorTexture,
-  ) : _wgpuSurface = null,
-      _wgpuTexture = null;
-  GpuImageSurfaceFrame._wgpu(
-    WgpuImageSurface this._wgpuSurface,
-    WgpuTexture this._wgpuTexture,
+  ) : _backendSurface = null,
+      _backendTexture = null;
+  GpuImageSurfaceFrame._backend(
+    GpuBackendImageSurface this._backendSurface,
+    GpuBackendTexture this._backendTexture,
     this.colorTexture,
   ) : _impeller = null;
 
   final fg.GpuImageSurfaceFrame? _impeller;
-  final WgpuImageSurface? _wgpuSurface;
-  final WgpuTexture? _wgpuTexture;
+  final GpuBackendImageSurface? _backendSurface;
+  final GpuBackendTexture? _backendTexture;
 
   @override
   final Texture colorTexture;
@@ -91,7 +97,7 @@ final class GpuImageSurfaceFrame implements GpuSurfaceFrame {
   GpuPresentStatus present(CommandBuffer commandBuffer) {
     final impeller = _impeller;
     if (impeller != null) return impeller.present(commandBuffer._impeller!);
-    return _wgpuSurface!.present(_wgpuTexture!, commandBuffer._wgpu!);
+    return _backendSurface!.present(_backendTexture!, commandBuffer._backend!);
   }
 
   @override
@@ -100,7 +106,7 @@ final class GpuImageSurfaceFrame implements GpuSurfaceFrame {
     if (impeller != null) {
       impeller.discard();
     } else {
-      _wgpuSurface!.discard(_wgpuTexture!);
+      _backendSurface!.discard(_backendTexture!);
     }
   }
 }
