@@ -110,6 +110,10 @@ final class _Pass implements GpuBackendComputePass {
   ) => _calls.add('bind $group $binding $offsetInBytes $lengthInBytes');
 
   @override
+  void bindTexture(int group, int binding, GpuBackendTexture texture) =>
+      _calls.add('bind sampled $group $binding');
+
+  @override
   void bindStorageTexture(
     int group,
     int binding,

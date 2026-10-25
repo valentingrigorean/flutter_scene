@@ -33,6 +33,11 @@ final class ComputePass {
         view.lengthInBytes,
       );
 
+  /// Binds [texture] as the sampled texture at [group] and [binding], which
+  /// the pipeline reads with `textureLoad`.
+  void bindTexture(int group, int binding, Texture texture) =>
+      _backend.bindTexture(group, binding, texture._backend!);
+
   /// Binds mip level [mipLevel] of [texture], created with shader write
   /// usage, as the storage texture at [group] and [binding].
   void bindStorageTexture(
