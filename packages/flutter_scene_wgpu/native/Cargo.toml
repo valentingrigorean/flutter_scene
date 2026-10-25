@@ -10,16 +10,14 @@ name = "flutter_scene_wgpu_native"
 crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
-wgpu = "30.0.1"
+pollster = "0.4"
+wgpu = { version = "30.0.1", features = ["spirv", "naga-ir"] }
 
 [profile.release]
 lto = true
 codegen-units = 1
 
 # Presentation into a Flutter external texture (src/present).
-[dependencies.pollster]
-version = "0.4"
-
 [dependencies.bytemuck]
 version = "1"
 features = ["derive"]
