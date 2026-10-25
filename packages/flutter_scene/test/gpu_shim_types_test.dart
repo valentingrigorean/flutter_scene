@@ -30,7 +30,12 @@ void main() {
     expect([format, sampler], everyElement(isNotNull));
   });
 
-  test('the backend is Impeller unless chosen otherwise', () {
-    expect(gpu.gpuBackend, gpu.GpuBackendKind.impeller);
+  test('the backend is Impeller unless the start-up define chooses wgpu', () {
+    expect(
+      gpu.gpuBackend,
+      gpu.gpuBackendDefine == 'wgpu'
+          ? gpu.GpuBackendKind.wgpu
+          : gpu.GpuBackendKind.impeller,
+    );
   });
 }
