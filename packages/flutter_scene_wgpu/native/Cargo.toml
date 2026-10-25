@@ -10,7 +10,8 @@ name = "flutter_scene_wgpu_native"
 crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
-wgpu = "30.0.1"
+pollster = "0.4"
+wgpu = { version = "30.0.1", features = ["spirv", "naga-ir"] }
 
 [profile.release]
 lto = true
