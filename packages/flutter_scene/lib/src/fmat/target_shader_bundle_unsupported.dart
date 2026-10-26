@@ -45,3 +45,7 @@ Never trimShaderBundle(
 }) => throw UnsupportedError(
   'trimShaderBundle runs at build time on native hosts only.',
 );
+
+Never wgslSidecarsForBuild(Object buildInput) => throw UnsupportedError(
+  'wgslSidecarsForBuild runs at build time on native hosts only.',
+);
