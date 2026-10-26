@@ -1019,6 +1019,13 @@ final class WebGlRenderPass extends RenderPass {
     }
   }
 
+  /// Throws an [UnsupportedError]: WebGL2 draws no indirect arguments.
+  @override
+  void drawIndexedIndirect(BufferView arguments) => throw UnsupportedError(
+    'WebGL2 draws no indirect arguments; check '
+    'gpuHost.capabilities.indirectDraw first.',
+  );
+
   /// Called by CommandBuffer when the pass ends (a new pass begins, or the
   /// buffer is submitted). Resolves MSAA color attachments into their
   /// resolve textures.

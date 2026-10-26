@@ -108,6 +108,16 @@ abstract base class GpuContext {
   });
   bool supportsTextureCompression(TextureCompressionFamily family);
   CommandBuffer createCommandBuffer();
+
+  /// Compiles the compute entry point [entryPoint] of the WGSL [source]; an
+  /// empty [entryPoint] picks the only one.
+  ///
+  /// Throws an [UnsupportedError] where `gpuHost.capabilities.compute` is
+  /// false, as on WebGL2.
+  ComputePipeline createComputePipeline(
+    String source, {
+    String entryPoint = '',
+  });
   RenderPipeline createRenderPipeline(
     Shader vertexShader,
     Shader fragmentShader, {
@@ -181,8 +191,49 @@ abstract base class RenderPipeline {
   Shader get fragmentShader;
 }
 
+/// A compute pipeline compiled from WGSL, which a [ComputePass] dispatches.
+abstract base class ComputePipeline {}
+
+/// Dispatches compute pipelines within one compute pass of a
+/// [CommandBuffer]. Resources bind by their WGSL `@group` and `@binding`,
+/// and the pass starts with none bound.
+abstract base class ComputePass {
+  /// Binds [pipeline] for the following dispatches.
+  void bindPipeline(ComputePipeline pipeline);
+
+  /// Binds the uniform or storage buffer range [view] at [group] and
+  /// [binding].
+  void bindBuffer(int group, int binding, BufferView view);
+
+  /// Binds [texture] as the sampled texture at [group] and [binding], which
+  /// the pipeline reads with `textureLoad`.
+  void bindTexture(int group, int binding, Texture texture);
+
+  /// Binds mip level [mipLevel] of [texture], created with shader write
+  /// usage, as the storage texture at [group] and [binding].
+  void bindStorageTexture(
+    int group,
+    int binding,
+    Texture texture, {
+    int mipLevel = 0,
+  });
+
+  /// Dispatches [x] by [y] by [z] workgroups of the bound pipeline.
+  void dispatch(int x, [int y = 1, int z = 1]);
+
+  /// Dispatches the workgroup counts held as three 32-bit unsigned integers
+  /// at the start of [arguments].
+  void dispatchIndirect(BufferView arguments);
+}
+
 abstract base class CommandBuffer {
   RenderPass createRenderPass(RenderTarget renderTarget);
+
+  /// Starts a compute pass, ending the pass before it.
+  ///
+  /// Throws an [UnsupportedError] where `gpuHost.capabilities.compute` is
+  /// false, as on WebGL2.
+  ComputePass createComputePass();
 
   /// Copies tightly packed texel data from [source] into [destination].
   void copyBufferToTexture(BufferView source, TextureRegion destination);
@@ -220,6 +271,14 @@ abstract base class RenderPass {
   void setViewport(Viewport viewport);
   void draw(int vertexCount, {int instanceCount = 1});
   void drawIndexed(int indexCount, {int instanceCount = 1});
+
+  /// Draws indexed primitives with the five 32-bit draw arguments at the
+  /// start of [arguments]: index count, instance count, first index, base
+  /// vertex and first instance, which a compute pass may have written.
+  ///
+  /// Throws an [UnsupportedError] where `gpuHost.capabilities.indirectDraw`
+  /// is false, as on WebGL2.
+  void drawIndexedIndirect(BufferView arguments);
 }
 
 abstract base class ShaderLibrary {

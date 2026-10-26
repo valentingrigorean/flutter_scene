@@ -32,6 +32,12 @@ final class _WebGpuContext extends GpuContext {
     );
   }
 
+  /// The buffer bound to a compute buffer slot a dispatch never binds. Its
+  /// own, since a dispatch may write it, and [zeroUniformBuffer] must stay
+  /// zero.
+  late final _WebGpuDeviceBuffer computePlaceholderBuffer =
+      _WebGpuDeviceBuffer.geometry(this, 4096);
+
   final Map<String, _WebGpuTexture> _blankTextures = {};
 
   /// An opaque black texture of [viewDimension], bound to a texture the
@@ -185,6 +191,12 @@ final class _WebGpuContext extends GpuContext {
 
   @override
   CommandBuffer createCommandBuffer() => _WebGpuCommandBuffer(this);
+
+  @override
+  ComputePipeline createComputePipeline(
+    String source, {
+    String entryPoint = '',
+  }) => _WebGpuComputePipeline(this, source, entryPoint);
 
   @override
   RenderPipeline createRenderPipeline(

@@ -237,12 +237,15 @@ enum WgslDeclarationKind { uniform, texture, sampler, other }
 
 /// A `@group(G) @binding(B) var ...` declaration parsed out of WGSL source.
 ///
-/// [type] is the declared WGSL type, such as `texture_2d<f32>` or `sampler`.
+/// [type] is the declared WGSL type, such as `texture_2d<f32>` or `sampler`,
+/// and [addressSpace] what the `var` names between its angle brackets, such
+/// as `storage, read_write`, or empty where it names none.
 typedef WgslDeclaration = ({
   int group,
   int binding,
   WgslDeclarationKind kind,
   String type,
+  String addressSpace,
 });
 
 final _declaration = RegExp(
@@ -270,6 +273,7 @@ List<WgslDeclaration> parseWgslDeclarations(String wgsl) {
       binding: int.parse(m.group(2)!),
       kind: kind,
       type: type,
+      addressSpace: addressSpace,
     ));
   }
   return out;
