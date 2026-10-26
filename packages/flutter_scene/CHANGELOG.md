@@ -1,5 +1,6 @@
 ## 0.24.4
 
+* Geometry on the WebGL2 web backend no longer drops draws with a `glDrawElements` "Insufficient buffer size" or "Vertex buffer is not big enough" error.
 * `package:flutter_scene/build_hooks.dart` exports the WGSL sidecar step, `buildWgslSidecar` with `TintProcessTranslator`, `wgslSidecarsForBuild`, `wgslSidecarPathFor` and `sidecarBundleHash`, so a hook that runs `impellerc` itself writes the sidecar its bundle loads with on the WebGPU web backend.
 * Lit, unlit and physical materials with a clip volume translate to WGSL, so they load on the WebGPU web backend; Tint failed on every one of them.
 * Additive sprites and `.fmat` materials, bloom, and lens flares show over the content behind a scene with a transparent background, adding light to it. They were discarded wherever nothing opaque was drawn.
