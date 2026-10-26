@@ -21,6 +21,10 @@ final class WebGlCommandBuffer extends CommandBuffer {
     return pass;
   }
 
+  /// Throws an [UnsupportedError]: WebGL2 has no compute.
+  @override
+  ComputePass createComputePass() => throw UnsupportedError(_noCompute);
+
   @override
   void copyBufferToTexture(BufferView source, TextureRegion destination) {
     if (source.offsetInBytes < 0 ||
@@ -47,3 +51,6 @@ final class WebGlCommandBuffer extends CommandBuffer {
     completionCallback?.call(CompletionStatus.successful);
   }
 }
+
+const String _noCompute =
+    'WebGL2 has no compute; check gpuHost.capabilities.compute first.';

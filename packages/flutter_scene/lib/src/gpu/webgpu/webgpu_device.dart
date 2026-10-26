@@ -78,8 +78,12 @@ final class WebGpuDevice {
   ];
 
   /// Limits raised to the adapter's maximum. The engine's widest shader pairs
-  /// need more uniform blocks and texture slots than WebGPU's defaults.
+  /// need more uniform blocks and texture slots than WebGPU's defaults, and
+  /// a compute pass more and larger storage buffers.
   static const List<String> raisedLimits = [
+    'maxStorageBuffersPerShaderStage',
+    'maxStorageBufferBindingSize',
+    'maxBufferSize',
     'maxDynamicUniformBuffersPerPipelineLayout',
     'maxUniformBuffersPerShaderStage',
     'maxSampledTexturesPerShaderStage',

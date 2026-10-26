@@ -20,13 +20,18 @@ import '../shared/gpu_sample_types.dart';
 import '../shared/sidecar_hash.dart';
 import '../shared/shader_library_sources.dart';
 import '../shared/wgsl_bindings.dart'
-    show WgslBindingMap, parseWgslDeclarations;
+    show
+        WgslBindingMap,
+        WgslDeclaration,
+        WgslDeclarationKind,
+        parseWgslDeclarations;
 import '../web/_gpu.dart';
 import 'webgpu_device.dart';
 import 'webgpu_interop.dart';
 import 'webgpu_presenter.dart';
 
 part 'buffer.dart';
+part 'compute.dart';
 part 'context.dart';
 part 'encoded_image.dart';
 part 'formats.dart';

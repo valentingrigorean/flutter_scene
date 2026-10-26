@@ -255,6 +255,13 @@ final class WebGlContext extends GpuContext {
   final Map<(WebGlShader, WebGlShader, int, int), WebGlRenderPipeline>
   _pipelineCache = {};
 
+  /// Throws an [UnsupportedError]: WebGL2 has no compute.
+  @override
+  ComputePipeline createComputePipeline(
+    String source, {
+    String entryPoint = '',
+  }) => throw UnsupportedError(_noCompute);
+
   @override
   RenderPipeline createRenderPipeline(
     Shader vertexShader,

@@ -1,7 +1,8 @@
 part of 'webgpu_backend.dart';
 
-/// Records passes into one `GPUCommandEncoder` and submits them together.
-/// Starting a pass ends the previous one, as on WebGL2.
+/// Records render and compute passes into one `GPUCommandEncoder` and
+/// submits them together. Starting a pass ends the previous one, as on
+/// WebGL2.
 final class _WebGpuCommandBuffer extends CommandBuffer {
   _WebGpuCommandBuffer(this._context)
     : _encoder = _context.device.device.createCommandEncoder();
@@ -9,15 +10,29 @@ final class _WebGpuCommandBuffer extends CommandBuffer {
   final _WebGpuContext _context;
   final GPUCommandEncoder _encoder;
   _WebGpuRenderPass? _active;
+  _WebGpuComputePass? _activeCompute;
   bool _submitted = false;
 
-  @override
-  RenderPass createRenderPass(RenderTarget renderTarget) {
+  void _endPass() {
     if (_submitted) {
       throw StateError('This command buffer was already submitted.');
     }
     _active?._end();
+    _active = null;
+    _activeCompute?._end();
+    _activeCompute = null;
+  }
+
+  @override
+  RenderPass createRenderPass(RenderTarget renderTarget) {
+    _endPass();
     return _active = _WebGpuRenderPass(_context, _encoder, renderTarget);
+  }
+
+  @override
+  ComputePass createComputePass() {
+    _endPass();
+    return _activeCompute = _WebGpuComputePass(_context, _encoder);
   }
 
   @override
@@ -29,12 +44,8 @@ final class _WebGpuCommandBuffer extends CommandBuffer {
 
   @override
   void submit({CompletionCallback? completionCallback}) {
-    if (_submitted) {
-      throw StateError('This command buffer was already submitted.');
-    }
+    _endPass();
     _submitted = true;
-    _active?._end();
-    _active = null;
     final queue = _context.device.device.queue;
     queue.submit([_encoder.finish()].toJS);
     if (completionCallback == null) return;
@@ -385,9 +396,25 @@ final class _WebGpuRenderPass extends RenderPass {
     _checkOpen();
     final pipeline = _bound('drawIndexed');
     if (indexCount == 0 || instanceCount == 0) return;
+    _prepareIndexed(pipeline, 'drawIndexed');
+    _encoder.drawIndexed(indexCount, instanceCount);
+  }
+
+  @override
+  void drawIndexedIndirect(BufferView arguments) {
+    _checkOpen();
+    _prepareIndexed(_bound('drawIndexedIndirect'), 'drawIndexedIndirect');
+    _encoder.drawIndexedIndirect(
+      (arguments.buffer as _WebGpuDeviceBuffer).buffer,
+      arguments.offsetInBytes,
+    );
+  }
+
+  /// Sets what [_prepare] sets, and the bound index buffer.
+  void _prepareIndexed(_WebGpuRenderPipeline pipeline, String call) {
     final index = _indexBuffer;
     if (index == null) {
-      throw StateError('drawIndexed called before bindIndexBuffer');
+      throw StateError('$call called before bindIndexBuffer');
     }
     _prepare(pipeline);
     final buffer = index.buffer as _WebGpuDeviceBuffer;
@@ -403,7 +430,6 @@ final class _WebGpuRenderPass extends RenderPass {
       );
       _encodedIndex = (buffer, index.offsetInBytes, _indexType);
     }
-    _encoder.drawIndexed(indexCount, instanceCount);
   }
 
   /// Sets the variant, bind group, and vertex buffers a draw needs.
