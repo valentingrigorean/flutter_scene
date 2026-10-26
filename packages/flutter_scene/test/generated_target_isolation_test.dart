@@ -29,12 +29,13 @@ import 'package:hooks/hooks.dart';
 /// standing in for an embedder whose platform the protocol cannot name. It is
 /// untyped, and null removes the key, so a config that names something other
 /// than an OS, or names nothing, can be built as well. [webGpu] sets the
-/// `flutter_scene_webgpu` user-define.
+/// `flutter_scene_webgpu` user-define, and a non-null [wgpu] sets `wgpu`.
 BuildInput _input(
   Uri packageRoot, {
   OS? targetOS,
   Object? rawTargetOS = _keepTargetOS,
   bool webGpu = false,
+  bool? wgpu,
 }) {
   final builder = BuildInputBuilder()
     ..setupShared(
@@ -42,10 +43,13 @@ BuildInput _input(
       packageName: 'app',
       outputDirectoryShared: packageRoot.resolve('.dart_tool/hook/'),
       outputFile: packageRoot.resolve('.dart_tool/hook/output.json'),
-      userDefines: webGpu
+      userDefines: webGpu || wgpu != null
           ? PackageUserDefines(
               workspacePubspec: PackageUserDefinesSource(
-                defines: {kWebGpuUserDefine: true},
+                defines: {
+                  if (webGpu) kWebGpuUserDefine: true,
+                  kWgpuUserDefine: ?wgpu,
+                },
                 basePath: packageRoot,
               ),
             )
@@ -134,6 +138,25 @@ void main() {
       shaderBundleTargetKey(_input(temp.uri, targetOS: OS.macOS)),
       isNot(shaderBundleTargetKey(_input(temp.uri))),
     );
+  });
+
+  test('a native bundle keeps the SPIR-V wgpu loads unless wgpu is false', () {
+    for (final os in [OS.macOS, OS.iOS, OS.android]) {
+      expect(
+        shaderBundleShippedBackendsForBuild(_input(temp.uri, targetOS: os)),
+        contains(ShaderBundleBackend.vulkan),
+        reason: '$os',
+      );
+    }
+    expect(
+      shaderBundleShippedBackendsForBuild(
+        _input(temp.uri, targetOS: OS.macOS, wgpu: false),
+      ),
+      {ShaderBundleBackend.metalDesktop},
+    );
+    expect(shaderBundleShippedBackendsForBuild(_input(temp.uri)), {
+      ShaderBundleBackend.openglEs,
+    });
   });
 
   test(

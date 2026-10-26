@@ -234,15 +234,23 @@ Set<ShaderBundleBackend> shaderBundleBackendsForBuild(BuildInput buildInput) =>
     ? shaderBundleBackendsForOS(_targetOSName(buildInput) ?? _unnamedTargetOS)
     : shaderBundleBackendsForOS(null);
 
-/// The pubspec user-define that keeps the Vulkan SPIR-V the wgpu backend
-/// loads in every native bundle, as `wgpu` under flutter_scene's own name or
-/// `flutter_scene_wgpu` for an app hook building engine assets or materials.
+/// The pubspec user-define that, set to `false`, drops the Vulkan SPIR-V the
+/// wgpu backend loads from every native bundle, as `wgpu` under flutter_scene's
+/// own name or `flutter_scene_wgpu` for an app hook building engine assets or
+/// materials.
 const String kWgpuUserDefine = 'wgpu';
 
-/// Whether [buildInput]'s package asked for wgpu-loadable bundles.
+/// Whether bundles built for [buildInput] keep what the wgpu backend loads:
+/// true unless its package sets [kWgpuUserDefine] to `false`.
+///
+/// On by default because flutter_scene's own hook writes the engine bundles
+/// into its pub-cache tree, which every app on the machine shares under the
+/// same file names, while the hook runner caches each app's run. An app
+/// building without wgpu would otherwise overwrite another app's wgpu bundles
+/// with ones that cannot load there, and the cached app would ship them.
 bool wgpuShadersRequested(BuildInput buildInput) =>
-    buildInput.userDefines[kWgpuUserDefine] == true ||
-    buildInput.userDefines['flutter_scene_$kWgpuUserDefine'] == true;
+    buildInput.userDefines[kWgpuUserDefine] != false &&
+    buildInput.userDefines['flutter_scene_$kWgpuUserDefine'] != false;
 
 /// The backends a bundle built for [buildInput] keeps: the target's set, plus
 /// Vulkan for a native target when [wgpuShadersRequested]. The extra entries

@@ -30,13 +30,10 @@ workspace:
 # hook that builds engine assets or materials reads flutter_scene_debug_views
 # under the app's name. The smoke-render app also has a data-assets lane (see
 # examples/smoke_render/README.md), switched on with data_assets: true.
-# wgpu: true keeps the Vulkan SPIR-V a registered wgpu GPU backend loads in
-# every native shader bundle.
 hooks:
   user_defines:
     flutter_scene:
       debug_views: true
-      wgpu: true
     smoke_render:
       flutter_scene_debug_views: true
     example_app:
