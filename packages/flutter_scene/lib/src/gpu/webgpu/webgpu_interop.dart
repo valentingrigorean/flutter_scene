@@ -80,6 +80,7 @@ extension type GPUDevice._(JSObject _) implements JSObject {
   external GPUSampler createSampler(JSObject descriptor);
   external GPUShaderModule createShaderModule(JSObject descriptor);
   external GPURenderPipeline createRenderPipeline(JSObject descriptor);
+  external GPUComputePipeline createComputePipeline(JSObject descriptor);
   external GPUBindGroup createBindGroup(JSObject descriptor);
   external GPUBindGroupLayout createBindGroupLayout(JSObject descriptor);
   external GPUPipelineLayout createPipelineLayout(JSObject descriptor);
@@ -101,6 +102,7 @@ abstract final class GPUBufferUsage {
   static const int vertex = 0x0020;
   static const int uniform = 0x0040;
   static const int storage = 0x0080;
+  static const int indirect = 0x0100;
 }
 
 /// `GPUTextureUsage` flags.
@@ -151,6 +153,8 @@ extension type GPURenderPipeline._(JSObject _) implements JSObject {
   external JSObject getBindGroupLayout(int index);
 }
 
+extension type GPUComputePipeline._(JSObject _) implements JSObject {}
+
 extension type GPUBindGroup._(JSObject _) implements JSObject {}
 
 extension type GPUBindGroupLayout._(JSObject _) implements JSObject {}
@@ -161,6 +165,7 @@ extension type GPUPipelineLayout._(JSObject _) implements JSObject {}
 abstract final class GPUShaderStage {
   static const int vertex = 0x1;
   static const int fragment = 0x2;
+  static const int compute = 0x4;
 }
 
 extension type GPUDeviceLostInfo._(JSObject _) implements JSObject {
@@ -195,6 +200,7 @@ extension type GPUCommandBuffer._(JSObject _) implements JSObject {}
 
 extension type GPUCommandEncoder._(JSObject _) implements JSObject {
   external GPURenderPassEncoder beginRenderPass(JSObject descriptor);
+  external GPUComputePassEncoder beginComputePass();
   external void copyTextureToBuffer(
     JSObject source,
     JSObject destination,
@@ -233,6 +239,18 @@ extension type GPURenderPassEncoder._(JSObject _) implements JSObject {
   external void setStencilReference(int reference);
   external void draw(int vertexCount, [int instanceCount]);
   external void drawIndexed(int indexCount, [int instanceCount]);
+  external void drawIndexedIndirect(GPUBuffer indirectBuffer, int offset);
+  external void end();
+}
+
+extension type GPUComputePassEncoder._(JSObject _) implements JSObject {
+  external void setPipeline(GPUComputePipeline pipeline);
+  external void setBindGroup(int index, GPUBindGroup bindGroup);
+  external void dispatchWorkgroups(int x, [int y, int z]);
+  external void dispatchWorkgroupsIndirect(
+    GPUBuffer indirectBuffer,
+    int indirectOffset,
+  );
   external void end();
 }
 
