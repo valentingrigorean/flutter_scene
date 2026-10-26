@@ -35,11 +35,80 @@ final class _WebGpuCommandBuffer extends CommandBuffer {
     return _activeCompute = _WebGpuComputePass(_context, _encoder);
   }
 
+  /// Copies tightly packed rows of [source] into [destination]. WebGPU
+  /// wants rows on 256-byte strides, so an unaligned copy goes row by row.
   @override
   void copyBufferToTexture(BufferView source, TextureRegion destination) {
-    throw UnsupportedError(
-      'WebGPU does not support buffer-to-texture region copies yet.',
-    );
+    _endPass();
+    if (source.offsetInBytes < 0 ||
+        source.lengthInBytes < 0 ||
+        source.offsetInBytes + source.lengthInBytes >
+            source.buffer.sizeInBytes) {
+      throw Exception('BufferView range is out of bounds');
+    }
+    final texture = destination.texture as _WebGpuTexture;
+    final format = texture._format;
+    if (texture.sampleCount != 1 ||
+        format.compressed ||
+        format.depthOrStencil) {
+      throw UnsupportedError(
+        'A buffer copies only into a single-sample color texture.',
+      );
+    }
+    final mipLevel = destination.mipLevel;
+    if (mipLevel < 0 || mipLevel >= texture.mipLevelCount) {
+      throw Exception(
+        'mipLevel ($mipLevel) must be in the range '
+        '[0, ${texture.mipLevelCount})',
+      );
+    }
+    if (destination.slice < 0 || destination.slice >= texture.sliceCount) {
+      throw Exception(
+        'slice (${destination.slice}) must be in [0, ${texture.sliceCount})',
+      );
+    }
+    final mipWidth = texture._mipExtent(texture.width, mipLevel);
+    final mipHeight = texture._mipExtent(texture.height, mipLevel);
+    final width = destination.width == -1 ? mipWidth : destination.width;
+    final height = destination.height == -1 ? mipHeight : destination.height;
+    if (destination.x < 0 ||
+        destination.y < 0 ||
+        width < 1 ||
+        height < 1 ||
+        destination.x + width > mipWidth ||
+        destination.y + height > mipHeight) {
+      throw Exception(
+        'Texture region (${destination.x}, ${destination.y}, $width, '
+        '$height) exceeds mip level $mipLevel size ($mipWidth, $mipHeight)',
+      );
+    }
+    final rowBytes = width * format.bytesPerBlock;
+    if (source.lengthInBytes != rowBytes * height) {
+      throw Exception(
+        'The source BufferView length (bytes: ${source.lengthInBytes}) must '
+        'match the destination texture region size (bytes: '
+        '${rowBytes * height})',
+      );
+    }
+    final buffer = (source.buffer as _WebGpuDeviceBuffer).buffer;
+    final aligned = rowBytes % 256 == 0;
+    final rows = aligned ? 1 : height;
+    for (var row = 0; row < rows; row++) {
+      _encoder.copyBufferToTexture(
+        _obj({
+          'buffer': buffer,
+          'offset': source.offsetInBytes + row * rowBytes,
+          'bytesPerRow': aligned ? rowBytes : (rowBytes + 255) & ~255,
+          'rowsPerImage': aligned ? height : 1,
+        }),
+        _obj({
+          'texture': texture.texture,
+          'mipLevel': mipLevel,
+          'origin': [destination.x, destination.y + row, destination.slice],
+        }),
+        _arr([width, aligned ? height : 1, 1]),
+      );
+    }
   }
 
   @override

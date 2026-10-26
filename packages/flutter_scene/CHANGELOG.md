@@ -1,5 +1,6 @@
 ## 0.24.4
 
+* `CommandBuffer.copyBufferToTexture` copies tightly packed rows into a texture region on the WebGPU web backend.
 * Geometry on the WebGL2 web backend no longer drops draws with a `glDrawElements` "Insufficient buffer size" or "Vertex buffer is not big enough" error.
 * `package:flutter_scene/build_hooks.dart` exports the WGSL sidecar step, `buildWgslSidecar` with `TintProcessTranslator`, `wgslSidecarsForBuild`, `wgslSidecarPathFor` and `sidecarBundleHash`, so a hook that runs `impellerc` itself writes the sidecar its bundle loads with on the WebGPU web backend.
 * Lit, unlit and physical materials with a clip volume translate to WGSL, so they load on the WebGPU web backend; Tint failed on every one of them.

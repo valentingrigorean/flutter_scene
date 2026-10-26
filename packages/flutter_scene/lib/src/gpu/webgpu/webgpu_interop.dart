@@ -201,6 +201,11 @@ extension type GPUCommandBuffer._(JSObject _) implements JSObject {}
 extension type GPUCommandEncoder._(JSObject _) implements JSObject {
   external GPURenderPassEncoder beginRenderPass(JSObject descriptor);
   external GPUComputePassEncoder beginComputePass();
+  external void copyBufferToTexture(
+    JSObject source,
+    JSObject destination,
+    JSObject copySize,
+  );
   external void copyTextureToBuffer(
     JSObject source,
     JSObject destination,
