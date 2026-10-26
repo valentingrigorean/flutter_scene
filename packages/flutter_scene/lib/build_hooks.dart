@@ -51,7 +51,20 @@ export 'src/fmat/target_shader_bundle.dart'
         TargetShaderBundleAssetMode,
         buildTargetShaderBundleJson,
         shaderBundleBackendsForBuild,
-        trimShaderBundle;
+        trimShaderBundle,
+        wgslSidecarsForBuild;
+// The WGSL sidecar step a hook that compiles its own bundle runs, so the
+// bundle loads on the WebGPU web backend.
+export 'src/generated_assets/wgsl_sidecar.dart'
+    if (dart.library.js_interop) 'src/generated_assets/wgsl_sidecar_unsupported.dart'
+    show
+        TintProcessTranslator,
+        WgslBatchTranslator,
+        WgslSidecarException,
+        WgslTranslationJob,
+        buildWgslSidecar,
+        wgslSidecarPathFor;
+export 'src/gpu/shared/sidecar_hash.dart' show sidecarBundleHash;
 export 'src/fmat/framework_shaders.dart'
     if (dart.library.js_interop) 'src/fmat/framework_shaders_unsupported.dart'
     show engineGlesLanguageVersion, engineShaderIncludeDirectory;

@@ -22,19 +22,28 @@ uniform ClipInfo {
 }
 clip_info;
 
-// Discards the fragment when it lies outside the material's keep region or
-// inside its cut region.
-void ApplyClipVolume() {
+// Whether the fragment lies outside the material's keep region or inside its
+// cut region.
+bool ClipVolumeCuts() {
   vec4 at = vec4(v_position, 1.0);
   for (int i = 0; i < 4; i++) {
     if (dot(clip_info.keep[i], at) < 0.0) {
-      discard;
+      return true;
     }
   }
   for (int i = 0; i < 6; i++) {
     if (dot(clip_info.planes[i], at) <= 0.0) {
-      return;
+      return false;
     }
   }
-  discard;
+  return true;
+}
+
+// Discards the fragment the clip volume cuts. The one discard sits outside
+// any loop: Tint's SPIR-V reader fails on a fragment shader that discards in
+// the loops of this call once it is inlined beside ApplyFog.
+void ApplyClipVolume() {
+  if (ClipVolumeCuts()) {
+    discard;
+  }
 }
