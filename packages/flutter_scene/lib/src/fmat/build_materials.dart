@@ -372,7 +372,7 @@ Future<void> _buildMaterials({
         ) ??
         packageRoot.resolve('build/shaderbundles/$bundleName.index.json'),
   );
-  // The WebGPU backend's WGSL, only under flutter_scene_webgpu. Data-asset
+  // The WebGPU backend's WGSL, unless flutter_scene_webgpu is false. Data-asset
   // builds do not carry it yet.
   // TODO(webgpu-data-assets): register the WGSL as a data asset too.
   final wgslFile = wgslSidecarsForBuild(buildInput) && tree != null

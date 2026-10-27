@@ -2,7 +2,7 @@
 // uniforms, textures, blending, depth, scissor, MSAA resolve, and the
 // synchronous handoff to Flutter.
 //
-//   flutter test --platform chrome --dart-define=flutter_scene.webgpu=true \
+//   flutter test --platform chrome \
 //     test/gpu/webgpu/webgpu_render_browser_test.dart
 //
 // ignore_for_file: implementation_imports
@@ -125,9 +125,9 @@ ByteData _floats(List<double> values) =>
     ByteData.sublistView(Float32List.fromList(values));
 
 void main() {
-  if (!gpu.useWebGpuBackend) {
-    test('needs --dart-define=flutter_scene.webgpu=true', () {
-      markTestSkipped('The shim is WebGL2 in this build.');
+  if (gpu.webGl2Forced) {
+    test('needs a build without FLUTTER_SCENE_GPU_BACKEND=webgl2', () {
+      markTestSkipped('The build forces the WebGL2 shim.');
     });
     return;
   }

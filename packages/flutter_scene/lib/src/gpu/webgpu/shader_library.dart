@@ -316,8 +316,9 @@ Future<(Uint8List, String)> _loadBundleAndSidecar(String assetKey) async {
   } on FlutterError {
     throw StateError(
       'The shader bundle "$assetKey" has no WGSL sidecar, which the WebGPU '
-      'backend needs. Set `flutter_scene_webgpu: true` under '
-      '`hooks: user_defines:` for the package that builds it, and build raw '
+      'backend needs. Leave `flutter_scene_webgpu` unset or true under '
+      '`hooks: user_defines:` for the package that builds it, or build with '
+      '--dart-define=FLUTTER_SCENE_GPU_BACKEND=webgl2; build raw '
       'shader bundles with buildTargetShaderBundleJson rather than calling '
       'flutter_gpu_shaders directly.',
     );

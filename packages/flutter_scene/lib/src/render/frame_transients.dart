@@ -337,7 +337,7 @@ class ImmediatePoolTransients implements FrameTransients {
 FrameTransients createFrameTransients(
   GpuSubmissionTracker tracker, {
   int? alignment,
-}) => kImmediateGpuExecution
+}) => immediateGpuExecution
     ? ImmediatePoolTransients(tracker)
     : TransientArena(tracker, alignment: alignment);
 

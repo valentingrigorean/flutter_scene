@@ -1,11 +1,12 @@
 /// Translating a shader bundle's Vulkan SPIR-V into the WGSL sidecar the
 /// WebGPU web backend loads, at build time.
 ///
-/// Opt-in through `flutter_scene_webgpu: true` under `hooks: user_defines:`,
-/// declared for each package whose hook builds shaders (`flutter_scene` for the
-/// engine's own, the app for its `.fmat` and `ShaderMaterial` bundles). It
-/// cannot key on the target, because a web build and the data-only pass
-/// `flutter run` makes for a native target give the hook identical input.
+/// On by default; `flutter_scene_webgpu: false` under `hooks: user_defines:`
+/// turns it off for a package whose hook builds shaders (`flutter_scene` for
+/// the engine's own, the app for its `.fmat` and `ShaderMaterial` bundles),
+/// which leaves that package's shaders on WebGL2 alone. It cannot key on the
+/// target, because a web build and the data-only pass `flutter run` makes for
+/// a native target give the hook identical input.
 ///
 /// See `notes/web-backend/webgpu_backend_plan.md` §2 in the development root
 /// for the design.
@@ -22,7 +23,7 @@ import '../gpu/web/shader_bundle_generated.dart' as fb;
 import 'spirv_constant_arrays.dart';
 import 'tint_binary.dart';
 
-/// The pubspec user-define that turns WGSL translation on.
+/// The pubspec user-define that turns WGSL translation off when false.
 const String kWebGpuUserDefine = 'flutter_scene_webgpu';
 
 /// Environment switch for builders driven directly, from a test or a script.
@@ -35,9 +36,13 @@ const int kWgslSidecarFormat = 2;
 /// its revision. Bump it when the preprocessing changes what Tint sees.
 const String kSpirvPreprocessing = 'hoist-constant-arrays-1';
 
-/// Whether [input]'s package asked for WGSL sidecars.
+/// Whether [input]'s package builds WGSL sidecars: unless its user define is
+/// false and the environment switch is unset.
 bool webGpuShadersRequested(BuildInput input) =>
-    input.userDefines[kWebGpuUserDefine] == true ||
+    switch (input.userDefines[kWebGpuUserDefine]) {
+      false || 'false' => false,
+      _ => true,
+    } ||
     Platform.environment.containsKey(kWebGpuEnv);
 
 /// The sidecar's path next to the bundle it describes. The runtime finds it

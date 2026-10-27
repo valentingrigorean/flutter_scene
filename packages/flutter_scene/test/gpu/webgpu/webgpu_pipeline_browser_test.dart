@@ -2,7 +2,7 @@
 // each variant, bind group layouts from sample types, and the variant cache.
 // Every variant is checked with a validation error scope.
 //
-//   flutter test --platform chrome --dart-define=flutter_scene.webgpu=true \
+//   flutter test --platform chrome \
 //     test/gpu/webgpu/webgpu_pipeline_browser_test.dart
 //
 // The last test builds a pipeline for every shader of a real sidecar when one
@@ -158,9 +158,9 @@ Future<Object> _valid(
 }
 
 void main() {
-  if (!gpu.useWebGpuBackend) {
-    test('needs --dart-define=flutter_scene.webgpu=true', () {
-      markTestSkipped('The shim is WebGL2 in this build.');
+  if (gpu.webGl2Forced) {
+    test('needs a build without FLUTTER_SCENE_GPU_BACKEND=webgl2', () {
+      markTestSkipped('The build forces the WebGL2 shim.');
     });
     return;
   }
