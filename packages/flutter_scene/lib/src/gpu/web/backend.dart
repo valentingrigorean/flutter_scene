@@ -4,14 +4,16 @@ part of '_gpu.dart';
 // which backend implements them. The members are exactly what flutter_scene
 // calls (the stub's surface), so a backend is complete when these are.
 
-/// Builds against the WebGPU backend instead of WebGL2.
+const String _backendDefine = String.fromEnvironment(
+  'FLUTTER_SCENE_GPU_BACKEND',
+);
+
+/// Whether `--dart-define=FLUTTER_SCENE_GPU_BACKEND=webgl2` forces WebGL2.
 ///
-/// Const, so the backend left out is tree-shaken. A conditional import cannot
-/// make this choice: the web compilers ignore environment tests in import
-/// conditions.
-// TODO(webgpu-runtime-selection): add the `auto` probe that picks WebGPU at
-// startup when the device supports it, falling back to WebGL2.
-const bool useWebGpuBackend = bool.fromEnvironment('flutter_scene.webgpu');
+/// Const, so a forced build leaves the WebGPU backend out. A conditional
+/// import cannot make this choice: the web compilers ignore environment tests
+/// in import conditions.
+const bool webGl2Forced = _backendDefine == webGl2BackendDefine;
 
 /// Everything a web backend provides beyond its resource classes.
 abstract base class WebBackend {
@@ -21,6 +23,10 @@ abstract base class WebBackend {
 
   GpuContext get context;
   GpuHost get host;
+
+  /// Whether the backend runs GPU work while passes are encoded, as WebGL2
+  /// does, rather than at submission, as WebGPU does.
+  bool get immediateExecution;
 
   Texture textureFromImage(GpuContext gpuContext, ui.Image image);
 
@@ -59,13 +65,58 @@ abstract base class WebBackend {
   Surface createSurface({required int width, required int height});
 }
 
-final WebBackend _backend = useWebGpuBackend
-    ? createWebGpuBackend()
-    : createWebGlBackend();
+WebBackend? _selected = webGl2Forced ? createWebGlBackend() : null;
 
-/// Readies the selected backend. `Scene.initializeStaticResources` awaits it
-/// before anything touches [gpuContext].
-Future<void> initializeGpuBackend() => _backend.initialize();
+Future<void>? _initializing;
+
+WebBackend get _backend =>
+    _selected ??
+    (throw StateError(
+      'The web GPU backend was used before startup chose it. Await '
+      'Scene.initializeStaticResources() (or initializeGpuBackend()) before '
+      'creating GPU resources.',
+    ));
+
+/// Chooses the backend, WebGPU where the browser hands out a device and
+/// WebGL2 elsewhere, and readies it. `Scene.initializeStaticResources` awaits
+/// it before anything touches [gpuContext]; concurrent and later callers
+/// share one start, and a failed one is tried again on the next call.
+Future<void> initializeGpuBackend() =>
+    _initializing ??= _initialize().catchError((Object error) {
+      _initializing = null;
+      throw error;
+    });
+
+Future<void> _initialize() async {
+  final backend = _selected ??= await _select();
+  await backend.initialize();
+}
+
+Future<WebBackend> _select() async {
+  if (webGl2Forced) return createWebGlBackend();
+  final probe = await WebGpuDevice.request(allowFallbackAdapter: true);
+  final device = probe.device;
+  switch (chooseWebBackend(
+    define: _backendDefine,
+    webGpuDevice: device != null,
+  )) {
+    case WebBackendKind.webGpu:
+      return createWebGpuBackend(device!, probe);
+    case WebBackendKind.webGl2:
+      if (kDebugMode) debugPrint('flutter_scene: WebGL2 backend, $probe');
+      return createWebGlBackend();
+  }
+}
+
+/// The backend once startup chose it, for entry points that are asynchronous
+/// anyway and so may run before startup finishes.
+Future<WebBackend> _ready() async {
+  await initializeGpuBackend();
+  return _backend;
+}
+
+/// Whether the active backend runs GPU work while passes are encoded.
+bool get immediateGpuExecution => _backend.immediateExecution;
 
 /// The active backend's context.
 GpuContext get gpuContext => _backend.context;
@@ -346,23 +397,24 @@ abstract base class GpuHost {
   }
 }
 
-Future<ShaderLibrary?> loadShaderLibraryAsync(String assetName) =>
-    _backend.loadShaderLibraryAsync(assetName);
+Future<ShaderLibrary?> loadShaderLibraryAsync(String assetName) async =>
+    (await _ready()).loadShaderLibraryAsync(assetName);
 
 /// Loads a shader bundle from [bytes]. The web has one context, so [context]
 /// is [gpuContext] wherever it is given.
 Future<ShaderLibrary?> loadShaderLibraryFromBytesAsync(
   ByteData bytes, {
   GpuContext? context,
-}) => _backend.loadShaderLibraryFromBytesAsync(bytes);
+}) async => (await _ready()).loadShaderLibraryFromBytesAsync(bytes);
 
-Future<void> reinitializeShaderLibraryAsync(String assetKey) =>
-    _backend.reinitializeShaderLibraryAsync(assetKey);
+Future<void> reinitializeShaderLibraryAsync(String assetKey) async =>
+    (await _ready()).reinitializeShaderLibraryAsync(assetKey);
 
 Future<String?> reinitializeShaderLibraryFromBytesAsync(
   ShaderLibrary library,
   ByteData bytes,
-) => _backend.reinitializeShaderLibraryFromBytesAsync(library, bytes);
+) async =>
+    (await _ready()).reinitializeShaderLibraryFromBytesAsync(library, bytes);
 
 ShaderLibrary compileShaderLibraryInline(
   Map<String, ({String source, ShaderStage stage})> shaders,
@@ -374,7 +426,7 @@ Future<Texture?> createTextureFromEncodedImage(
   bool mipmaps = true,
   int? maxMipLevels,
   int? maxSize,
-}) => _backend.createTextureFromEncodedImage(
+}) async => (await _ready()).createTextureFromEncodedImage(
   encoded,
   content: content,
   mipmaps: mipmaps,

@@ -2,7 +2,7 @@
 // API: one dispatch writes the workgroup counts of a second, which writes
 // the draw arguments the indirect draw reads.
 //
-//   flutter test --platform chrome --dart-define=flutter_scene.webgpu=true \
+//   flutter test --platform chrome \
 //     test/gpu/webgpu/webgpu_compute_browser_test.dart
 //
 // ignore_for_file: implementation_imports
@@ -76,9 +76,9 @@ gpu.BufferView _view(gpu.DeviceBuffer buffer) =>
     gpu.BufferView(buffer, offsetInBytes: 0, lengthInBytes: buffer.sizeInBytes);
 
 void main() {
-  if (!gpu.useWebGpuBackend) {
-    test('needs --dart-define=flutter_scene.webgpu=true', () {
-      markTestSkipped('The shim is WebGL2 in this build.');
+  if (gpu.webGl2Forced) {
+    test('needs a build without FLUTTER_SCENE_GPU_BACKEND=webgl2', () {
+      markTestSkipped('The build forces the WebGL2 shim.');
     });
     return;
   }

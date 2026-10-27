@@ -1,7 +1,7 @@
 // Copies tightly packed buffer rows into a texture region on the WebGPU
 // backend, checked by reading the texture back from the GPU.
 //
-//   flutter test --platform chrome --dart-define=flutter_scene.webgpu=true \
+//   flutter test --platform chrome \
 //     test/gpu/webgpu/webgpu_region_copy_browser_test.dart
 //
 // ignore_for_file: implementation_imports
@@ -55,9 +55,9 @@ void _expectRegion(Uint8List read, Uint8List region, int width, int height) {
 }
 
 void main() {
-  if (!gpu.useWebGpuBackend) {
-    test('needs --dart-define=flutter_scene.webgpu=true', () {
-      markTestSkipped('The shim is WebGL2 in this build.');
+  if (gpu.webGl2Forced) {
+    test('needs a build without FLUTTER_SCENE_GPU_BACKEND=webgl2', () {
+      markTestSkipped('The build forces the WebGL2 shim.');
     });
     return;
   }

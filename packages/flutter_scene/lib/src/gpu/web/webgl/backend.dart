@@ -1,6 +1,6 @@
 part of '_webgl.dart';
 
-/// The WebGL2 backend, the default on web.
+/// The WebGL2 backend, where the browser has no WebGPU or the build forces it.
 WebBackend createWebGlBackend() => _WebGlBackend();
 
 final class _WebGlBackend extends WebBackend {
@@ -12,6 +12,9 @@ final class _WebGlBackend extends WebBackend {
 
   @override
   GpuHost get host => webGlHost;
+
+  @override
+  bool get immediateExecution => true;
 
   @override
   Texture textureFromImage(GpuContext gpuContext, ui.Image image) =>

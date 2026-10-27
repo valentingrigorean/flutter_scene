@@ -1,5 +1,5 @@
-/// The WebGPU implementation of the web GPU shim, selected with
-/// `--dart-define=flutter_scene.webgpu=true`.
+/// The WebGPU implementation of the web GPU shim, which startup selects where
+/// the browser hands out a device.
 library;
 
 import 'dart:async';
@@ -44,8 +44,14 @@ part 'samplers.dart';
 part 'shader_library.dart';
 part 'texture.dart';
 
-/// The WebGPU backend.
-WebBackend createWebGpuBackend() => _WebGpuBackend();
+/// The WebGPU backend over [device], which [probe] acquired.
+WebBackend createWebGpuBackend(WebGpuDevice device, WebGpuProbe probe) {
+  if (kDebugMode) {
+    debugPrint('flutter_scene: WebGPU backend, $probe');
+    _reportUncapturedErrors(device.device);
+  }
+  return _WebGpuBackend(_WebGpuContext(device));
+}
 
 /// A WebGPU descriptor dictionary. Creation-time only; per-draw paths use
 /// typed interop instead of converting a map.
@@ -73,56 +79,19 @@ void _reportUncapturedErrors(GPUDevice device) {
 }
 
 final class _WebGpuBackend extends WebBackend {
-  _WebGpuContext? _context;
-
-  Future<void>? _initializing;
-
-  /// Acquires the device once; concurrent and later callers share the same
-  /// request.
-  @override
-  Future<void> initialize() =>
-      _initializing ??= _acquire().catchError((Object error) {
-        // A later call may retry, as Scene.initializeStaticResources does.
-        _initializing = null;
-        throw error;
-      });
-
-  Future<void> _acquire() async {
-    // Forced, so a software adapter is accepted rather than silently
-    // rendering nothing; the auto mode that prefers WebGL2 there is
-    // TODO(webgpu-runtime-selection).
-    final probe = await WebGpuDevice.request(allowFallbackAdapter: true);
-    _context = _WebGpuContext(
-      probe.device ??
-          (throw StateError(
-            '$probe. Build without --dart-define=flutter_scene.webgpu=true '
-            'to use WebGL2.',
-          )),
-    );
-    if (kDebugMode) {
-      debugPrint('flutter_scene: WebGPU backend, $probe');
-      _reportUncapturedErrors(probe.device!.device);
-    }
-  }
-
-  /// The context once the device is acquired, for entry points that are
-  /// asynchronous anyway and so may run before startup finishes.
-  Future<_WebGpuContext> _ready() async {
-    await initialize();
-    return context;
-  }
+  _WebGpuBackend(this.context);
 
   @override
-  _WebGpuContext get context =>
-      _context ??
-      (throw StateError(
-        'The WebGPU backend was used before its device was acquired. Await '
-        'Scene.initializeStaticResources() (or initializeGpuBackend()) '
-        'before creating GPU resources.',
-      ));
+  Future<void> initialize() async {}
+
+  @override
+  final _WebGpuContext context;
 
   @override
   late final GpuHost host = _WebGpuHost(this);
+
+  @override
+  bool get immediateExecution => false;
 
   @override
   Texture textureFromImage(GpuContext gpuContext, ui.Image image) =>
@@ -134,7 +103,7 @@ final class _WebGpuBackend extends WebBackend {
 
   @override
   Future<ShaderLibrary?> loadShaderLibraryAsync(String assetName) async =>
-      _loadShaderLibraryAsync(await _ready(), assetName);
+      _loadShaderLibraryAsync(context, assetName);
 
   @override
   Future<ShaderLibrary?> loadShaderLibraryFromBytesAsync(ByteData bytes) =>
@@ -148,7 +117,7 @@ final class _WebGpuBackend extends WebBackend {
 
   @override
   Future<void> reinitializeShaderLibraryAsync(String assetKey) async =>
-      _reinitializeShaderLibraryAsync(await _ready(), assetKey);
+      _reinitializeShaderLibraryAsync(context, assetKey);
 
   @override
   Future<String?> reinitializeShaderLibraryFromBytesAsync(
@@ -175,7 +144,7 @@ final class _WebGpuBackend extends WebBackend {
     int? maxMipLevels,
     int? maxSize,
   }) async => _createTextureFromEncodedImage(
-    await _ready(),
+    context,
     encoded,
     content: content,
     mipmaps: mipmaps,

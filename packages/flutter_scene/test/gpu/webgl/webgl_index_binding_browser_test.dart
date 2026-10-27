@@ -1,7 +1,7 @@
 // A buffer upload between draws on the WebGL2 backend leaves the index
 // buffer of every cached vertex array as the draw that cached it bound it.
 //
-//   flutter test --platform chrome \
+//   flutter test --platform chrome --dart-define=FLUTTER_SCENE_GPU_BACKEND=webgl2 \
 //     test/gpu/webgl/webgl_index_binding_browser_test.dart
 //
 // ignore_for_file: implementation_imports
@@ -63,9 +63,9 @@ gpu.BufferView _view(TypedData data) => gpu.BufferView(
 );
 
 void main() {
-  if (gpu.useWebGpuBackend) {
-    test('needs the WebGL2 shim', () {
-      markTestSkipped('The shim is WebGPU in this build.');
+  if (!gpu.webGl2Forced) {
+    test('needs FLUTTER_SCENE_GPU_BACKEND=webgl2', () {
+      markTestSkipped('The build does not force the WebGL2 shim.');
     });
     return;
   }

@@ -1,6 +1,6 @@
 // The WebGPU backend's shader libraries, built from WGSL sidecars.
 //
-//   flutter test --platform chrome --dart-define=flutter_scene.webgpu=true \
+//   flutter test --platform chrome \
 //     test/gpu/webgpu/webgpu_shader_library_browser_test.dart
 //
 // The last test compiles a real sidecar (every engine shader) when one is
@@ -89,9 +89,9 @@ String _sidecar({
 });
 
 void main() {
-  if (!gpu.useWebGpuBackend) {
-    test('needs --dart-define=flutter_scene.webgpu=true', () {
-      markTestSkipped('The shim is WebGL2 in this build.');
+  if (gpu.webGl2Forced) {
+    test('needs a build without FLUTTER_SCENE_GPU_BACKEND=webgl2', () {
+      markTestSkipped('The build forces the WebGL2 shim.');
     });
     return;
   }

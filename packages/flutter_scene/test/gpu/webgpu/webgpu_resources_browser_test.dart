@@ -1,7 +1,7 @@
 // The WebGPU backend's resources through the shim API, checked by reading
 // them back from the GPU.
 //
-//   flutter test --platform chrome --dart-define=flutter_scene.webgpu=true \
+//   flutter test --platform chrome \
 //     test/gpu/webgpu/webgpu_resources_browser_test.dart
 //
 // Skips without the define, since the shim is WebGL2 then.
@@ -28,9 +28,9 @@ double _linearToSrgb(double c) =>
     c < 0.0031308 ? c * 12.92 : 1.055 * math.pow(c, 1 / 2.4).toDouble() - 0.055;
 
 void main() {
-  if (!gpu.useWebGpuBackend) {
-    test('needs --dart-define=flutter_scene.webgpu=true', () {
-      markTestSkipped('The shim is WebGL2 in this build.');
+  if (gpu.webGl2Forced) {
+    test('needs a build without FLUTTER_SCENE_GPU_BACKEND=webgl2', () {
+      markTestSkipped('The build forces the WebGL2 shim.');
     });
     return;
   }

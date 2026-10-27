@@ -28,13 +28,14 @@ import 'package:hooks/hooks.dart';
 /// Passing [rawTargetOS] writes that value over the name [targetOS] produced,
 /// standing in for an embedder whose platform the protocol cannot name. It is
 /// untyped, and null removes the key, so a config that names something other
-/// than an OS, or names nothing, can be built as well. [webGpu] sets the
-/// `flutter_scene_webgpu` user-define, and a non-null [wgpu] sets `wgpu`.
+/// than an OS, or names nothing, can be built as well. A non-null [webGpu]
+/// sets the `flutter_scene_webgpu` user-define, and a non-null [wgpu] sets
+/// `wgpu`.
 BuildInput _input(
   Uri packageRoot, {
   OS? targetOS,
   Object? rawTargetOS = _keepTargetOS,
-  bool webGpu = false,
+  bool? webGpu,
   bool? wgpu,
 }) {
   final builder = BuildInputBuilder()
@@ -43,13 +44,10 @@ BuildInput _input(
       packageName: 'app',
       outputDirectoryShared: packageRoot.resolve('.dart_tool/hook/'),
       outputFile: packageRoot.resolve('.dart_tool/hook/output.json'),
-      userDefines: webGpu || wgpu != null
+      userDefines: webGpu != null || wgpu != null
           ? PackageUserDefines(
               workspacePubspec: PackageUserDefinesSource(
-                defines: {
-                  if (webGpu) kWebGpuUserDefine: true,
-                  kWgpuUserDefine: ?wgpu,
-                },
+                defines: {kWebGpuUserDefine: ?webGpu, kWgpuUserDefine: ?wgpu},
                 basePath: packageRoot,
               ),
             )
@@ -160,22 +158,22 @@ void main() {
   });
 
   test(
-    'only a GLES-only build under the opt-in expects WGSL sidecars',
+    'only a GLES-only build not opted out expects WGSL sidecars',
     () {
-      expect(wgslSidecarsForBuild(_input(temp.uri, webGpu: true)), isTrue);
-      expect(wgslSidecarsForBuild(_input(temp.uri)), isFalse);
+      expect(wgslSidecarsForBuild(_input(temp.uri)), isTrue);
+      expect(wgslSidecarsForBuild(_input(temp.uri, webGpu: false)), isFalse);
       // A native target never writes one, so counting it missing would
       // recompile on every hook rerun.
       for (final os in [OS.macOS, OS.iOS, OS.android]) {
         expect(
-          wgslSidecarsForBuild(_input(temp.uri, targetOS: os, webGpu: true)),
+          wgslSidecarsForBuild(_input(temp.uri, targetOS: os)),
           isFalse,
           reason: '$os',
         );
       }
     },
     skip: Platform.environment.containsKey(kWebGpuEnv)
-        ? '$kWebGpuEnv turns the opt-in on for every input'
+        ? '$kWebGpuEnv turns the sidecars on for every input'
         : false,
   );
 
