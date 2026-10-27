@@ -54,14 +54,38 @@ abstract interface class GpuBackendPresenter {
   /// Resizes later frames to [width] by [height] physical pixels.
   Future<void> resize(int width, int height);
 
-  /// Lends the buffer the next frame shows in, or null.
-  GpuBackendPresenterFrame? acquireFrame();
+  /// Lends the buffer the next frame shows in, or says why none is lent.
+  GpuBackendAcquired acquireFrame();
 
   /// Draws [frame] into the Flutter texture.
   void present(GpuBackendTexture frame);
 
   /// Releases the Flutter texture and its buffers.
   Future<void> dispose();
+}
+
+/// A [GpuBackendLent] buffer or the [GpuBackendUnlent] reason none is lent.
+@experimental
+sealed class GpuBackendAcquired {}
+
+/// A buffer lent for one frame.
+@experimental
+final class GpuBackendLent implements GpuBackendAcquired {
+  /// Wraps the lent [frame].
+  const GpuBackendLent(this.frame);
+
+  /// The lent buffer.
+  final GpuBackendPresenterFrame frame;
+}
+
+/// Why no buffer was lent.
+@experimental
+enum GpuBackendUnlent implements GpuBackendAcquired {
+  /// The frame renders into a texture of its own that is copied.
+  format,
+
+  /// No buffer is free; the texture keeps the frame it shows.
+  busy,
 }
 
 /// One buffer of a [GpuBackendPresenter], lent for one frame.

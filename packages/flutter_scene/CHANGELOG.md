@@ -1,5 +1,6 @@
 ## 0.24.4
 
+* `GpuBackendPresenter.acquireFrame` returns a `GpuBackendAcquired`: the `GpuBackendLent` buffer, or `GpuBackendUnlent.format` (render into a texture of its own and `present` it) or `GpuBackendUnlent.busy` (the texture keeps its frame).
 * Web builds render on WebGPU where the browser hands out a device and fall back to WebGL2 at startup elsewhere; `--dart-define=FLUTTER_SCENE_GPU_BACKEND=webgl2` forces WebGL2. Shader bundles carry their WGSL by default, and `flutter_scene_webgpu: false` under `hooks: user_defines:` leaves it out.
 * `CommandBuffer.copyBufferToTexture` copies tightly packed rows into a texture region on the WebGPU web backend.
 * Geometry on the WebGL2 web backend no longer drops draws with a `glDrawElements` "Insufficient buffer size" or "Vertex buffer is not big enough" error.

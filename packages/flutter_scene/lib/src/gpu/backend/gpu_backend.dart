@@ -86,11 +86,11 @@ abstract interface class GpuBackendPresenter {
   Future<void> resize(int width, int height);
 
   /// Lends the buffer the next frame shows in, so the frame renders its final
-  /// pass straight into it with no copy; or null where no buffer can be lent
-  /// this frame (none is free, or the platform's buffers hold a format a frame
-  /// cannot render into), and the frame renders into a texture of its own
-  /// that [present] copies.
-  GpuBackendPresenterFrame? acquireFrame();
+  /// pass straight into it with no copy; or says why no buffer can be lent
+  /// this frame: [GpuBackendUnlent.format] where the frame renders into a
+  /// texture of its own that [present] copies, [GpuBackendUnlent.busy] where
+  /// the texture keeps the frame it shows.
+  GpuBackendAcquired acquireFrame();
 
   /// Draws [frame], a texture of the same backend, scaled to the presenter
   /// size, into the Flutter texture: the copy for a frame that rendered
@@ -99,6 +99,35 @@ abstract interface class GpuBackendPresenter {
 
   /// Releases the Flutter texture and its buffers.
   Future<void> dispose();
+}
+
+/// What [GpuBackendPresenter.acquireFrame] gives a frame: a
+/// [GpuBackendLent] buffer, or the [GpuBackendUnlent] reason none is lent.
+@experimental
+sealed class GpuBackendAcquired {}
+
+/// A buffer [GpuBackendPresenter.acquireFrame] lent for one frame.
+@experimental
+final class GpuBackendLent implements GpuBackendAcquired {
+  /// Wraps the lent [frame].
+  const GpuBackendLent(this.frame);
+
+  /// The lent buffer.
+  final GpuBackendPresenterFrame frame;
+}
+
+/// Why [GpuBackendPresenter.acquireFrame] lent no buffer.
+@experimental
+enum GpuBackendUnlent implements GpuBackendAcquired {
+  /// The platform's buffers hold a format a frame cannot render into, so the
+  /// frame renders into a texture of its own that
+  /// [GpuBackendPresenter.present] copies.
+  format,
+
+  /// No buffer is free (shown, displayed or in flight), the presenter is
+  /// resizing or its surface is not ready, so the texture keeps the frame it
+  /// shows.
+  busy,
 }
 
 /// One buffer of a [GpuBackendPresenter], lent for one frame.
