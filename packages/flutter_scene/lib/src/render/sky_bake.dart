@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:vector_math/vector_math.dart';
 
@@ -12,22 +13,6 @@ import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/skybox.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/uniform_slots.dart';
-
-// Fullscreen NDC quad (6 vec2s), shared by the face renders and the equirect
-// assembly.
-final gpu.DeviceBuffer _quad = gpu.gpuContext.createDeviceBufferWithCopy(
-  ByteData.sublistView(
-    Float32List.fromList(<double>[
-      -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-      -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-    ]),
-  ),
-);
-final gpu.BufferView _quadView = gpu.BufferView(
-  _quad,
-  offsetInBytes: 0,
-  lengthInBytes: 6 * 2 * 4,
-);
 
 // The six cube faces as (forward, up). The right vector is up x forward (the
 // look-at convention), and the assembly fragment samples with the same bases.
@@ -141,7 +126,7 @@ void _renderFace(
   pass.setColorBlendEnable(false);
   pass.setCullMode(gpu.CullMode.none);
   pass.setPrimitiveType(gpu.PrimitiveType.triangle);
-  bindVertexBufferCompat(pass, _quadView, 6);
+  bindVertexBufferCompat(pass, fullscreenQuadView, 6);
   bindSkyboxFrameInfo(
     pass,
     transients,
@@ -172,7 +157,7 @@ void _assembleEquirect(
   pass.setColorBlendEnable(false);
   pass.setCullMode(gpu.CullMode.none);
   pass.setPrimitiveType(gpu.PrimitiveType.triangle);
-  bindVertexBufferCompat(pass, _quadView, 6);
+  bindVertexBufferCompat(pass, fullscreenQuadView, 6);
   for (var i = 0; i < 6; i++) {
     pass.bindTexture(
       fragmentShader.cachedUniformSlot(_faceSamplerNames[i]),
@@ -222,7 +207,7 @@ void _projectSh(gpu.Texture equirect, gpu.Texture sh) {
   pass.setColorBlendEnable(false);
   pass.setCullMode(gpu.CullMode.none);
   pass.setPrimitiveType(gpu.PrimitiveType.triangle);
-  bindVertexBufferCompat(pass, _quadView, 6);
+  bindVertexBufferCompat(pass, fullscreenQuadView, 6);
   pass.bindTexture(
     fragmentShader.cachedUniformSlot('source_equirect'),
     equirect,

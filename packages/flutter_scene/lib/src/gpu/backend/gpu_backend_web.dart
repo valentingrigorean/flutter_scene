@@ -111,6 +111,10 @@ void registerGpuBackend(GpuBackend backend) => throw UnsupportedError(
 @experimental
 void useGpuBackend(GpuBackend backend) => registerGpuBackend(backend);
 
+/// Does nothing on web, where the web shim keeps its one context.
+@experimental
+void reopenGpuContext() {}
+
 /// Always null on web, where the web shim renders through its own backend.
 @experimental
 GpuBackend? get activeGpuBackend => null;

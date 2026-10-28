@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 
 import 'package:flutter_scene/src/ambient_occlusion.dart';
@@ -73,24 +74,6 @@ ui.Size ambientOcclusionTargetSize(
     math.max(1, (dimensions.height / 2).floor()).toDouble(),
   );
 }
-
-// Two triangles of NDC positions covering the screen (6 vec2s), shared by
-// the occlusion passes.
-gpu.BufferView _fullscreenQuad() {
-  return _quadView ??= () {
-    final buffer = gpu.gpuContext.createDeviceBufferWithCopy(
-      ByteData.sublistView(
-        Float32List.fromList(<double>[
-          -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-          -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-        ]),
-      ),
-    );
-    return gpu.BufferView(buffer, offsetInBytes: 0, lengthInBytes: 6 * 2 * 4);
-  }();
-}
-
-gpu.BufferView? _quadView;
 
 final gpu.SamplerOptions _linearClamp = gpu.SamplerOptions(
   minFilter: gpu.MinMagFilter.linear,
@@ -186,7 +169,7 @@ class SsaoPass extends RenderGraphPass {
     );
     renderPass.bindPipeline(resolvePipeline(_vertexShader, _downsampleShader));
     renderPass.setColorBlendEnable(false);
-    bindVertexBufferCompat(renderPass, _fullscreenQuad(), 6);
+    bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
     renderPass.bindTexture(
       _downsampleShader.cachedUniformSlot('source'),
       source,
@@ -266,7 +249,7 @@ class SsaoPass extends RenderGraphPass {
     );
     renderPass.bindPipeline(resolvePipeline(_vertexShader, fragmentShader));
     renderPass.setColorBlendEnable(false);
-    bindVertexBufferCompat(renderPass, _fullscreenQuad(), 6);
+    bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
 
     final projection = _projection;
     // Pixels per world unit at depth 1 (at any depth for an orthographic
@@ -432,7 +415,7 @@ class SsaoBlurPass extends RenderGraphPass {
       );
       renderPass.bindPipeline(resolvePipeline(_vertexShader, _fragmentShader));
       renderPass.setColorBlendEnable(false);
-      bindVertexBufferCompat(renderPass, _fullscreenQuad(), 6);
+      bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
 
       final info = Float32List(8)
         ..[0] = 1.0 / aoWidth
@@ -528,7 +511,7 @@ class SceneColorHistoryPass extends RenderGraphPass {
     );
     renderPass.bindPipeline(resolvePipeline(_vertexShader, _copyShader));
     renderPass.setColorBlendEnable(false);
-    bindVertexBufferCompat(renderPass, _fullscreenQuad(), 6);
+    bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
     renderPass.bindTexture(
       _copyShader.cachedUniformSlot('source_texture'),
       source,

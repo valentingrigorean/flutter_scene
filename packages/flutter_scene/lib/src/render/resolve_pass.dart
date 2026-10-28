@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 
 import 'package:flutter_scene/src/material/material.dart';
@@ -66,22 +67,6 @@ class ResolvePass extends RenderGraphPass {
   static final gpu.Shader _fragmentShader =
       baseShaderLibrary['ResolveFragment']!;
 
-  // Two triangles of NDC positions covering the screen (6 vec2s).
-  static final gpu.DeviceBuffer _quadBuffer = gpu.gpuContext
-      .createDeviceBufferWithCopy(
-        ByteData.sublistView(
-          Float32List.fromList(<double>[
-            -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-            -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-          ]),
-        ),
-      );
-  static final gpu.BufferView _quadView = gpu.BufferView(
-    _quadBuffer,
-    offsetInBytes: 0,
-    lengthInBytes: 6 * 2 * 4,
-  );
-
   @override
   String get name => 'ResolvePass';
 
@@ -97,7 +82,7 @@ class ResolvePass extends RenderGraphPass {
     );
     final pipeline = resolvePipeline(_vertexShader, _fragmentShader);
     renderPass.bindPipeline(pipeline);
-    bindVertexBufferCompat(renderPass, _quadView, 6);
+    bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
 
     // Wall-clock seconds (wrapped to keep float precision) drive the
     // animated film grain.

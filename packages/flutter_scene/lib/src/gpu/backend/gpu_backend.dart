@@ -49,7 +49,10 @@ abstract interface class GpuBackend {
   GpuBackendKind get kind;
 
   /// Opens the device every GPU object of the process is created on. The shim
-  /// calls it once, on the first GPU object.
+  /// calls it on the first GPU object, and again from `reopenGpuContext`
+  /// after the device is lost: the context it then returns keeps the shader
+  /// libraries, shaders and render pipelines made before working on the new
+  /// device.
   GpuBackendContext openContext();
 
   /// Whether [openPresenter] shows frames on this platform. Where false, an

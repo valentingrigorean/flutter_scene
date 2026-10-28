@@ -121,6 +121,10 @@ bool get immediateGpuExecution => _backend.immediateExecution;
 /// The active backend's context.
 GpuContext get gpuContext => _backend.context;
 
+/// How many times the context opened again after a lost device; always 0 on
+/// web, where the backend keeps its one context.
+int get gpuContextGeneration => 0;
+
 /// The context whose textures Flutter composites without a copy. The web has
 /// one context, so this is [gpuContext].
 GpuContext get flutterGpuContext => gpuContext;

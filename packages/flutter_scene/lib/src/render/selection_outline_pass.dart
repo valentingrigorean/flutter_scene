@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:vector_math/vector_math.dart';
 
@@ -139,21 +140,6 @@ class SelectionOutlinePass extends RenderGraphPass {
   static final gpu.Shader _fragmentShader =
       baseShaderLibrary['OutlineFragment']!;
 
-  static final gpu.DeviceBuffer _quadBuffer = gpu.gpuContext
-      .createDeviceBufferWithCopy(
-        ByteData.sublistView(
-          Float32List.fromList(<double>[
-            -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-            -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-          ]),
-        ),
-      );
-  static final gpu.BufferView _quadView = gpu.BufferView(
-    _quadBuffer,
-    offsetInBytes: 0,
-    lengthInBytes: 6 * 2 * 4,
-  );
-
   static final gpu.SamplerOptions _linearClamp = gpu.SamplerOptions(
     minFilter: gpu.MinMagFilter.linear,
     magFilter: gpu.MinMagFilter.linear,
@@ -178,7 +164,7 @@ class SelectionOutlinePass extends RenderGraphPass {
       gpu.RenderTarget.singleColor(gpu.ColorAttachment(texture: _output)),
     );
     renderPass.bindPipeline(resolvePipeline(_vertexShader, _fragmentShader));
-    bindVertexBufferCompat(renderPass, _quadView, 6);
+    bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
 
     renderPass.bindTexture(
       _fragmentShader.cachedUniformSlot('scene_color'),

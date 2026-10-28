@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:vector_math/vector_math.dart';
 
@@ -15,22 +16,6 @@ import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/skybox.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/uniform_slots.dart';
-
-// Two triangles of NDC positions covering the whole render target (6 vec2s).
-final gpu.DeviceBuffer _fullscreenQuad = gpu.gpuContext
-    .createDeviceBufferWithCopy(
-      ByteData.sublistView(
-        Float32List.fromList(<double>[
-          -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-          -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-        ]),
-      ),
-    );
-final gpu.BufferView _fullscreenQuadView = gpu.BufferView(
-  _fullscreenQuad,
-  offsetInBytes: 0,
-  lengthInBytes: 6 * 2 * 4,
-);
 
 /// Draws [skybox] into [renderPass] as the scene background.
 ///
@@ -83,7 +68,7 @@ void encodeSkybox(
   );
   renderPass.setTrackedCullMode(gpu.CullMode.none);
   renderPass.setTrackedPrimitiveType(gpu.PrimitiveType.triangle);
-  bindVertexBufferCompat(renderPass, _fullscreenQuadView, 6);
+  bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
 
   // Reconstruct the world view ray from inverse projection and camera
   // rotation, then apply the environment transform.

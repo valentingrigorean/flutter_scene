@@ -92,111 +92,80 @@ enum MaskedDepthPass {
 /// winding.
 /// {@category Materials}
 abstract class Material {
-  static gpu.Texture? _whitePlaceholderTexture;
+  static final gpu.DeviceLocal<gpu.Texture> _whitePlaceholderTexture =
+      gpu.DeviceLocal(
+        () => gpu.gpuContext.createTexture(gpu.StorageMode.hostVisible, 1, 1)
+          ..overwrite(
+            Uint32List.fromList(<int>[0xFFFFFFFF]).buffer.asByteData(),
+          ),
+      );
 
   /// Returns a 1×1 opaque-white texture, lazily created on first use.
   ///
   /// Used as a default for missing color textures so shader code can
   /// always sample without conditionals.
-  static gpu.Texture getWhitePlaceholderTexture() {
-    if (_whitePlaceholderTexture != null) {
-      return _whitePlaceholderTexture!;
-    }
-    _whitePlaceholderTexture = gpu.gpuContext.createTexture(
-      gpu.StorageMode.hostVisible,
-      1,
-      1,
-    );
-    if (_whitePlaceholderTexture == null) {
-      throw Exception('Failed to create white placeholder texture.');
-    }
-    _whitePlaceholderTexture!.overwrite(
-      Uint32List.fromList(<int>[0xFFFFFFFF]).buffer.asByteData(),
-    );
-    return _whitePlaceholderTexture!;
-  }
+  static gpu.Texture getWhitePlaceholderTexture() =>
+      _whitePlaceholderTexture.value;
 
   /// Returns [texture] if non-null, otherwise [getWhitePlaceholderTexture].
   static gpu.Texture whitePlaceholder(gpu.Texture? texture) {
     return texture ?? getWhitePlaceholderTexture();
   }
 
-  static gpu.Texture? _transparentPlaceholderTexture;
+  static final gpu.DeviceLocal<gpu.Texture> _transparentPlaceholderTexture =
+      gpu.DeviceLocal(
+        () =>
+            gpu.gpuContext.createTexture(gpu.StorageMode.hostVisible, 1, 1)
+              ..overwrite(Uint32List.fromList(<int>[0]).buffer.asByteData()),
+      );
 
   /// Returns a 1x1 fully transparent texture, lazily created on first use.
   ///
   /// Composites as a no-op under premultiplied source-over, so a pass whose
   /// layer is absent this frame can bind it and blend nothing.
-  static gpu.Texture getTransparentPlaceholderTexture() {
-    if (_transparentPlaceholderTexture != null) {
-      return _transparentPlaceholderTexture!;
-    }
-    final texture = gpu.gpuContext.createTexture(
-      gpu.StorageMode.hostVisible,
-      1,
-      1,
-    );
-    texture.overwrite(Uint32List.fromList(<int>[0]).buffer.asByteData());
-    _transparentPlaceholderTexture = texture;
-    return texture;
-  }
+  static gpu.Texture getTransparentPlaceholderTexture() =>
+      _transparentPlaceholderTexture.value;
 
-  static gpu.Texture? _normalPlaceholderTexture;
+  static final gpu.DeviceLocal<gpu.Texture> _normalPlaceholderTexture =
+      gpu.DeviceLocal(
+        () => gpu.gpuContext.createTexture(gpu.StorageMode.hostVisible, 1, 1)
+          ..overwrite(
+            Uint32List.fromList(<int>[0xFFFF7F7F]).buffer.asByteData(),
+          ),
+      );
 
   /// Returns a 1×1 "flat" tangent-space normal texture (`(0.5, 0.5, 1)`),
   /// lazily created on first use.
   ///
   /// Used as a default for missing normal maps so shader code can always
   /// sample without conditionals.
-  static gpu.Texture getNormalPlaceholderTexture() {
-    if (_normalPlaceholderTexture != null) {
-      return _normalPlaceholderTexture!;
-    }
-    _normalPlaceholderTexture = gpu.gpuContext.createTexture(
-      gpu.StorageMode.hostVisible,
-      1,
-      1,
-    );
-    if (_normalPlaceholderTexture == null) {
-      throw Exception('Failed to create normal placeholder texture.');
-    }
-    _normalPlaceholderTexture!.overwrite(
-      Uint32List.fromList(<int>[0xFFFF7F7F]).buffer.asByteData(),
-    );
-    return _normalPlaceholderTexture!;
-  }
+  static gpu.Texture getNormalPlaceholderTexture() =>
+      _normalPlaceholderTexture.value;
 
   /// Returns [texture] if non-null, otherwise [getNormalPlaceholderTexture].
   static gpu.Texture normalPlaceholder(gpu.Texture? texture) {
     return texture ?? getNormalPlaceholderTexture();
   }
 
-  static gpu.Texture? _blackPlaceholderTexture;
+  static final gpu.DeviceLocal<gpu.Texture> _blackPlaceholderTexture =
+      gpu.DeviceLocal(
+        () => gpu.gpuContext.createTexture(gpu.StorageMode.hostVisible, 1, 1)
+          ..overwrite(
+            Uint32List.fromList(<int>[0xFF000000]).buffer.asByteData(),
+          ),
+      );
 
   /// Returns a 1×1 opaque-black texture, lazily created on first use.
   ///
   /// Used as the specular source for [EnvironmentMap.empty] so the shader
   /// can sample an "atlas" that contributes no reflection.
-  static gpu.Texture getBlackPlaceholderTexture() {
-    if (_blackPlaceholderTexture != null) {
-      return _blackPlaceholderTexture!;
-    }
-    _blackPlaceholderTexture = gpu.gpuContext.createTexture(
-      gpu.StorageMode.hostVisible,
-      1,
-      1,
-    );
-    if (_blackPlaceholderTexture == null) {
-      throw Exception('Failed to create black placeholder texture.');
-    }
-    _blackPlaceholderTexture!.overwrite(
-      Uint32List.fromList(<int>[0xFF000000]).buffer.asByteData(),
-    );
-    return _blackPlaceholderTexture!;
-  }
+  static gpu.Texture getBlackPlaceholderTexture() =>
+      _blackPlaceholderTexture.value;
 
   static gpu.Texture? _brdfLutTexture;
+  static int _brdfLutGeneration = 0;
   static EnvironmentMap? _defaultEnvironmentMap;
+  static int _defaultEnvironmentGeneration = 0;
 
   /// Returns the precomputed BRDF lookup texture used by the PBR
   /// fragment shader for environment-map specular sampling.
@@ -205,7 +174,8 @@ abstract class Material {
   /// initialization completes.
   @internal
   static gpu.Texture getBrdfLutTexture() {
-    if (_brdfLutTexture == null) {
+    if (_brdfLutTexture == null ||
+        _brdfLutGeneration != gpu.gpuContextGeneration) {
       throw Exception('BRDF LUT texture has not been initialized.');
     }
     return _brdfLutTexture!;
@@ -220,6 +190,10 @@ abstract class Material {
   /// [EnvironmentMap.radianceCubeSize] and [EnvironmentMap.useMipRadianceLayout]
   /// apply to it only when set before that load.
   static EnvironmentMap getDefaultEnvironmentMap() {
+    if (_defaultEnvironmentGeneration != gpu.gpuContextGeneration) {
+      _defaultEnvironmentMap = null;
+      _defaultEnvironmentGeneration = gpu.gpuContextGeneration;
+    }
     return _defaultEnvironmentMap ??= EnvironmentMap.studio();
   }
 
@@ -235,7 +209,9 @@ abstract class Material {
   /// material shaders load separately, on first use or through
   /// `Scene.preload`.
   static Future<void> initializeStaticResources() async {
-    if (_brdfLutTexture == null) {
+    if (_brdfLutTexture == null ||
+        _brdfLutGeneration != gpu.gpuContextGeneration) {
+      final generation = gpu.gpuContextGeneration;
       final ltc = await rootBundle.load(
         'packages/flutter_scene/assets/ltc.bin',
       );
@@ -247,6 +223,7 @@ abstract class Material {
         ),
         dfgHalfData: dfg,
       );
+      _brdfLutGeneration = generation;
     }
   }
 

@@ -7,6 +7,7 @@ import 'package:flutter_scene/src/depth_conflicts.dart' show DepthConflictIds;
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/camera.dart';
@@ -905,7 +906,7 @@ class ScenePass extends RenderGraphPass {
         destinationAlphaBlendFactor: gpu.BlendFactor.oneMinusSourceAlpha,
       ),
     );
-    bindVertexBufferCompat(pass, _quadView, 6);
+    bindVertexBufferCompat(pass, fullscreenQuadView, 6);
     const names = ['id_nudged', 'id_opposite', 'id_reordered'];
     for (var i = 0; i < 3; i++) {
       pass.bindTexture(
@@ -1006,22 +1007,6 @@ class ScenePass extends RenderGraphPass {
     heightAddressMode: gpu.SamplerAddressMode.clampToEdge,
   );
 
-  // Two triangles of NDC positions covering the screen (6 vec2s).
-  static final gpu.DeviceBuffer _quadBuffer = gpu.gpuContext
-      .createDeviceBufferWithCopy(
-        ByteData.sublistView(
-          Float32List.fromList(<double>[
-            -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-            -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-          ]),
-        ),
-      );
-  static final gpu.BufferView _quadView = gpu.BufferView(
-    _quadBuffer,
-    offsetInBytes: 0,
-    lengthInBytes: 6 * 2 * 4,
-  );
-
   /// Copies [source] over a whole color target.
   void _encodeCopy(gpu.RenderPass pass, gpu.Texture source) {
     final pipeline = resolvePipeline(_copyVertexShader, _copyFragmentShader);
@@ -1030,7 +1015,7 @@ class ScenePass extends RenderGraphPass {
     pass.setTrackedDepthCompareOperation(gpu.CompareFunction.always);
     pass.setTrackedColorBlendEnable(false);
     pass.setTrackedCullMode(gpu.CullMode.none);
-    bindVertexBufferCompat(pass, _quadView, 6);
+    bindVertexBufferCompat(pass, fullscreenQuadView, 6);
     pass.bindTexture(
       _copyFragmentShader.cachedUniformSlot('source_texture'),
       source,
@@ -1063,7 +1048,7 @@ class ScenePass extends RenderGraphPass {
     pass.setTrackedDepthWriteEnable(false);
     pass.setTrackedDepthCompareOperation(gpu.CompareFunction.always);
     pass.setTrackedCullMode(gpu.CullMode.none);
-    bindVertexBufferCompat(pass, _quadView, 6);
+    bindVertexBufferCompat(pass, fullscreenQuadView, 6);
 
     for (var index = 0; index < mips.length; index++) {
       final level = index + 1;
@@ -1103,7 +1088,7 @@ class ScenePass extends RenderGraphPass {
     pass.setTrackedDepthWriteEnable(false);
     pass.setTrackedDepthCompareOperation(gpu.CompareFunction.always);
     pass.setTrackedCullMode(gpu.CullMode.none);
-    bindVertexBufferCompat(pass, _quadView, 6);
+    bindVertexBufferCompat(pass, fullscreenQuadView, 6);
     pass.bindTexture(
       _transmissionFilterShader.cachedUniformSlot('source'),
       source,

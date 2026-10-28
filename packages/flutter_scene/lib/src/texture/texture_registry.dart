@@ -71,6 +71,7 @@ final class TextureEntry {
 /// so repeated loads of the same source share one GPU texture (and every
 /// holder sees the same hot-reload swap).
 final Map<String, _TextureCacheEntry> _textureCache = {};
+int _textureCacheGeneration = 0;
 
 /// One cached texture plus the number of outstanding [loadTexture] calls that
 /// have not been released. The count exists so releasing one holder's claim
@@ -256,6 +257,11 @@ Future<TextureSource> loadTexture(
 
   final registry = await TextureRegistry.load(bundle: bundle);
   final key = registry.resolveKey(sourcePath, package: package);
+  // A texture uploaded before the context reopened on a new device is lost.
+  if (_textureCacheGeneration != gpu.gpuContextGeneration) {
+    _textureCache.clear();
+    _textureCacheGeneration = gpu.gpuContextGeneration;
+  }
   final entry = _textureCache.putIfAbsent(
     key,
     () => _TextureCacheEntry(() async {

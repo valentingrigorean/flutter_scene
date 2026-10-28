@@ -23,6 +23,7 @@ export 'src/gpu/impeller/_gpu.dart'
         gpuBackendTextureOf,
         gpuTextureOfBackend,
         registerGpuBackend,
+        reopenGpuContext,
         activeGpuBackend,
         useGpuBackend;
 export 'src/gpu/shared/gpu_capabilities.dart'

@@ -458,26 +458,34 @@ class EngineLightingUniforms {
     pass.bindUniform(
       slot,
       volume == null
-          ? _noClipVolume
+          ? _noClipVolume.value
           : transientsBuffer.emplace(volume.uniformBytes),
     );
   }
 
   // The zero ClipInfo block, device-resident so an unclipped draw binds no
   // per-frame buffer.
-  static final gpu.BufferView _noClipVolume = () {
-    const length = ClipVolume.uniformByteSize;
-    final buffer = gpu.gpuContext.createDeviceBufferWithCopy(ByteData(length));
-    return gpu.BufferView(buffer, offsetInBytes: 0, lengthInBytes: length);
-  }();
+  static final gpu.DeviceLocal<gpu.BufferView> _noClipVolume = gpu.DeviceLocal(
+    () {
+      const length = ClipVolume.uniformByteSize;
+      final buffer = gpu.gpuContext.createDeviceBufferWithCopy(
+        ByteData(length),
+      );
+      return gpu.BufferView(buffer, offsetInBytes: 0, lengthInBytes: length);
+    },
+  );
 
   // Tiny constant uniform blocks (std140, 16 bytes) telling the two 2D
   // radiance layouts apart in the shader (RadianceLayoutInfo in texture.glsl);
   // device-resident so binding needs no per-frame buffer. Mip: the 2D mip
   // equirect. Atlas: the legacy 2D stacked-band equirect. The cube layout has
   // its own shader variant and reads neither.
-  static final gpu.BufferView _layoutMip = _layoutFlagBuffer(1.0);
-  static final gpu.BufferView _layoutAtlas = _layoutFlagBuffer(0.0);
+  static final gpu.DeviceLocal<gpu.BufferView> _layoutMip = gpu.DeviceLocal(
+    () => _layoutFlagBuffer(1.0),
+  );
+  static final gpu.DeviceLocal<gpu.BufferView> _layoutAtlas = gpu.DeviceLocal(
+    () => _layoutFlagBuffer(0.0),
+  );
 
   static gpu.BufferView _layoutFlagBuffer(double mip) {
     final buffer = gpu.gpuContext.createDeviceBufferWithCopy(
@@ -568,7 +576,7 @@ class EngineLightingUniforms {
       );
       pass.bindUniform(
         shader.cachedUniformSlot('RadianceLayoutInfo'),
-        _layoutAtlas,
+        _layoutAtlas.value,
       );
       return;
     }
@@ -588,7 +596,7 @@ class EngineLightingUniforms {
     if (!cubeLayout) {
       pass.bindUniform(
         shader.cachedUniformSlot('RadianceLayoutInfo'),
-        mipLayout ? _layoutMip : _layoutAtlas,
+        mipLayout ? _layoutMip.value : _layoutAtlas.value,
       );
     }
   }

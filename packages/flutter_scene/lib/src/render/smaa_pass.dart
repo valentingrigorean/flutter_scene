@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
@@ -76,22 +77,6 @@ class SmaaPass extends RenderGraphPass {
   static final gpu.Shader _blendShader =
       baseShaderLibrary['SmaaBlendFragment']!;
 
-  // Two triangles of NDC positions covering the screen (6 vec2s).
-  static final gpu.DeviceBuffer _quadBuffer = gpu.gpuContext
-      .createDeviceBufferWithCopy(
-        ByteData.sublistView(
-          Float32List.fromList(<double>[
-            -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-            -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-          ]),
-        ),
-      );
-  static final gpu.BufferView _quadView = gpu.BufferView(
-    _quadBuffer,
-    offsetInBytes: 0,
-    lengthInBytes: 6 * 2 * 4,
-  );
-
   static final gpu.SamplerOptions _linearClamp = gpu.SamplerOptions(
     minFilter: gpu.MinMagFilter.linear,
     magFilter: gpu.MinMagFilter.linear,
@@ -108,11 +93,14 @@ class SmaaPass extends RenderGraphPass {
 
   static gpu.Texture? _areaTexture;
   static gpu.Texture? _searchTexture;
+  static int _tablesGeneration = 0;
 
-  /// Whether [initializeStaticResources] has completed. [SmaaPass] must not
-  /// run before it has.
+  /// Whether [initializeStaticResources] has completed on the device the
+  /// context is open on. [SmaaPass] must not run before it has.
   static bool get isInitialized =>
-      _areaTexture != null && _searchTexture != null;
+      _areaTexture != null &&
+      _searchTexture != null &&
+      _tablesGeneration == gpu.gpuContextGeneration;
 
   /// Loads the precomputed SMAA area and search textures. They load the first
   /// time a scene resolves to SMAA (or through `Scene.preload`), not with
@@ -160,6 +148,7 @@ class SmaaPass extends RenderGraphPass {
     );
     // Expanded to rgba8: two-channel formats are not in the Flutter GPU
     // format set.
+    _tablesGeneration = gpu.gpuContextGeneration;
     _areaTexture = _uploadExpanded(
       area.buffer.asUint8List(area.offsetInBytes, area.lengthInBytes),
       width: 160,
@@ -244,7 +233,7 @@ class SmaaPass extends RenderGraphPass {
         ),
       );
       renderPass.bindPipeline(resolvePipeline(_vertexShader, _edgesShader));
-      bindVertexBufferCompat(renderPass, _quadView, 6);
+      bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
       renderPass.bindTexture(
         _edgesShader.cachedUniformSlot('scene_color'),
         input,
@@ -279,7 +268,7 @@ class SmaaPass extends RenderGraphPass {
         ),
       );
       renderPass.bindPipeline(resolvePipeline(_vertexShader, _weightsShader));
-      bindVertexBufferCompat(renderPass, _quadView, 6);
+      bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
       renderPass.bindTexture(
         _weightsShader.cachedUniformSlot('edges_texture'),
         edges,
@@ -310,7 +299,7 @@ class SmaaPass extends RenderGraphPass {
         gpu.RenderTarget.singleColor(gpu.ColorAttachment(texture: _output)),
       );
       renderPass.bindPipeline(resolvePipeline(_vertexShader, _blendShader));
-      bindVertexBufferCompat(renderPass, _quadView, 6);
+      bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
       renderPass.bindTexture(
         _blendShader.cachedUniformSlot('scene_color'),
         input,

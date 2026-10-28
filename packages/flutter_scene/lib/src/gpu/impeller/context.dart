@@ -12,7 +12,32 @@ GpuContext _openGpuContext() {
     final kind => GpuContext._backend(_backendFor(kind).openContext()),
   };
   _backendInUse = true;
+  _contextOpened = true;
   return context;
+}
+
+bool _contextOpened = false;
+int _contextGeneration = 0;
+
+/// How many times [reopenGpuContext] opened [gpuContext] again.
+///
+/// A cache of buffers or textures made on [gpuContext] makes them again once
+/// this changes, since those made before stay on the lost device.
+int get gpuContextGeneration => _contextGeneration;
+
+/// Opens [gpuContext] again on the registered backend after its device is
+/// lost, through [GpuBackend.openContext], and advances
+/// [gpuContextGeneration].
+///
+/// The shader libraries, shaders and render pipelines made before keep
+/// working on the new device; every buffer, texture and surface made before
+/// stays on the lost device. Does nothing on Impeller, whose device is
+/// Flutter's own, or before [gpuContext] opened.
+@experimental
+void reopenGpuContext() {
+  if (!_contextOpened || _kind == GpuBackendKind.impeller) return;
+  gpuContext._backend = _backendFor(_kind).openContext();
+  _contextGeneration++;
 }
 
 /// Flutter's own Impeller context, whatever backend [gpuContext] renders
@@ -32,7 +57,7 @@ final class GpuContext {
   GpuContext._backend(GpuBackendContext this._backend) : _impeller = null;
 
   final fg.GpuContext? _impeller;
-  final GpuBackendContext? _backend;
+  GpuBackendContext? _backend;
 
   /// The color format Flutter's own rendering uses.
   PixelFormat get defaultColorFormat =>

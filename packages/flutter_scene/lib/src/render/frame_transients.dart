@@ -25,7 +25,20 @@ class GpuSubmissionTracker {
 
   /// The highest id such that all submissions up to and including it have
   /// completed.
-  int get completedThrough => _pending.isEmpty ? _lastId : _pending.first - 1;
+  int get completedThrough {
+    _forgetLost();
+    return _pending.isEmpty ? _lastId : _pending.first - 1;
+  }
+
+  int _generation = 0;
+
+  // The work submitted to a device that was lost never completes, and nothing
+  // reads what it wrote, so it counts as done once the context reopened.
+  void _forgetLost() {
+    if (_generation == gpu.gpuContextGeneration) return;
+    _generation = gpu.gpuContextGeneration;
+    _pending.clear();
+  }
 
   /// Registers [listener] to run just before every submission, with the id
   /// the submission will get. Transient arenas use this to upload and seal
@@ -101,6 +114,7 @@ class GpuSubmissionTracker {
   /// Records a submission without a command buffer. Prefer [submit].
   @visibleForTesting
   int record() {
+    _forgetLost();
     final int id = _lastId + 1;
     for (final listener in _beforeSubmit) {
       listener(id);
@@ -317,8 +331,15 @@ class ImmediatePoolTransients implements FrameTransients {
     _used.clear();
   }
 
+  int _generation = 0;
+
   @override
   void beginFrame() {
+    if (_generation != gpu.gpuContextGeneration) {
+      _generation = gpu.gpuContextGeneration;
+      _used.clear();
+      _pooled.clear();
+    }
     _onBeforeSubmit(_tracker.latestSubmission);
     _frame++;
     final completed = _tracker.completedThrough;
@@ -410,8 +431,16 @@ class TransientArena implements FrameTransients {
   /// Open blocks from the previous frame (possible when a frame emplaced
   /// data but submitted nothing) seal with the latest submission stamp, so
   /// they stay safe against any in-flight work.
+  int _generation = 0;
+
   @override
   void beginFrame() {
+    if (_generation != gpu.gpuContextGeneration) {
+      _generation = gpu.gpuContextGeneration;
+      _resolvedAlignment = null;
+      _open.clear();
+      _sealed.clear();
+    }
     for (final block in _open) {
       _seal(block, _tracker.latestSubmission);
     }

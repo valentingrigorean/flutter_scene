@@ -1,6 +1,5 @@
-import 'dart:typed_data';
-
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
@@ -20,21 +19,6 @@ class SceneColorBlitPass extends RenderGraphPass {
   static final gpu.Shader _vertexShader =
       baseShaderLibrary['FullscreenVertex']!;
   static final gpu.Shader _fragmentShader = baseShaderLibrary['CopyFragment']!;
-
-  static final gpu.DeviceBuffer _quadBuffer = gpu.gpuContext
-      .createDeviceBufferWithCopy(
-        ByteData.sublistView(
-          Float32List.fromList(<double>[
-            -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-            -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-          ]),
-        ),
-      );
-  static final gpu.BufferView _quadView = gpu.BufferView(
-    _quadBuffer,
-    offsetInBytes: 0,
-    lengthInBytes: 6 * 2 * 4,
-  );
 
   static final gpu.SamplerOptions _nearestClamp = gpu.SamplerOptions(
     minFilter: gpu.MinMagFilter.nearest,
@@ -57,7 +41,7 @@ class SceneColorBlitPass extends RenderGraphPass {
     );
     renderPass.bindPipeline(resolvePipeline(_vertexShader, _fragmentShader));
     renderPass.setColorBlendEnable(false);
-    bindVertexBufferCompat(renderPass, _quadView, 6);
+    bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
     renderPass.bindTexture(
       _fragmentShader.cachedUniformSlot('source_texture'),
       input,
