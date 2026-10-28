@@ -758,6 +758,30 @@ base class Scene implements SceneGraph {
   int get pacedFrameCount => _pacedFrameCount;
   int _pacedFrameCount = 0;
 
+  /// Images each screen view handed to a canvas, oldest first.
+  final List<List<ui.Image>> _presentedImages = [];
+
+  /// Images kept per view before the oldest is disposed. Rasterization trails
+  /// painting (a web frame may still be queued when the next one paints), so
+  /// the newest few may still be drawn; anything older belongs to a picture
+  /// that has been replaced. Disposing frees a web image's bitmap without
+  /// waiting for the collector.
+  static const int _keptPresentedImages = 3;
+
+  /// [texture] as a `ui.Image` for view [viewIndex]'s canvas, disposing that
+  /// view's images older than [_keptPresentedImages].
+  ui.Image _presentImage(gpu.Texture texture, int viewIndex) {
+    final image = gpu.gpuHost.textureToImage(texture);
+    while (_presentedImages.length <= viewIndex) {
+      _presentedImages.add([]);
+    }
+    final images = _presentedImages[viewIndex]..add(image);
+    while (images.length > _keptPresentedImages) {
+      images.removeAt(0).dispose();
+    }
+    return image;
+  }
+
   /// Notifies when the scene wants painting again outside any repaint the
   /// app drives: a screen view held its previous image because the GPU was
   /// [maxGpuFramesInFlight] frames behind or a material waited on the
@@ -881,6 +905,8 @@ base class Scene implements SceneGraph {
       return;
     }
     _disposed = true;
+    // Not disposed, since the last pictures may still be on screen.
+    _presentedImages.clear();
     surface.dispose();
     _taaState?.dispose();
     _taaState = null;
@@ -3543,7 +3569,7 @@ base class Scene implements SceneGraph {
       final viewArea = _viewDrawArea(drawArea, view.viewport);
       if (previous == null || viewArea.isEmpty) continue;
       canvas.drawImageRect(
-        previous.asImage(),
+        _presentImage(previous, i),
         ui.Rect.fromLTWH(
           0,
           0,
@@ -3649,7 +3675,7 @@ base class Scene implements SceneGraph {
       final paint = ui.Paint()
         ..filterQuality = view.filterQuality ?? filterQuality;
       canvas.drawImageRect(
-        gpu.gpuHost.textureToImage(previous),
+        _presentImage(previous, viewIndex),
         srcRect,
         drawArea,
         paint,
@@ -3698,7 +3724,7 @@ base class Scene implements SceneGraph {
       }
     }
 
-    final image = gpu.gpuHost.textureToImage(swapchainColor);
+    final image = _presentImage(swapchainColor, viewIndex);
     final srcRect = ui.Rect.fromLTWH(0, 0, pixelSize.width, pixelSize.height);
     final paint = ui.Paint()
       ..filterQuality = view.filterQuality ?? filterQuality;
