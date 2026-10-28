@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:vector_math/vector_math.dart';
 
@@ -24,22 +25,6 @@ export 'package:flutter_scene/src/render/radiance_layout.dart'
         radianceBandRoughness,
         radianceCubeFaceCoords,
         radianceCubeFaceDirection;
-
-// Two triangles of NDC positions covering the whole render target (6 vec2s).
-final gpu.DeviceBuffer _fullscreenQuad = gpu.gpuContext
-    .createDeviceBufferWithCopy(
-      ByteData.sublistView(
-        Float32List.fromList(<double>[
-          -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-          -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-        ]),
-      ),
-    );
-final gpu.BufferView _fullscreenQuadView = gpu.BufferView(
-  _fullscreenQuad,
-  offsetInBytes: 0,
-  lengthInBytes: 6 * 2 * 4,
-);
 
 // TODO(bdero): Filtered importance sampling: sample a mip chain of the source
 // (mapping each GGX sample's cone solid angle to a mip LOD) so a sample
@@ -425,7 +410,7 @@ void prefilterEquirectRadianceCubeFace(
     ),
   );
   renderPass.bindPipeline(resolvePipeline(vertexShader, fragmentShader));
-  bindVertexBufferCompat(renderPass, _fullscreenQuadView, 6);
+  bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
   renderPass.bindTexture(
     fragmentShader.cachedUniformSlot('source_equirect'),
     sourceEquirect,
@@ -550,7 +535,7 @@ void _prefilterPass(
     ),
   );
   renderPass.bindPipeline(resolvePipeline(vertexShader, fragmentShader));
-  bindVertexBufferCompat(renderPass, _fullscreenQuadView, 6);
+  bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
   renderPass.bindTexture(
     fragmentShader.cachedUniformSlot('source_equirect'),
     sourceEquirect,

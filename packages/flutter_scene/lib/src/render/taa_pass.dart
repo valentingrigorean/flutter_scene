@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:flutter_scene/src/render/projection_params.dart';
 import 'package:flutter_scene/src/render/depth_prepass.dart'
@@ -30,22 +31,6 @@ final gpu.SamplerOptions _linearClamp = gpu.SamplerOptions(
   magFilter: gpu.MinMagFilter.linear,
   widthAddressMode: gpu.SamplerAddressMode.clampToEdge,
   heightAddressMode: gpu.SamplerAddressMode.clampToEdge,
-);
-
-// Fullscreen NDC triangles for the TAA resolve.
-final gpu.DeviceBuffer _taaFullscreenBuffer = gpu.gpuContext
-    .createDeviceBufferWithCopy(
-      ByteData.sublistView(
-        Float32List.fromList(<double>[
-          -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-          -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-        ]),
-      ),
-    );
-final gpu.BufferView _taaFullscreenView = gpu.BufferView(
-  _taaFullscreenBuffer,
-  offsetInBytes: 0,
-  lengthInBytes: 6 * 2 * 4,
 );
 
 /// Persistent state of the temporal anti-aliasing history across frames.
@@ -179,7 +164,7 @@ class TaaPass extends RenderGraphPass {
     renderPass.setCullMode(gpu.CullMode.none);
     renderPass.setPrimitiveType(gpu.PrimitiveType.triangle);
     renderPass.bindPipeline(resolvePipeline(_vertexShader, _fragmentShader));
-    bindVertexBufferCompat(renderPass, _taaFullscreenView, 6);
+    bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
 
     final infoData = Float32List(40);
     infoData.setRange(0, 16, currentToPreviousViewProjection.storage);
@@ -261,7 +246,7 @@ class TaaPass extends RenderGraphPass {
         baseShaderLibrary['CopyFragment']!,
       );
       depthCopyPass.bindPipeline(copyPipeline);
-      bindVertexBufferCompat(depthCopyPass, _taaFullscreenView, 6);
+      bindVertexBufferCompat(depthCopyPass, fullscreenQuadView, 6);
       depthCopyPass.bindTexture(
         baseShaderLibrary['CopyFragment']!.cachedUniformSlot('source_texture'),
         depthNormal,

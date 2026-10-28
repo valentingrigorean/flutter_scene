@@ -1,6 +1,7 @@
 /// Binds a sky to a scene's image-based lighting with a refresh policy.
 library;
 
+import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/material/environment.dart';
 import 'package:flutter_scene/src/render/sky_bake.dart';
 import 'package:flutter_scene/src/skybox.dart';
@@ -76,9 +77,9 @@ class SkyEnvironment {
   // The empty environment handed to the sky fragment's bind during a bake (a
   // sky baked into the environment cannot sample the environment it is
   // producing). Cached so per-frame bake steps allocate nothing.
-  static EnvironmentMap? _noEnvironmentCache;
-  static EnvironmentMap get _noEnvironment =>
-      _noEnvironmentCache ??= EnvironmentMap.empty();
+  static final gpu.DeviceLocal<EnvironmentMap> _noEnvironmentCache =
+      gpu.DeviceLocal(EnvironmentMap.empty);
+  static EnvironmentMap get _noEnvironment => _noEnvironmentCache.value;
 
   /// Requests a re-bake on the next frame regardless of [refresh]. Call after
   /// changing the sky's parameters under [SkyEnvironmentRefresh.manual].

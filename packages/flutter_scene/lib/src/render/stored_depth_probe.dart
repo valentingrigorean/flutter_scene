@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/raster_sync.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
@@ -59,19 +60,6 @@ Future<void> probeStoredDepthRead() async {
   }
 }
 
-final gpu.BufferView _fullscreenQuadView = gpu.BufferView(
-  gpu.gpuContext.createDeviceBufferWithCopy(
-    ByteData.sublistView(
-      Float32List.fromList(<double>[
-        -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-        -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-      ]),
-    ),
-  ),
-  offsetInBytes: 0,
-  lengthInBytes: 6 * 2 * 4,
-);
-
 const int _probeSize = 4;
 
 const double _probeDepth = 0.25;
@@ -109,7 +97,7 @@ Future<bool> measureStoredDepthRead({required gpu.PixelFormat format}) async {
     renderPass.setColorBlendEnable(false);
     renderPass.setDepthWriteEnable(false);
     renderPass.setDepthCompareOperation(gpu.CompareFunction.always);
-    bindVertexBufferCompat(renderPass, _fullscreenQuadView, 6);
+    bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
     renderPass.bindUniform(
       fragmentShader.cachedUniformSlot('StoredDepthProbeInfo'),
       uniformTransients.emplace(

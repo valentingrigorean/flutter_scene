@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter_scene/src/global_illumination.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:flutter_scene/src/geometry/vertex_layout.dart';
 import 'package:flutter_scene/src/render/projection_params.dart';
@@ -217,34 +218,19 @@ class IrradianceFieldState {
 }
 
 // The unit quad the scatter expands, corners in [0, 1].
-final gpu.DeviceBuffer _quadBuffer = gpu.gpuContext.createDeviceBufferWithCopy(
-  ByteData.sublistView(
-    Float32List.fromList(<double>[
-      0.0, 0.0, 1.0, 0.0, 0.0, 1.0, //
-      0.0, 1.0, 1.0, 0.0, 1.0, 1.0, //
-    ]),
-  ),
-);
-final gpu.BufferView _quadView = gpu.BufferView(
-  _quadBuffer,
-  offsetInBytes: 0,
-  lengthInBytes: 6 * 2 * 4,
-);
-
-// Fullscreen NDC triangles for the blend, filter, and strip passes.
-final gpu.DeviceBuffer _fullscreenBuffer = gpu.gpuContext
-    .createDeviceBufferWithCopy(
+final gpu.DeviceLocal<gpu.BufferView> _quad = gpu.DeviceLocal(
+  () => gpu.BufferView(
+    gpu.gpuContext.createDeviceBufferWithCopy(
       ByteData.sublistView(
         Float32List.fromList(<double>[
-          -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-          -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
+          0.0, 0.0, 1.0, 0.0, 0.0, 1.0, //
+          0.0, 1.0, 1.0, 0.0, 1.0, 1.0, //
         ]),
       ),
-    );
-final gpu.BufferView _fullscreenView = gpu.BufferView(
-  _fullscreenBuffer,
-  offsetInBytes: 0,
-  lengthInBytes: 6 * 2 * 4,
+    ),
+    offsetInBytes: 0,
+    lengthInBytes: 6 * 2 * 4,
+  ),
 );
 
 /// Slot 0 the per-vertex unit quad, slot 1 the per-instance sample index (a
@@ -441,7 +427,7 @@ class IrradianceInjectPass extends RenderGraphPass {
     renderPass.setPrimitiveType(gpu.PrimitiveType.triangle);
     renderPass.setColorBlendEnable(true);
     renderPass.setColorBlendEquation(_additive);
-    bindVertexBufferCompat(renderPass, _quadView, 6);
+    bindVertexBufferCompat(renderPass, _quad.value, 6);
     renderPass.bindVertexBuffer(instances, slot: 1);
     renderPass.bindTexture(
       _vertexShader.cachedUniformSlot('linear_depth_normal'),
@@ -637,7 +623,7 @@ class IrradianceBlendPass extends RenderGraphPass {
       renderPass.bindPipeline(
         resolvePipeline(_vertexShader, _irradianceShader),
       );
-      bindVertexBufferCompat(renderPass, _fullscreenView, 6);
+      bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
       renderPass.bindTexture(
         _irradianceShader.cachedUniformSlot('injection'),
         state._irradianceAccumulator!,
@@ -685,7 +671,7 @@ class IrradianceBlendPass extends RenderGraphPass {
       info[18] = layout.tileRows.toDouble();
       renderPass.clearBindings();
       renderPass.bindPipeline(resolvePipeline(_vertexShader, _depthShader));
-      bindVertexBufferCompat(renderPass, _fullscreenView, 6);
+      bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
       renderPass.bindTexture(
         _depthShader.cachedUniformSlot('injection'),
         state._depthAccumulator!,
@@ -759,7 +745,7 @@ class IrradianceFilterPass extends RenderGraphPass {
     // previous shader's slot layout leaks into the next draw.
     renderPass.clearBindings();
     renderPass.bindPipeline(resolvePipeline(_vertexShader, _stripShader));
-    bindVertexBufferCompat(renderPass, _fullscreenView, 6);
+    bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
     renderPass.bindTexture(
       _stripShader.cachedUniformSlot('sh_strip'),
       shStrip,
@@ -790,7 +776,7 @@ class IrradianceFilterPass extends RenderGraphPass {
         ..[5] = layout.tileRows.toDouble();
       renderPass.clearBindings();
       renderPass.bindPipeline(resolvePipeline(_vertexShader, _filterShader));
-      bindVertexBufferCompat(renderPass, _fullscreenView, 6);
+      bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
       renderPass.bindTexture(
         _filterShader.cachedUniformSlot('atlas'),
         blended,

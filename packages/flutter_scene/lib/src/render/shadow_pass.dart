@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
@@ -284,22 +285,6 @@ class ShadowPass extends RenderGraphPass {
     _drawTileCopy(pass, tile);
     rendererSubmissions.submit(copyBuffer);
   }
-
-  // Two triangles of NDC positions covering the viewport (6 vec2s).
-  static final gpu.DeviceBuffer _quadBuffer = gpu.gpuContext
-      .createDeviceBufferWithCopy(
-        ByteData.sublistView(
-          Float32List.fromList(<double>[
-            -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-            -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-          ]),
-        ),
-      );
-  static final gpu.BufferView _quadView = gpu.BufferView(
-    _quadBuffer,
-    offsetInBytes: 0,
-    lengthInBytes: 6 * 2 * 4,
-  );
 
   /// The render target the last atlas drew into and the atlas it published,
   /// so a test reads which attachment is the shadow map.
@@ -667,7 +652,7 @@ class ShadowPass extends RenderGraphPass {
     pass.setTrackedCullMode(gpu.CullMode.none);
     pass.setTrackedDepthWriteEnable(true);
     pass.setTrackedDepthCompareOperation(gpu.CompareFunction.always);
-    bindVertexBufferCompat(pass, _quadView, 6);
+    bindVertexBufferCompat(pass, fullscreenQuadView, 6);
     pass.bindTexture(
       _copyFragmentShader.cachedUniformSlot('source_texture'),
       source,

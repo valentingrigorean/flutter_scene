@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 
 import 'package:flutter_scene/src/render/projection_params.dart';
@@ -14,23 +15,6 @@ import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/scene_encoder.dart' show resolvePipeline;
 import 'package:flutter_scene/src/render/uniform_slots.dart';
-
-// Two triangles of NDC positions covering the screen (6 vec2s).
-gpu.BufferView _fullscreenQuad() {
-  return _quadView ??= () {
-    final buffer = gpu.gpuContext.createDeviceBufferWithCopy(
-      ByteData.sublistView(
-        Float32List.fromList(<double>[
-          -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-          -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-        ]),
-      ),
-    );
-    return gpu.BufferView(buffer, offsetInBytes: 0, lengthInBytes: 6 * 2 * 4);
-  }();
-}
-
-gpu.BufferView? _quadView;
 
 final gpu.SamplerOptions _linearClamp = gpu.SamplerOptions(
   minFilter: gpu.MinMagFilter.linear,
@@ -151,7 +135,7 @@ class SsrPass extends RenderGraphPass {
     );
     tracePass.bindPipeline(resolvePipeline(_vertexShader, _fragmentShader));
     tracePass.setColorBlendEnable(false);
-    bindVertexBufferCompat(tracePass, _fullscreenQuad(), 6);
+    bindVertexBufferCompat(tracePass, fullscreenQuadView, 6);
     tracePass.bindUniform(
       _fragmentShader.cachedUniformSlot('SsrInfo'),
       context.transientsBuffer.emplace(ByteData.sublistView(info)),
@@ -188,7 +172,7 @@ class SsrPass extends RenderGraphPass {
       resolvePipeline(_vertexShader, _compositeShader),
     );
     compositePass.setColorBlendEnable(false);
-    bindVertexBufferCompat(compositePass, _fullscreenQuad(), 6);
+    bindVertexBufferCompat(compositePass, fullscreenQuadView, 6);
     compositePass.bindUniform(
       _compositeShader.cachedUniformSlot('CompositeInfo'),
       context.transientsBuffer.emplace(ByteData.sublistView(compositeInfo)),

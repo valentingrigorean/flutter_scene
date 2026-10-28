@@ -389,12 +389,18 @@ abstract class Geometry with RenderSourceListeners {
     _StreamFill.values.length,
     0,
   );
+  static int _defaultBuffersGeneration = 0;
 
   static gpu.BufferView _zeroAttributeStream(int bytes) =>
       _defaultAttributeStream(_StreamFill.zero, bytes);
 
   static gpu.BufferView _defaultAttributeStream(_StreamFill fill, int bytes) {
     final size = bytes < 16 ? 16 : bytes;
+    if (_defaultBuffersGeneration != gpu.gpuContextGeneration) {
+      _defaultBuffers.fillRange(0, _defaultBuffers.length, null);
+      _defaultBufferBytes.fillRange(0, _defaultBufferBytes.length, 0);
+      _defaultBuffersGeneration = gpu.gpuContextGeneration;
+    }
     var buffer = _defaultBuffers[fill.index];
     if (buffer == null || _defaultBufferBytes[fill.index] < size) {
       final capacity = 1 << (size - 1).bitLength;

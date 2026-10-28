@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 
 import 'package:flutter_scene/src/post_process/post_process.dart';
@@ -123,22 +124,6 @@ class BloomPass extends RenderGraphPass {
       baseShaderLibrary['BloomUpsampleFragment']!;
   static final gpu.Shader _lensFlareShader =
       baseShaderLibrary['LensFlareFragment']!;
-
-  // Two triangles of NDC positions covering the screen (6 vec2s).
-  static final gpu.DeviceBuffer _quadBuffer = gpu.gpuContext
-      .createDeviceBufferWithCopy(
-        ByteData.sublistView(
-          Float32List.fromList(<double>[
-            -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-            -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-          ]),
-        ),
-      );
-  static final gpu.BufferView _quadView = gpu.BufferView(
-    _quadBuffer,
-    offsetInBytes: 0,
-    lengthInBytes: 6 * 2 * 4,
-  );
 
   @override
   String get name => 'BloomPass';
@@ -266,7 +251,7 @@ class BloomPass extends RenderGraphPass {
     );
     renderPass.bindPipeline(resolvePipeline(_vertexShader, _lensFlareShader));
     renderPass.setColorBlendEnable(false);
-    bindVertexBufferCompat(renderPass, _quadView, 6);
+    bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
 
     final info = Float32List(12)
       ..[0] = flare.intensity * sourceScale
@@ -341,7 +326,7 @@ class BloomPass extends RenderGraphPass {
     );
     renderPass.bindPipeline(resolvePipeline(_vertexShader, _thresholdShader));
     renderPass.setColorBlendEnable(false);
-    bindVertexBufferCompat(renderPass, _quadView, 6);
+    bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
 
     final knee = _settings.threshold * 0.5 + 1e-4;
     final info = Float32List(12)
@@ -379,7 +364,7 @@ class BloomPass extends RenderGraphPass {
     );
     renderPass.bindPipeline(resolvePipeline(_vertexShader, _downsampleShader));
     renderPass.setColorBlendEnable(false);
-    bindVertexBufferCompat(renderPass, _quadView, 6);
+    bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
 
     final info = Float32List(4)
       ..[0] = 1.0 / sourceSize.width
@@ -416,7 +401,7 @@ class BloomPass extends RenderGraphPass {
     );
     renderPass.bindPipeline(resolvePipeline(_vertexShader, _upsampleShader));
     renderPass.setColorBlendEnable(false);
-    bindVertexBufferCompat(renderPass, _quadView, 6);
+    bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
 
     final info = Float32List(4)
       ..[0] = 1.0 / sourceSize.width

@@ -235,6 +235,7 @@ base class Scene implements SceneGraph {
   }
 
   static Future<void>? _initializeStaticResources;
+  static int _staticResourcesGeneration = 0;
   static bool _readyToRender = false;
 
   /// Whether the engine's shared shader libraries and material lookup
@@ -558,9 +559,13 @@ base class Scene implements SceneGraph {
   /// misleading one from the first draw. `SceneView` reports it and stays on
   /// its loading builder.
   static Future<void> initializeStaticResources() {
-    if (_initializeStaticResources != null) {
+    if (_initializeStaticResources != null &&
+        _staticResourcesGeneration == gpu.gpuContextGeneration) {
       return _initializeStaticResources!;
     }
+    // The resources of a context reopened on a new device load again there.
+    _readyToRender = false;
+    _staticResourcesGeneration = gpu.gpuContextGeneration;
     listenForMemoryPressure();
     _initializeStaticResources = gpu
         .initializeGpuBackend()

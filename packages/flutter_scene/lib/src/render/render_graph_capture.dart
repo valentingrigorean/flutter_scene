@@ -14,6 +14,7 @@ import 'dart:ui' as ui;
 import 'package:flutter_scene/src/fmat/material_registry.dart'
     show fmatSourcePathOf;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:flutter_scene/src/node.dart';
 import 'package:flutter_scene/src/render/draw_recorder.dart';
@@ -828,21 +829,6 @@ class RenderGraphCapturer implements RenderGraphObserver, DrawRecorder {
   static final gpu.Shader _vertex = baseShaderLibrary['FullscreenVertex']!;
   static final gpu.Shader _copyFragment = baseShaderLibrary['CopyFragment']!;
 
-  static final gpu.DeviceBuffer _quadBuffer = gpu.gpuContext
-      .createDeviceBufferWithCopy(
-        ByteData.sublistView(
-          Float32List.fromList(<double>[
-            -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-            -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-          ]),
-        ),
-      );
-  static final gpu.BufferView _quadView = gpu.BufferView(
-    _quadBuffer,
-    offsetInBytes: 0,
-    lengthInBytes: 6 * 2 * 4,
-  );
-
   // fp32 sources filter nearest everywhere (float32 linear filtering is an
   // optional GL extension), so their downscaled thumbnails point-sample.
   static gpu.SamplerOptions _samplerFor(gpu.PixelFormat format) {
@@ -886,7 +872,7 @@ class RenderGraphCapturer implements RenderGraphObserver, DrawRecorder {
     renderPass.setDepthCompareOperation(gpu.CompareFunction.always);
     renderPass.setColorBlendEnable(false);
     renderPass.setCullMode(gpu.CullMode.none);
-    bindVertexBufferCompat(renderPass, _quadView, 6);
+    bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
     renderPass.bindTexture(
       _copyFragment.cachedUniformSlot('source_texture'),
       source,

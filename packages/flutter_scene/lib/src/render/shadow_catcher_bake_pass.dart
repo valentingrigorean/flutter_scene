@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter_scene/src/material/engine_lighting.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
@@ -65,22 +66,6 @@ class ShadowCatcherBakePass extends RenderGraphPass {
       baseShaderLibrary['FullscreenVertex']!;
   static final gpu.Shader _blurFragmentShader =
       baseShaderLibrary['ShadowCatcherBlurFragment']!;
-
-  // Two triangles of NDC positions covering the viewport (6 vec2s).
-  static final gpu.DeviceBuffer _quadBuffer = gpu.gpuContext
-      .createDeviceBufferWithCopy(
-        ByteData.sublistView(
-          Float32List.fromList(<double>[
-            -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, //
-            -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, //
-          ]),
-        ),
-      );
-  static final gpu.BufferView _quadView = gpu.BufferView(
-    _quadBuffer,
-    offsetInBytes: 0,
-    lengthInBytes: 6 * 2 * 4,
-  );
 
   static final gpu.SamplerOptions _linearClamp = gpu.SamplerOptions(
     minFilter: gpu.MinMagFilter.linear,
@@ -303,7 +288,7 @@ class ShadowCatcherBakePass extends RenderGraphPass {
     pass.setDepthWriteEnable(false);
     pass.setDepthCompareOperation(gpu.CompareFunction.always);
     pass.setCullMode(gpu.CullMode.none);
-    bindVertexBufferCompat(pass, _quadView, 6);
+    bindVertexBufferCompat(pass, fullscreenQuadView, 6);
     pass.bindTexture(
       _blurFragmentShader.cachedUniformSlot('source_texture'),
       source,

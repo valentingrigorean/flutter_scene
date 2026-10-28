@@ -21,6 +21,7 @@ final class _RecordSlots {
   _RecordSlots(this.slotBytes);
 
   final int slotBytes;
+  final int generation = gpu.gpuContextGeneration;
   final List<gpu.DeviceBuffer> _blocks = [];
   final List<int> _free = [];
   final List<int> _cooling = [];
@@ -74,6 +75,16 @@ final class _RecordSlots {
 
 final Map<int, _RecordSlots> _slotsByBytes = {};
 
+// The slots of the device the context is open on; those of a lost device
+// are dropped.
+_RecordSlots _slotsOf(int width) {
+  final held = _slotsByBytes[width];
+  if (held != null && held.generation == gpu.gpuContextGeneration) {
+    return held;
+  }
+  return _slotsByBytes[width] = _RecordSlots(width);
+}
+
 /// The record an item that draws one instance holds on the device.
 final class HeldInstanceRecord {
   _RecordSlots? _slots;
@@ -112,12 +123,13 @@ void bindHeldInstanceRecord(
   if (view == null ||
       slots == null ||
       slots.slotBytes < bytes ||
+      slots.generation != gpu.gpuContextGeneration ||
       held._transformRevision != item.worldTransformRevision) {
     final width = slots == null || slots.slotBytes < bytes
         ? bytes
         : slots.slotBytes;
     held.release();
-    slots = _slotsByBytes[width] ??= _RecordSlots(width);
+    slots = _slotsOf(width);
     held
       .._slots = slots
       .._slot = slots.take()
