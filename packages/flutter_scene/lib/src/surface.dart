@@ -85,7 +85,8 @@ class Surface {
   /// Sampling it from a material creates a one-frame feedback loop, the
   /// scene's own output appearing inside the scene. The ring guarantees the
   /// returned texture is not the one being rendered this frame, so reading
-  /// it while the current frame draws is safe.
+  /// it while the current frame draws is safe. Fetch it every frame, since a
+  /// texture kept past a resize may be released.
   gpu.Texture? lastSwapchainColorTexture([int viewIndex = 0]) =>
       _view(viewIndex)._lastIssued;
 
@@ -107,8 +108,9 @@ class Surface {
     return bytes;
   }
 
-  /// Drops every transient attachment this surface's views hold and returns
-  /// the bytes released.
+  /// Releases every transient attachment this surface's views hold, and the
+  /// targets of sizes other than the current one, returning the bytes
+  /// released.
   ///
   /// The swapchain color ring is left alone. The compositor may still be
   /// reading the texture most recently issued, and it is two textures against
@@ -184,8 +186,9 @@ class Surface {
     (bytes, texture) => bytes + renderTargetBytes(texture),
   );
 
-  /// Drops every view's rings and transient pools, so their textures are
-  /// unreachable from this surface. A later frame allocates them again.
+  /// Releases every view's rings and transient pools, so their textures are
+  /// freed and unreachable from this surface. A later frame allocates them
+  /// again.
   void dispose() {
     for (final view in _views) {
       view.dispose();
@@ -209,6 +212,14 @@ class _SizedTargets {
 
   /// The view's frame count when this size last rendered.
   int lastUsed = 0;
+
+  /// Releases every texture, which must not be used afterwards.
+  void release() {
+    pool.clear();
+    swapchainColors.forEach(gpu.gpuHost.releaseTexture);
+    swapchainColors.clear();
+    cursor = 0;
+  }
 }
 
 /// One view's render targets, per recent output size. View 0 reproduces the
@@ -245,10 +256,10 @@ class _ViewSurface {
   /// stays, since the compositor may still be reading its latest texture.
   int shed() {
     final bytes = residentBytes;
-    for (final sized in _sizes) {
-      sized.pool.clear();
+    while (_sizes.length > 1) {
+      _sizes.removeAt(0).release();
     }
-    if (_sizes.length > 1) _sizes.removeRange(0, _sizes.length - 1);
+    _sizes.lastOrNull?.pool.clear();
     return bytes;
   }
 
@@ -268,11 +279,15 @@ class _ViewSurface {
       sized = index < 0 ? _SizedTargets(size, format) : _sizes.removeAt(index);
       _sizes.add(sized);
       while (_sizes.length > _keptSizes) {
-        _sizes.removeAt(0);
+        _sizes.removeAt(0).release();
       }
     }
     sized.lastUsed = _frame;
-    _sizes.removeWhere((s) => _frame - s.lastUsed > _idleFrames);
+    _sizes.removeWhere((s) {
+      if (_frame - s.lastUsed <= _idleFrames) return false;
+      s.release();
+      return true;
+    });
     sized.pool.beginFrame();
     if (lent != null) return _lastIssued = lent;
     final colors = sized.swapchainColors;
@@ -310,8 +325,7 @@ class _ViewSurface {
 
   void dispose() {
     for (final sized in _sizes) {
-      sized.pool.clear();
-      sized.swapchainColors.clear();
+      sized.release();
     }
     _sizes.clear();
     _lastIssued = null;

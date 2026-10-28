@@ -51,7 +51,8 @@ class TextureTransform {
   /// Per-axis UV scale.
   Vector2 scale;
 
-  /// Counter-clockwise rotation in radians.
+  /// Rotation in radians, turning UVs counter-clockwise as glTF's
+  /// `KHR_texture_transform` does, so the texture turns clockwise.
   double rotation;
 
   /// Whether this transform leaves UV coordinates unchanged.
