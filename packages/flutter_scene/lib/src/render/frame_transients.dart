@@ -277,6 +277,7 @@ class ImmediatePoolTransients implements FrameTransients {
 
   @override
   gpu.BufferView emplace(ByteData bytes) {
+    _forgetLost();
     final length = bytes.lengthInBytes;
     final sizeClass = _sizeClassFor(length);
     final completed = _tracker.completedThrough;
@@ -324,6 +325,7 @@ class ImmediatePoolTransients implements FrameTransients {
   }
 
   void _onBeforeSubmit(int id) {
+    _forgetLost();
     for (final block in _used) {
       block.stamp = id;
       _pooled.add(block);
@@ -333,13 +335,18 @@ class ImmediatePoolTransients implements FrameTransients {
 
   int _generation = 0;
 
+  // Buffers made on a device that was lost stay on it, so the pool drops them
+  // once the context reopened, before it hands out or stamps any.
+  void _forgetLost() {
+    if (_generation == gpu.gpuContextGeneration) return;
+    _generation = gpu.gpuContextGeneration;
+    _used.clear();
+    _pooled.clear();
+  }
+
   @override
   void beginFrame() {
-    if (_generation != gpu.gpuContextGeneration) {
-      _generation = gpu.gpuContextGeneration;
-      _used.clear();
-      _pooled.clear();
-    }
+    _forgetLost();
     _onBeforeSubmit(_tracker.latestSubmission);
     _frame++;
     final completed = _tracker.completedThrough;
@@ -433,14 +440,20 @@ class TransientArena implements FrameTransients {
   /// they stay safe against any in-flight work.
   int _generation = 0;
 
+  // Blocks made on a device that was lost stay on it, so the arena drops them
+  // once the context reopened, before it writes or seals any: a submission
+  // can come before the next frame begins.
+  void _forgetLost() {
+    if (_generation == gpu.gpuContextGeneration) return;
+    _generation = gpu.gpuContextGeneration;
+    _resolvedAlignment = null;
+    _open.clear();
+    _sealed.clear();
+  }
+
   @override
   void beginFrame() {
-    if (_generation != gpu.gpuContextGeneration) {
-      _generation = gpu.gpuContextGeneration;
-      _resolvedAlignment = null;
-      _open.clear();
-      _sealed.clear();
-    }
+    _forgetLost();
     for (final block in _open) {
       _seal(block, _tracker.latestSubmission);
     }
@@ -478,6 +491,7 @@ class TransientArena implements FrameTransients {
 
   @override
   gpu.BufferView emplace(ByteData bytes) {
+    _forgetLost();
     final length = bytes.lengthInBytes;
     if (length > blockLengthInBytes) {
       return _emplaceOversize(bytes);
@@ -575,6 +589,7 @@ class TransientArena implements FrameTransients {
   /// submission being recorded, which is the last one that may reference
   /// these blocks.
   void _onBeforeSubmit(int id) {
+    _forgetLost();
     for (final block in _open) {
       _seal(block, id);
     }
