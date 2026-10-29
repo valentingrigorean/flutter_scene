@@ -9,6 +9,10 @@
 * Geometry on the WebGL2 web backend no longer drops draws with a `glDrawElements` "Insufficient buffer size" or "Vertex buffer is not big enough" error.
 * `package:flutter_scene/build_hooks.dart` exports the WGSL sidecar step, `buildWgslSidecar` with `TintProcessTranslator`, `wgslSidecarsForBuild`, `wgslSidecarPathFor` and `sidecarBundleHash`, so a hook that runs `impellerc` itself writes the sidecar its bundle loads with on the WebGPU web backend.
 * Lit, unlit and physical materials with a clip volume translate to WGSL, so they load on the WebGPU web backend; Tint failed on every one of them.
+* glTF imports honor `KHR_node_visibility`, so a node marked hidden imports hidden along with its subtree.
+* Normal maps on meshes without tangents no longer read their green channel inverted, and anisotropy directions on them are no longer mirrored. The tangent frame derived from screen-space derivatives now matches the one supplied tangents give.
+* `BloomSettings.referenceSize` measures the blur's spread against a shared render size, so views that each show part of one picture (a header and a taller overlay a character moves into) bloom alike.
+* Texture rotation (`KHR_texture_transform`, `TextureTransform.rotation`, and `ApplyMaterialUvTransform` in `.fmat` materials) turns the UVs counter-clockwise as the extension specifies. It turned the other way, so a rotation tuned by eye needs its sign flipped.
 * Additive sprites and `.fmat` materials, bloom, and lens flares show over the content behind a scene with a transparent background, adding light to it. They were discarded wherever nothing opaque was drawn.
 * Billboard, `Sprite`, and particle sizes scale with their node, so scaling an effect node scales its sprites along with their spacing and speed. A non-uniform scale sizes them by its smallest axis, ignoring an axis flattened to a disc. `BillboardGeometry.scaleSizesWithNode` (and `ParticleEmitterComponent.scaleSizesWithNode`) keeps sizes in world units instead.
 * A billboard batch on a scaled node is no longer culled while still on screen.
