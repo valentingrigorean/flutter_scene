@@ -43,6 +43,7 @@ import 'package:meta/meta.dart' show experimental;
 import 'package:vector_math/vector_math.dart' as vm;
 
 import '../shared/gpu_capabilities.dart';
+import '../shared/gpu_labels.dart';
 import '../backend/gpu_backend.dart';
 
 export 'package:flutter_gpu/gpu.dart'

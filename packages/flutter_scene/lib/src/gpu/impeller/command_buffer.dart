@@ -73,8 +73,9 @@ final class CommandBuffer {
   /// Whether [submit] has run.
   bool get submitted => _impeller?.submitted ?? _backendSubmitted;
 
-  /// Starts a render pass into [renderTarget].
-  RenderPass createRenderPass(RenderTarget renderTarget) {
+  /// Starts a render pass into [renderTarget]. [label] names the pass in a
+  /// GPU capture or trace; Impeller has no label and drops it.
+  RenderPass createRenderPass(RenderTarget renderTarget, {String? label}) {
     final impeller = _impeller;
     if (impeller != null) {
       return RenderPass._impeller(
@@ -87,6 +88,7 @@ final class CommandBuffer {
           for (final color in renderTarget.colorAttachments) color._toBackend(),
         ],
         depthStencil: renderTarget.depthStencilAttachment?._toBackend(),
+        label: label ?? activeGpuPassLabel,
       ),
     );
   }

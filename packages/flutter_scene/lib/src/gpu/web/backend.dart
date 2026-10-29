@@ -162,7 +162,10 @@ abstract base class GpuContext {
     int mipLevelCount = 1,
   });
   bool supportsTextureCompression(TextureCompressionFamily family);
-  CommandBuffer createCommandBuffer();
+
+  /// Creates a command buffer. [label] names it in a GPU capture or trace
+  /// where the backend has labels; WebGL2 drops it.
+  CommandBuffer createCommandBuffer({String? label});
 
   /// Compiles the compute entry point [entryPoint] of the WGSL [source]; an
   /// empty [entryPoint] picks the only one.
@@ -282,7 +285,9 @@ abstract base class ComputePass {
 }
 
 abstract base class CommandBuffer {
-  RenderPass createRenderPass(RenderTarget renderTarget);
+  /// Starts a render pass into [renderTarget]. [label] names the pass in a
+  /// GPU capture or trace where the backend has labels; WebGL2 drops it.
+  RenderPass createRenderPass(RenderTarget renderTarget, {String? label});
 
   /// Starts a compute pass, ending the pass before it.
   ///

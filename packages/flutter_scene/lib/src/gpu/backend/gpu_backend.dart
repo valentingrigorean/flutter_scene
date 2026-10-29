@@ -264,8 +264,8 @@ abstract interface class GpuBackendContext {
   /// the backend cannot, which `gpuHost.imageToTexture` turns into null.
   GpuBackendTexture textureFromImage(ui.Image image);
 
-  /// Creates a command buffer.
-  GpuBackendCommandBuffer createCommandBuffer();
+  /// Creates a command buffer. [label] names it in a GPU capture or trace.
+  GpuBackendCommandBuffer createCommandBuffer({String? label});
 
   /// Completes once every pipeline variant the device was asked for so far
   /// has finished compiling, whether it compiled or failed.
@@ -490,10 +490,11 @@ abstract interface class GpuBackendRenderPipeline {}
 @experimental
 abstract interface class GpuBackendCommandBuffer {
   /// Starts a render pass into [colors] and [depthStencil], ending the pass
-  /// before it.
+  /// before it. [label] names the pass in a GPU capture or trace.
   GpuBackendRenderPass createRenderPass({
     required List<GpuBackendColorTarget> colors,
     GpuBackendDepthStencilTarget? depthStencil,
+    String? label,
   });
 
   /// Starts a compute pass, ending the pass before it. Called only where

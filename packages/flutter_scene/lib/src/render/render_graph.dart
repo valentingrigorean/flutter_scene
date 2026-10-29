@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart'
     show internal, visibleForTesting, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter_scene/src/external_bytes.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/gpu/shared/gpu_labels.dart';
 import 'package:flutter_scene/src/render/draw_recorder.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/render_profile.dart';
@@ -480,10 +481,12 @@ class RenderGraph {
       stopwatch
         ..reset()
         ..start();
+      activeGpuPassLabel = pass.name;
       try {
         pass.execute(context);
       } finally {
         activeDrawRecorder = null;
+        activeGpuPassLabel = null;
       }
       stopwatch.stop();
       if (timeline) developer.Timeline.finishSync();

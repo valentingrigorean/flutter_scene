@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import 'package:flutter_gpu/gpu.dart' show StorageMode;
 import 'package:flutter_scene/gpu.dart' as gpu;
 import 'package:flutter_scene/gpu_backend.dart';
+import 'package:flutter_scene/src/gpu/shared/gpu_labels.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 final List<String> _calls = [];
@@ -45,7 +46,10 @@ final class _Context implements GpuBackendContext {
   ) => _Buffer(size);
 
   @override
-  GpuBackendCommandBuffer createCommandBuffer() => _CommandBuffer();
+  GpuBackendCommandBuffer createCommandBuffer({String? label}) {
+    if (label != null) _calls.add('buffer $label');
+    return _CommandBuffer();
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -172,5 +176,13 @@ void main() {
       throwsUnsupportedError,
     );
     expect(_calls, isEmpty);
+  });
+
+  test('a command buffer takes its label, else the running pass name', () {
+    gpu.gpuContext.createCommandBuffer(label: 'drape');
+    activeGpuPassLabel = 'ScenePass';
+    addTearDown(() => activeGpuPassLabel = null);
+    gpu.gpuContext.createCommandBuffer();
+    expect(_calls, ['buffer drape', 'buffer ScenePass']);
   });
 }

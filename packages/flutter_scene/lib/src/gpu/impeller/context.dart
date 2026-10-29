@@ -230,13 +230,16 @@ final class GpuContext {
     );
   }
 
-  /// Creates a command buffer that records and submits GPU work.
-  CommandBuffer createCommandBuffer() {
+  /// Creates a command buffer that records and submits GPU work. [label]
+  /// names it in a GPU capture or trace; Impeller has no label and drops it.
+  CommandBuffer createCommandBuffer({String? label}) {
     final impeller = _impeller;
     if (impeller != null) {
       return CommandBuffer._impeller(impeller.createCommandBuffer());
     }
-    return CommandBuffer._backend(_backend!.createCommandBuffer());
+    return CommandBuffer._backend(
+      _backend!.createCommandBuffer(label: label ?? activeGpuPassLabel),
+    );
   }
 
   /// Compiles the compute entry point [entryPoint] of the WGSL [source]; an
