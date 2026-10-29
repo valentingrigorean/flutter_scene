@@ -6,6 +6,17 @@ final class _WebGpuContext extends GpuContext {
 
   final WebGpuDevice device;
 
+  /// Whether a draw whose pipeline variant is unbuilt starts building it off
+  /// the GPU process's main thread and records nothing, inside
+  /// [_WebGpuHost.skipCompilingDraws].
+  bool skipsCompiling = false;
+
+  /// The draws skipped since [skipsCompiling] last turned on.
+  int skippedDraws = 0;
+
+  /// The variant builds under way, which [_WebGpuHost.pipelinesReady] awaits.
+  final Set<Future<void>> compiling = {};
+
   late final _SamplerCache samplers = _SamplerCache(device);
   late final _MipGenerator mipGenerator = _MipGenerator(device);
   late final WebGpuPresenter presenter = WebGpuPresenter(device);

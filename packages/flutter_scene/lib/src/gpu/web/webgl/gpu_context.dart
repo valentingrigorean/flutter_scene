@@ -49,6 +49,43 @@ final class WebGlContext extends GpuContext {
       clipControl.clipControlEXT(0x8CA1, 0x935F);
       _clipDepthZeroToOne = true;
     }
+    _parallelShaderCompile =
+        _gl.getExtension('KHR_parallel_shader_compile') != null;
+  }
+
+  // With KHR_parallel_shader_compile a compile or link runs off the page
+  // thread until a status read waits for it, so pipelines link without one and
+  // poll COMPLETION_STATUS_KHR instead.
+  bool _parallelShaderCompile = false;
+  final Set<WebGlRenderPipeline> _linkingPipelines = {};
+  bool _skipsLinkingDraws = false;
+  int _linkingDrawsSkipped = 0;
+
+  /// Completes once no pipeline created so far still links, polling once per
+  /// animation frame. A link that failed counts as finished, and its error
+  /// comes up where a draw binds the pipeline.
+  Future<void> pipelinesReady() async {
+    while (true) {
+      _linkingPipelines.removeWhere((pipeline) => pipeline._linkComplete);
+      if (_linkingPipelines.isEmpty) return;
+      final frame = Completer<void>();
+      web.window.requestAnimationFrame(((num _) => frame.complete()).toJS);
+      await frame.future;
+    }
+  }
+
+  /// Runs [record], during which a draw whose pipeline still links records
+  /// nothing, and returns how many draws it skipped.
+  int skipCompilingDraws(void Function() record) {
+    final skipping = _skipsLinkingDraws;
+    final before = _linkingDrawsSkipped;
+    _skipsLinkingDraws = true;
+    try {
+      record();
+    } finally {
+      _skipsLinkingDraws = skipping;
+    }
+    return _linkingDrawsSkipped - before;
   }
 
   bool _clipDepthZeroToOne = false;
@@ -288,6 +325,7 @@ final class WebGlContext extends GpuContext {
       // hot-reload generations from accumulating without bookkeeping.
       for (final pipeline in _pipelineCache.values) {
         _gl.deleteProgram(pipeline._program);
+        _linkingPipelines.remove(pipeline);
       }
       _pipelineCache.clear();
     }

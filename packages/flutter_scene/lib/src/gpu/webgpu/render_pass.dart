@@ -469,7 +469,7 @@ final class _WebGpuRenderPass extends RenderPass {
     _checkOpen();
     final pipeline = _bound('draw');
     if (vertexCount == 0 || instanceCount == 0) return;
-    _prepare(pipeline);
+    if (!_prepare(pipeline)) return;
     _encoder.draw(vertexCount, instanceCount);
   }
 
@@ -478,27 +478,33 @@ final class _WebGpuRenderPass extends RenderPass {
     _checkOpen();
     final pipeline = _bound('drawIndexed');
     if (indexCount == 0 || instanceCount == 0) return;
-    _prepareIndexed(pipeline, 'drawIndexed');
+    if (!_prepareIndexed(pipeline, 'drawIndexed')) return;
     _encoder.drawIndexed(indexCount, instanceCount);
   }
 
   @override
   void drawIndexedIndirect(BufferView arguments) {
     _checkOpen();
-    _prepareIndexed(_bound('drawIndexedIndirect'), 'drawIndexedIndirect');
+    if (!_prepareIndexed(
+      _bound('drawIndexedIndirect'),
+      'drawIndexedIndirect',
+    )) {
+      return;
+    }
     _encoder.drawIndexedIndirect(
       (arguments.buffer as _WebGpuDeviceBuffer).buffer,
       arguments.offsetInBytes,
     );
   }
 
-  /// Sets what [_prepare] sets, and the bound index buffer.
-  void _prepareIndexed(_WebGpuRenderPipeline pipeline, String call) {
+  /// Sets what [_prepare] sets, and the bound index buffer; false as
+  /// [_prepare].
+  bool _prepareIndexed(_WebGpuRenderPipeline pipeline, String call) {
     final index = _indexBuffer;
     if (index == null) {
       throw StateError('$call called before bindIndexBuffer');
     }
-    _prepare(pipeline);
+    if (!_prepare(pipeline)) return false;
     final buffer = index.buffer as _WebGpuDeviceBuffer;
     final encoded = _encodedIndex;
     if (encoded == null ||
@@ -512,10 +518,13 @@ final class _WebGpuRenderPass extends RenderPass {
       );
       _encodedIndex = (buffer, index.offsetInBytes, _indexType);
     }
+    return true;
   }
 
-  /// Sets the variant, bind group, and vertex buffers a draw needs.
-  void _prepare(_WebGpuRenderPipeline pipeline) {
+  /// Sets the variant, bind group, and vertex buffers a draw needs, or
+  /// returns false when the draw records nothing because its variant is still
+  /// building.
+  bool _prepare(_WebGpuRenderPipeline pipeline) {
     final sampled = pipeline.sampledTextures;
     final f32 = _context.float32Filterable;
     final slots = <GpuSampleSlot>[
@@ -533,13 +542,20 @@ final class _WebGpuRenderPass extends RenderPass {
           null => _defaultSampleSlot(slot, f32: f32),
         },
     ];
-    final variant = pipeline.variantFor(_state, _shape, slots);
+    final _PipelineVariant variant;
+    try {
+      variant = pipeline.variantFor(_state, _shape, slots);
+    } on _CompilingPipeline {
+      _context.skippedDraws++;
+      return false;
+    }
     if (!identical(variant.pipeline, _encodedPipeline)) {
       _encoder.setPipeline(variant.pipeline);
       _encodedPipeline = variant.pipeline;
     }
     _setBindGroup(pipeline, variant.bindings);
     _setVertexBuffers(pipeline);
+    return true;
   }
 
   static bool _filters(SamplerOptions? options) =>

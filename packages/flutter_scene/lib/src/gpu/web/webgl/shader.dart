@@ -139,7 +139,8 @@ final class WebGlShader extends Shader {
   /// Compile [source] (already in the target GLSL ES dialect) into this
   /// shader's `_glShader`. Internal use; callers (ShaderLibrary loader,
   /// inline factories) provide source that has been preprocessed if
-  /// necessary.
+  /// necessary. Where compiles run in parallel the status is read only when a
+  /// program linking this shader fails, so the page thread does not wait here.
   void _compile(String source) {
     final gl = _gpuContext._gl;
     final type = stage == ShaderStage.vertex
@@ -151,17 +152,14 @@ final class WebGlShader extends Shader {
     }
     gl.shaderSource(s, source);
     gl.compileShader(s);
-    final ok =
-        (gl.getShaderParameter(s, web.WebGL2RenderingContext.COMPILE_STATUS)
-                as JSBoolean?)
-            ?.toDart ??
-        false;
-    if (!ok) {
-      final log = gl.getShaderInfoLog(s) ?? '<no info log>';
-      gl.deleteShader(s);
-      throw Exception(
-        'Failed to compile ${stage.name} shader:\n$log\n--- source ---\n$source',
-      );
+    if (!_gpuContext._parallelShaderCompile) {
+      final log = _compileError(s);
+      if (log != null) {
+        gl.deleteShader(s);
+        throw Exception(
+          'Failed to compile ${stage.name} shader:\n$log\n--- source ---\n$source',
+        );
+      }
     }
     // On a hot-reload recompile, release the replaced shader object (linked
     // programs keep their own copy of the code, so this only frees the
@@ -170,5 +168,19 @@ final class WebGlShader extends Shader {
     if (previous != null) gl.deleteShader(previous);
     _glShader = s;
     _generation++;
+  }
+
+  /// The info log of [shader]'s failed compile, or null when it compiled.
+  String? _compileError(web.WebGLShader shader) {
+    final gl = _gpuContext._gl;
+    final ok =
+        (gl.getShaderParameter(
+                  shader,
+                  web.WebGL2RenderingContext.COMPILE_STATUS,
+                )
+                as JSBoolean?)
+            ?.toDart ??
+        false;
+    return ok ? null : gl.getShaderInfoLog(shader) ?? '<no info log>';
   }
 }

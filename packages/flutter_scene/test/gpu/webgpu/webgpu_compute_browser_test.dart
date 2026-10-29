@@ -88,7 +88,7 @@ void main() {
     expect(gpu.gpuHost.capabilities.compute, isTrue);
     expect(gpu.gpuHost.capabilities.indirectDraw, isTrue);
     final context = gpu.gpuContext;
-    final library = await webGpuShaderLibraryFromSidecar(_bundle, _sidecar());
+    final library = await webGpuShaderLibraryFromSidecar(_sidecar());
     final render = context.createRenderPipeline(
       library['CornerVertex']!,
       library['RedFragment']!,
