@@ -79,15 +79,16 @@ class GpuHost {
   /// Frees [texture]'s GPU memory now instead of when it is collected.
   ///
   /// [texture] must not be used again. Work already submitted is unaffected.
-  // TODO(gpu-release): flutter_gpu has no explicit release, so native memory
-  // still waits for the collector. Call it here once the API exists upstream.
-  void releaseTexture(Texture texture) {}
+  // TODO(gpu-release): flutter_gpu has no explicit release, so Impeller's
+  // memory still waits for the collector. Call it here once the API exists
+  // upstream.
+  void releaseTexture(Texture texture) => texture._backend?.destroy();
 
   /// Frees [buffer]'s GPU memory now instead of when it is collected.
   ///
   /// [buffer] must not be used again. Work already submitted is unaffected.
   // TODO(gpu-release): see releaseTexture.
-  void releaseBuffer(DeviceBuffer buffer) {}
+  void releaseBuffer(DeviceBuffer buffer) => buffer._backend?.destroy();
 }
 
 /// Readies the GPU backend. Flutter GPU needs nothing beyond the engine.

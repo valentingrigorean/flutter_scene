@@ -389,6 +389,11 @@ abstract interface class GpuBackendDeviceBuffer {
   /// Makes host writes to the range visible to the GPU; a [lengthInBytes] of
   /// -1 spans the rest of the buffer.
   void flush({required int offsetInBytes, required int lengthInBytes});
+
+  /// Frees the buffer's GPU memory now rather than when it becomes
+  /// unreachable; work already submitted keeps it. The buffer must not be
+  /// used afterwards, and a second call does nothing.
+  void destroy();
 }
 
 /// A per-frame bump allocator for transient data such as uniforms.
@@ -450,6 +455,12 @@ abstract interface class GpuBackendTexture {
 
   /// Hands the base level to Flutter as a `ui.Image`.
   ui.Image asImage();
+
+  /// Frees the texture's GPU memory now rather than when it becomes
+  /// unreachable; work already submitted keeps it. The texture must not be
+  /// used afterwards, and a second call does nothing. A texture a presenter
+  /// lent stays with the presenter.
+  void destroy();
 }
 
 /// The shaders of one loaded shader bundle.

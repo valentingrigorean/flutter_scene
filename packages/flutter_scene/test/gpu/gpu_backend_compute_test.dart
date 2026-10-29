@@ -85,6 +85,9 @@ final class _Buffer implements GpuBackendDeviceBuffer {
   final int sizeInBytes;
 
   @override
+  void destroy() => _calls.add('destroy $sizeInBytes');
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -184,5 +187,12 @@ void main() {
     addTearDown(() => activeGpuPassLabel = null);
     gpu.gpuContext.createCommandBuffer();
     expect(_calls, ['buffer drape', 'buffer ScenePass']);
+  });
+
+  test('releasing a buffer destroys it on the registered backend', () {
+    gpu.gpuHost.releaseBuffer(
+      gpu.gpuContext.createDeviceBuffer(StorageMode.devicePrivate, 64),
+    );
+    expect(_calls, ['destroy 64']);
   });
 }
