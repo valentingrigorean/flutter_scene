@@ -38,6 +38,10 @@ final class WebGlRenderPass extends RenderPass {
   WebGlRenderPipeline? _boundPipeline;
   web.WebGLVertexArrayObject? _vao;
 
+  // Set while the bound pipeline still links inside
+  // WebGlContext.skipCompilingDraws: its binds and draws record nothing.
+  bool _skipsDraws = false;
+
   /// Vertex-stream bindings recorded since the last [clearBindings], applied
   /// through the VAO cache when the draw is issued: (view, slot, whether the
   /// stream is instance-rate).
@@ -217,6 +221,10 @@ final class WebGlRenderPass extends RenderPass {
   @override
   void bindPipeline(RenderPipeline pipeline) {
     final gl = _gpuContext._gl;
+    _skipsDraws =
+        _gpuContext._skipsLinkingDraws && !pipeline.webGl._linkComplete;
+    if (_skipsDraws) return;
+    pipeline.webGl._finishLink();
     _boundPipeline = pipeline.webGl;
     gl.useProgram(pipeline.webGl._program);
     // Give every active uniform block a valid (zeroed) buffer up front, so a
@@ -227,6 +235,7 @@ final class WebGlRenderPass extends RenderPass {
 
   @override
   void bindVertexBuffer(BufferView bufferView, {int slot = 0}) {
+    if (_skipsDraws) return;
     final pipeline = _boundPipeline;
     if (pipeline == null) {
       throw StateError('bindVertexBuffer called before bindPipeline');
@@ -426,6 +435,7 @@ final class WebGlRenderPass extends RenderPass {
 
   @override
   void bindUniform(UniformSlot slot, BufferView bufferView) {
+    if (_skipsDraws) return;
     final pipeline = _boundPipeline;
     if (pipeline == null) {
       throw StateError('bindUniform called before bindPipeline');
@@ -562,6 +572,7 @@ final class WebGlRenderPass extends RenderPass {
     SamplerOptions? sampler,
   }) {
     assert(texture.isValid, 'A released Texture was bound.');
+    if (_skipsDraws) return;
     final pipeline = _boundPipeline;
     if (pipeline == null) {
       throw StateError('bindTexture called before bindPipeline');
@@ -966,6 +977,10 @@ final class WebGlRenderPass extends RenderPass {
   @override
   void draw(int vertexCount, {int instanceCount = 1}) {
     final gl = _gpuContext._gl;
+    if (_skipsDraws) {
+      _gpuContext._linkingDrawsSkipped++;
+      return;
+    }
     if (_boundPipeline == null) {
       throw StateError('draw called before bindPipeline');
     }
@@ -987,6 +1002,10 @@ final class WebGlRenderPass extends RenderPass {
   @override
   void drawIndexed(int indexCount, {int instanceCount = 1}) {
     final gl = _gpuContext._gl;
+    if (_skipsDraws) {
+      _gpuContext._linkingDrawsSkipped++;
+      return;
+    }
     if (_boundPipeline == null) {
       throw StateError('drawIndexed called before bindPipeline');
     }

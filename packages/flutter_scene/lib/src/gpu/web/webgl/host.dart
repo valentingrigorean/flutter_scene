@@ -19,6 +19,17 @@ final class WebGlHost extends GpuHost {
     compute: false,
   );
 
+  /// Completes once no pipeline created so far still links.
+  @override
+  Future<void> pipelinesReady() => webGlContext.pipelinesReady();
+
+  /// Runs [record], during which a draw whose pipeline still links records
+  /// nothing, and returns how many draws it skipped. A draw outside it waits
+  /// for its pipeline's link.
+  @override
+  int skipCompilingDraws(void Function() record) =>
+      webGlContext.skipCompilingDraws(record);
+
   /// Hands [texture] to Flutter as a `ui.Image`.
   @override
   ui.Image textureToImage(Texture texture) => texture.asImage();

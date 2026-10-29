@@ -36,17 +36,70 @@ final class WebGlRenderPipeline extends RenderPipeline {
     }
 
     gl.linkProgram(program);
+    if (_gpuContext._parallelShaderCompile) {
+      _linking = true;
+      _gpuContext._linkingPipelines.add(this);
+    } else {
+      _checkLink();
+    }
+  }
+
+  // True from a parallel link until the first bind after it completes.
+  bool _linking = false;
+  bool _completed = false;
+  Exception? _linkError;
+
+  /// Whether the browser has finished linking this pipeline's program; reads
+  /// COMPLETION_STATUS_KHR, which never waits.
+  bool get _linkComplete =>
+      !_linking ||
+      (_completed |=
+          (_gpuContext._gl.getProgramParameter(
+                    _program,
+                    0x91B1, // COMPLETION_STATUS_KHR
+                  )
+                  as JSBoolean?)
+              ?.toDart ??
+          true);
+
+  /// Makes the program usable: checks a parallel link, waiting for it when it
+  /// has not completed, and throws the link error on every bind of a program
+  /// that failed.
+  void _finishLink() {
+    if (_linking) {
+      _linking = false;
+      _gpuContext._linkingPipelines.remove(this);
+      try {
+        _checkLink();
+      } on Exception catch (error) {
+        _linkError = error;
+      }
+    }
+    final error = _linkError;
+    if (error != null) throw error;
+  }
+
+  void _checkLink() {
+    final gl = _gpuContext._gl;
     final ok =
-        (gl.getProgramParameter(program, web.WebGL2RenderingContext.LINK_STATUS)
+        (gl.getProgramParameter(
+                  _program,
+                  web.WebGL2RenderingContext.LINK_STATUS,
+                )
                 as JSBoolean?)
             ?.toDart ??
         false;
     if (!ok) {
-      final log = gl.getProgramInfoLog(program) ?? '<no info log>';
-      gl.deleteProgram(program);
+      final log = [
+        gl.getProgramInfoLog(_program) ?? '<no info log>',
+        for (final shader in [vertexShader, fragmentShader])
+          if (shader._glShader case final glShader?)
+            if (shader._compileError(glShader) case final error?)
+              '${shader.stage.name} shader: $error',
+      ].join('\n');
+      gl.deleteProgram(_program);
       throw Exception('Failed to link program: $log');
     }
-
     _buildUniformCaches();
   }
 
