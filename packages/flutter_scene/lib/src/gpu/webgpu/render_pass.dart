@@ -4,8 +4,10 @@ part of 'webgpu_backend.dart';
 /// submits them together. Starting a pass ends the previous one, as on
 /// WebGL2.
 final class _WebGpuCommandBuffer extends CommandBuffer {
-  _WebGpuCommandBuffer(this._context)
-    : _encoder = _context.device.device.createCommandEncoder();
+  _WebGpuCommandBuffer(this._context, String? label)
+    : _encoder = _context.device.device.createCommandEncoder(
+        _obj({'label': ?label}),
+      );
 
   final _WebGpuContext _context;
   final GPUCommandEncoder _encoder;
@@ -24,9 +26,14 @@ final class _WebGpuCommandBuffer extends CommandBuffer {
   }
 
   @override
-  RenderPass createRenderPass(RenderTarget renderTarget) {
+  RenderPass createRenderPass(RenderTarget renderTarget, {String? label}) {
     _endPass();
-    return _active = _WebGpuRenderPass(_context, _encoder, renderTarget);
+    return _active = _WebGpuRenderPass(
+      _context,
+      _encoder,
+      renderTarget,
+      label ?? activeGpuPassLabel,
+    );
   }
 
   @override
@@ -132,7 +139,12 @@ typedef _BoundUniform = ({_WebGpuDeviceBuffer buffer, int offset, int length});
 typedef _BoundTexture = ({_WebGpuTexture texture, SamplerOptions? sampler});
 
 final class _WebGpuRenderPass extends RenderPass {
-  _WebGpuRenderPass(this._context, GPUCommandEncoder encoder, this._target) {
+  _WebGpuRenderPass(
+    this._context,
+    GPUCommandEncoder encoder,
+    this._target,
+    String? label,
+  ) {
     final colors = _target.colorAttachments;
     if (colors.isEmpty) {
       throw Exception('RenderTarget must have at least one color attachment');
@@ -150,6 +162,7 @@ final class _WebGpuRenderPass extends RenderPass {
     );
     _encoder = encoder.beginRenderPass(
       _obj({
+        'label': ?label,
         'colorAttachments': [for (final c in colors) _colorAttachment(c)],
         if (depth != null && depthTexture != null)
           'depthStencilAttachment': _depthAttachment(depth, depthTexture),

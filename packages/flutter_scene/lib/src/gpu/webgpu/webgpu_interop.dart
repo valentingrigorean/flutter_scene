@@ -74,7 +74,7 @@ extension type GPUDevice._(JSObject _) implements JSObject {
   external GPUSupportedFeatures get features;
   external GPUSupportedLimits get limits;
   external JSPromise<GPUDeviceLostInfo> get lost;
-  external GPUCommandEncoder createCommandEncoder();
+  external GPUCommandEncoder createCommandEncoder([JSObject? descriptor]);
   external GPUBuffer createBuffer(GPUBufferDescriptor descriptor);
   external GPUTexture createTexture(JSObject descriptor);
   external GPUSampler createSampler(JSObject descriptor);

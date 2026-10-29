@@ -246,7 +246,8 @@ final class WebGlContext extends GpuContext {
   }
 
   @override
-  CommandBuffer createCommandBuffer() => WebGlCommandBuffer._(this);
+  CommandBuffer createCommandBuffer({String? label}) =>
+      WebGlCommandBuffer._(this);
 
   // Linked-program cache. Program linking is expensive and some callers
   // create a pipeline per draw per frame; native flutter_gpu absorbs that,

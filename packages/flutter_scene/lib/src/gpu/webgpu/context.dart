@@ -190,7 +190,8 @@ final class _WebGpuContext extends GpuContext {
   }
 
   @override
-  CommandBuffer createCommandBuffer() => _WebGpuCommandBuffer(this);
+  CommandBuffer createCommandBuffer({String? label}) =>
+      _WebGpuCommandBuffer(this, label ?? activeGpuPassLabel);
 
   @override
   ComputePipeline createComputePipeline(

@@ -11,7 +11,7 @@ final class WebGlCommandBuffer extends CommandBuffer {
   WebGlRenderPass? _activePass;
 
   @override
-  RenderPass createRenderPass(RenderTarget renderTarget) {
+  RenderPass createRenderPass(RenderTarget renderTarget, {String? label}) {
     // Starting a new pass ends the previous one (triggers its MSAA resolve),
     // so a subsequent pass that samples the resolve texture sees finished
     // contents.

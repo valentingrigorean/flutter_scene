@@ -1,5 +1,6 @@
 ## 0.24.4
 
+* `GpuContext.createCommandBuffer` and `CommandBuffer.createRenderPass` take a `label` that names the work in a GPU capture or trace on a native GPU backend and on WebGPU; a render graph pass labels the work it records with its name.
 * `Scene.frameImageOf` makes the image a screen view draws of its frame, so a host whose canvas cannot cheaply turn a texture into an image can show a frame it decoded itself.
 * `reopenGpuContext` opens the GPU backend's context again after its device is lost, and the scene's fullscreen quads, placeholder textures, texture cache, static resources and frame pools are made again on the new device; `gpuContextGeneration` counts the reopens.
 * A frame pool drops its buffers from a lost device before the next submission, so a submission between the reopen and the next frame no longer writes to the lost device.
