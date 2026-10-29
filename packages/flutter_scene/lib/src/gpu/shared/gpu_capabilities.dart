@@ -43,6 +43,7 @@ class GpuCapabilities {
     this.timestampQueries = false,
     this.aheadOfTimePipelines = false,
     this.float32Blending = true,
+    this.orderedAttachmentReuse = false,
   });
 
   /// A rendered texture can be handed to Flutter as a `ui.Image` without a
@@ -83,6 +84,14 @@ class GpuCapabilities {
   /// caller that sums into a float target picks a 16-bit float one instead.
   final bool float32Blending;
 
+  /// The device orders the GPU work of successive submits that render into
+  /// one attachment, so a frame can render into an attachment the GPU is
+  /// still rendering an earlier frame into.
+  ///
+  /// Where this is true, a render graph keeps one texture for an attachment
+  /// no shader samples, in place of one for each frame in flight.
+  final bool orderedAttachmentReuse;
+
   /// The tier these capabilities add up to.
   GpuHostTier get hostTier {
     if (!textureToImage && !presentAsImage) return GpuHostTier.headless;
@@ -97,7 +106,8 @@ class GpuCapabilities {
       'compute: $compute, indirectDraw: $indirectDraw, '
       'textureArrays: $textureArrays, timestampQueries: $timestampQueries, '
       'aheadOfTimePipelines: $aheadOfTimePipelines, '
-      'float32Blending: $float32Blending)';
+      'float32Blending: $float32Blending, '
+      'orderedAttachmentReuse: $orderedAttachmentReuse)';
 }
 
 /// A native GPU backend the shim can render through.
