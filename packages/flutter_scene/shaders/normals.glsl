@@ -46,9 +46,10 @@ mat3 CotangentFrame(vec3 normal, highp vec3 view_vector, highp vec2 uv) {
 }
 
 mat3 TangentFrame(vec3 normal, highp vec3 view_vector, highp vec2 uv) {
-  // The cotangent frame's derivatives are taken before the per-vertex branch
-  // and the function returns once, so they stay out of divergent control flow
-  // and out of the one pass loop an early return compiles to.
+  // The derived frame is built before the branch on the vertex tangent and the
+  // function returns once, so its derivatives stay out of varying control flow
+  // and out of the one-iteration loop an early return compiles to, inside
+  // which ANGLE writes a derivative as 0.0.
   mat3 frame = CotangentFrame(normal, view_vector, uv);
   vec4 authored = GetWorldTangent();
   highp vec3 tangent = authored.xyz - normal * dot(normal, authored.xyz);

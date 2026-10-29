@@ -292,6 +292,7 @@ Future<Node> _buildScene(
         bufferViews: doc.bufferViews,
         bufferData: bufferData,
         engineNodes: engineNodes,
+        lights: doc.lights,
         coordinatePolicy: GltfCoordinatePolicy.runtimeBoundary,
       ),
     );

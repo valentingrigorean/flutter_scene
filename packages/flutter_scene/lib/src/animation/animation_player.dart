@@ -50,7 +50,22 @@ class AnimationPlayer {
     AnimationTransforms transforms,
     _ChannelBinding binding,
   ) {
-    if (binding.channel.bindTarget.property != AnimationProperty.weights) {
+    final bindTarget = binding.channel.bindTarget;
+    final path = bindTarget.path;
+    if (bindTarget.property == AnimationProperty.path && path != null) {
+      if (transforms.paths.containsKey(path)) return;
+      final target = resolveAnimatedPath(binding.node, path);
+      if (target == null) {
+        debugPrint(
+          'Animation channel path "$path" has nothing to drive on node '
+          '"${binding.node.name}"; skipped',
+        );
+        return;
+      }
+      transforms.paths[path] = AnimatedPathState(target);
+      return;
+    }
+    if (bindTarget.property != AnimationProperty.weights) {
       transforms.drivesTransform = true;
       return;
     }
@@ -163,6 +178,9 @@ class AnimationPlayer {
       if (bindWeights != null) {
         transforms.animatedMorphWeights!.setAll(0, bindWeights);
       }
+      for (final state in transforms.paths.values) {
+        state.animated.setAll(0, state.bind);
+      }
     }
 
     // Compute a weight multiplier for normalizing the animation.
@@ -189,6 +207,9 @@ class AnimationPlayer {
       final animatedWeights = transforms.animatedMorphWeights;
       if (animatedWeights != null && node.internalMorphWeights != null) {
         node.setMorphWeights(animatedWeights);
+      }
+      for (final state in transforms.paths.values) {
+        state.flush();
       }
     }
   }

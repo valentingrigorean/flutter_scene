@@ -42,7 +42,7 @@ dependencies:
     git:
       url: https://github.com/valentingrigorean/flutter_scene.git
       path: packages/scene
-      ref: aaa6e0f8753a34eb856b736b25dd15b737a57a6d
+      ref: bb36f44439798f7aae110867ec6ec254d3940552
   # Offline glTF import (build hook + CLI) arg parsing. Build-time only.
   args: ^2.5.0
   collection: ^1.19.0

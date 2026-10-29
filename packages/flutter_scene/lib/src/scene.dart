@@ -3019,9 +3019,10 @@ base class Scene implements SceneGraph {
     );
     final TransientWriter transientsBuffer = uniformTransients;
 
-    // A frame whose screen views will re-present their previous images skips
-    // the texture views too. Rendering them anyway keeps the GPU a frame
-    // behind, so the screen views would pace indefinitely.
+    // A frame whose screen views will all re-present their previous images
+    // (the held frame below) skips the texture views too. Rendering them
+    // anyway keeps the GPU a frame behind, so the screen views would pace
+    // indefinitely.
     final screenViews = [
       for (final view in views)
         if (view.target == null) view,
@@ -3226,7 +3227,9 @@ base class Scene implements SceneGraph {
     final now = DateTime.now();
     for (final view in textureViews) {
       final target = view.target!;
-      if (pacingFrame || !target.shouldUpdate(now)) {
+      // A frame that gets here is not held, so its texture views render even
+      // while a screen view of it re-presents.
+      if (!target.shouldUpdate(now)) {
         continue;
       }
       final deferred = deferredPipelineBuilds;
