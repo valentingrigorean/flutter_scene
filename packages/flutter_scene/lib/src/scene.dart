@@ -3778,6 +3778,9 @@ base class Scene implements SceneGraph {
             state,
           )
         : null;
+    final floatDepth =
+        DepthRaster.depthStencilFormatFor(reversed: reversedDepth) ==
+        gpu.PixelFormat.d32FloatS8UInt;
     if (fittable) {
       assert(() {
         if (!fitNearPlane) {
@@ -3792,16 +3795,20 @@ base class Scene implements SceneGraph {
           state.fitted = previous;
         }
         final fit = state.last;
-        if (fit != null) _reportNearPlane(fit, fitEnabled: fitNearPlane);
+        if (fit != null) {
+          _reportNearPlane(
+            fit,
+            fitEnabled: fitNearPlane,
+            reversedFloatDepth: reversedDepth && floatDepth,
+          );
+        }
         return true;
       }());
     }
     final raster = DepthRaster(
       reversed: reversedDepth,
       near: near,
-      floatDepth:
-          DepthRaster.depthStencilFormatFor(reversed: reversedDepth) ==
-          gpu.PixelFormat.d32FloatS8UInt,
+      floatDepth: floatDepth,
       tieBreak: coplanarTieBreak,
     );
     assert(() {
@@ -3958,7 +3965,11 @@ base class Scene implements SceneGraph {
   final Set<String> _warnedNearPlane = {};
 
   // Debug-only. Prints the near-plane advisory for [fit] once.
-  void _reportNearPlane(NearPlaneFit fit, {required bool fitEnabled}) {
+  void _reportNearPlane(
+    NearPlaneFit fit, {
+    required bool fitEnabled,
+    required bool reversedFloatDepth,
+  }) {
     final node = fit.nearestNode;
     final nodeName = node is Node ? node.name : null;
     final latch = fitEnabled ? 'pinned:${nodeName ?? ''}' : 'unfitted';
@@ -3967,6 +3978,7 @@ base class Scene implements SceneGraph {
       fit,
       fitEnabled: fitEnabled,
       nodeName: nodeName,
+      reversedFloatDepth: reversedFloatDepth,
     );
     if (message == null) return;
     _warnedNearPlane.add(latch);
