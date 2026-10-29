@@ -1,5 +1,6 @@
 ## 0.24.4
 
+* `gpuHost.releaseBuffer` and `gpuHost.releaseTexture` free a buffer or texture of a registered native GPU backend at once, through the new `GpuBackendDeviceBuffer.destroy` and `GpuBackendTexture.destroy`, rather than when it is collected; on Impeller they still wait for the collector.
 * `GpuCapabilities.orderedAttachmentReuse` states that a device orders the frames that render into one attachment; there the render graph keeps one texture for each attachment no shader samples, such as the multisampled scene color and depth, in place of one per frame in flight.
 * `GpuContext.createCommandBuffer` and `CommandBuffer.createRenderPass` take a `label` that names the work in a GPU capture or trace on a native GPU backend and on WebGPU; a render graph pass labels the work it records with its name.
 * `Scene.frameImageOf` makes the image a screen view draws of its frame, so a host whose canvas cannot cheaply turn a texture into an image can show a frame it decoded itself.
