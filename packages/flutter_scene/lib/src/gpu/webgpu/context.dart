@@ -9,6 +9,7 @@ final class _WebGpuContext extends GpuContext {
   late final _SamplerCache samplers = _SamplerCache(device);
   late final _MipGenerator mipGenerator = _MipGenerator(device);
   late final WebGpuPresenter presenter = WebGpuPresenter(device);
+  late final _WordPatcher wordPatcher = _WordPatcher(device.device);
 
   /// Whether 32-bit float targets blend, and filter when sampled.
   late final bool float32Blendable = device.hasFeature('float32-blendable');
@@ -97,12 +98,7 @@ final class _WebGpuContext extends GpuContext {
 
   @override
   DeviceBuffer createDeviceBuffer(StorageMode storageMode, int sizeInBytes) =>
-      _WebGpuDeviceBuffer._(
-        this,
-        storageMode,
-        sizeInBytes,
-        shadowed: storageMode == StorageMode.hostVisible,
-      );
+      _WebGpuDeviceBuffer(this, storageMode, sizeInBytes);
 
   @override
   DeviceBuffer createDeviceBufferWithCopy(ByteData data) {

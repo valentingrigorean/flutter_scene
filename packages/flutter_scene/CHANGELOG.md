@@ -1,5 +1,6 @@
 ## 0.24.4
 
+* A buffer on the WebGPU web backend keeps no CPU copy of its contents: a write that covers part of a 4-byte word merges its bytes into the word on the GPU.
 * The debug near-plane advisory no longer prints for a scene with reversed float depth, whose precision the near plane leaves alone.
 * A shader library on the WebGPU web backend compiles a shader when it is first looked up, not every shader of its bundle at load, so the first frame of a page waits on the shaders it draws with alone. A WGSL compile error reaches `FlutterError.reportError` once the browser has checked the shader.
 * `gpuHost.releaseBuffer` and `gpuHost.releaseTexture` free a buffer or texture of a registered native GPU backend at once, through the new `GpuBackendDeviceBuffer.destroy` and `GpuBackendTexture.destroy`, rather than when it is collected; on Impeller they still wait for the collector.

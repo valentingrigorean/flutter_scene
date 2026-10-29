@@ -95,6 +95,28 @@ void main() {
       expect(Uint16List.sublistView(bytes, 8, 14), [0, 1, 2]);
     });
 
+    test('an unaligned write lands without a CPU copy of the buffer', () async {
+      final split = gpu.createGeometryBuffers(12, 0);
+      gpu.writeGeometryData(
+        split.vertex,
+        Uint8List.fromList(List<int>.generate(12, (i) => i + 1)),
+        destinationOffsetInBytes: 0,
+      );
+      gpu.writeGeometryData(
+        split.vertex,
+        Uint8List.fromList([50, 60, 70, 80, 90]),
+        destinationOffsetInBytes: 3,
+      );
+      gpu.writeGeometryData(
+        split.vertex,
+        Uint8List.fromList([99]),
+        destinationOffsetInBytes: 10,
+      );
+      expect(await webGpuReadBuffer(split.vertex, length: 12), [
+        1, 2, 3, 50, 60, 70, 80, 90, 9, 10, 99, 12, //
+      ]);
+    });
+
     test('host buffer emplacements honor the uniform alignment', () async {
       final host = gpu.gpuContext.createHostBuffer();
       final alignment = gpu.gpuContext.minimumUniformByteAlignment;
