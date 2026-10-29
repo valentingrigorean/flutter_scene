@@ -1,5 +1,6 @@
 ## 0.24.4
 
+* `Scene.frameImageOf` makes the image a screen view draws of its frame, so a host whose canvas cannot cheaply turn a texture into an image can show a frame it decoded itself.
 * `reopenGpuContext` opens the GPU backend's context again after its device is lost, and the scene's fullscreen quads, placeholder textures, texture cache, static resources and frame pools are made again on the new device; `gpuContextGeneration` counts the reopens.
 * A frame pool drops its buffers from a lost device before the next submission, so a submission between the reopen and the next frame no longer writes to the lost device.
 * `GpuBackendPresenter.acquireFrame` returns a `GpuBackendAcquired`: the `GpuBackendLent` buffer, or `GpuBackendUnlent.format` (render into a texture of its own and `present` it) or `GpuBackendUnlent.busy` (the texture keeps its frame).

@@ -746,6 +746,18 @@ base class Scene implements SceneGraph {
   /// {@category Rendering}
   int maxGpuFramesInFlight = 1;
 
+  /// Makes the image a screen view draws of [frame], the color texture it
+  /// rendered or the previous one a paced frame shows again, in place of
+  /// `gpuHost.textureToImage`; null keeps that.
+  ///
+  /// The scene draws the image over the view's area, stretched from its own
+  /// size, and owns it, so the callback hands over an image of its own, such
+  /// as a clone. Returning null draws nothing for the view. A
+  /// host whose canvas only makes an image of a texture at many times its
+  /// pixels can show the last frame it decoded from pixels instead.
+  /// {@category Rendering}
+  ui.Image? Function(gpu.Texture frame, int viewIndex)? frameImageOf;
+
   // The frame's shared spot and point shadow tiles while render() runs.
   SharedShadowAtlas? _sharedShadowAtlas;
   RenderView? _sharedShadowAnchor;
@@ -3542,14 +3554,10 @@ base class Scene implements SceneGraph {
       final previous = surface.lastSwapchainColorTexture(i);
       final viewArea = _viewDrawArea(drawArea, view.viewport);
       if (previous == null || viewArea.isEmpty) continue;
-      canvas.drawImageRect(
-        previous.asImage(),
-        ui.Rect.fromLTWH(
-          0,
-          0,
-          previous.width.toDouble(),
-          previous.height.toDouble(),
-        ),
+      _drawFrameImage(
+        canvas,
+        previous,
+        i,
         viewArea,
         ui.Paint()..filterQuality = view.filterQuality ?? filterQuality,
       );
@@ -3645,15 +3653,9 @@ base class Scene implements SceneGraph {
         rendererSubmissions.priorFramesInFlight >= maxGpuFramesInFlight) {
       _pacedFrameCount++;
       _holdPace();
-      final srcRect = ui.Rect.fromLTWH(0, 0, pixelSize.width, pixelSize.height);
       final paint = ui.Paint()
         ..filterQuality = view.filterQuality ?? filterQuality;
-      canvas.drawImageRect(
-        gpu.gpuHost.textureToImage(previous),
-        srcRect,
-        drawArea,
-        paint,
-      );
+      _drawFrameImage(canvas, previous, viewIndex, drawArea, paint);
       return;
     }
 
@@ -3698,11 +3700,30 @@ base class Scene implements SceneGraph {
       }
     }
 
-    final image = gpu.gpuHost.textureToImage(swapchainColor);
-    final srcRect = ui.Rect.fromLTWH(0, 0, pixelSize.width, pixelSize.height);
     final paint = ui.Paint()
       ..filterQuality = view.filterQuality ?? filterQuality;
-    canvas.drawImageRect(image, srcRect, drawArea, paint);
+    _drawFrameImage(canvas, swapchainColor, viewIndex, drawArea, paint);
+  }
+
+  // Draws the image of a screen view's [frame] over [area].
+  void _drawFrameImage(
+    ui.Canvas canvas,
+    gpu.Texture frame,
+    int viewIndex,
+    ui.Rect area,
+    ui.Paint paint,
+  ) {
+    final made = frameImageOf;
+    final image = made == null
+        ? gpu.gpuHost.textureToImage(frame)
+        : made(frame, viewIndex);
+    if (image == null) return;
+    canvas.drawImageRect(
+      image,
+      ui.Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+      area,
+      paint,
+    );
   }
 
   // How [view]'s passes rasterize depth for a view of [viewportSize] logical
