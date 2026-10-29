@@ -80,6 +80,9 @@ extension type GPUDevice._(JSObject _) implements JSObject {
   external GPUSampler createSampler(JSObject descriptor);
   external GPUShaderModule createShaderModule(JSObject descriptor);
   external GPURenderPipeline createRenderPipeline(JSObject descriptor);
+  external JSPromise<GPURenderPipeline> createRenderPipelineAsync(
+    JSObject descriptor,
+  );
   external GPUComputePipeline createComputePipeline(JSObject descriptor);
   external GPUBindGroup createBindGroup(JSObject descriptor);
   external GPUBindGroupLayout createBindGroupLayout(JSObject descriptor);

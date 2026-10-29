@@ -1,6 +1,8 @@
 ## 0.24.4
 
 * The debug near-plane advisory no longer prints for a scene with reversed float depth, whose precision the near plane leaves alone.
+* On the WebGPU web backend, `gpuHost.skipCompilingDraws` skips a draw whose pipeline variant is unbuilt and builds it with `createRenderPipelineAsync`, off the GPU process's main thread, and `gpuHost.pipelinesReady` completes once those builds finish, so a warm-up builds pipelines without stalling the page's frames.
+* A generated asset read as text on the web is decoded by the browser.
 * A shader library on the WebGPU web backend loads its WGSL sidecar alone and never fetches the bundle it sits next to, which only the WebGL2 backend reads.
 * A shader library on the WebGPU web backend compiles a shader when it is first looked up, not every shader of its bundle at load, so the first frame of a page waits on the shaders it draws with alone. A WGSL compile error reaches `FlutterError.reportError` once the browser has checked the shader.
 * `gpuHost.releaseBuffer` and `gpuHost.releaseTexture` free a buffer or texture of a registered native GPU backend at once, through the new `GpuBackendDeviceBuffer.destroy` and `GpuBackendTexture.destroy`, rather than when it is collected; on Impeller they still wait for the collector.

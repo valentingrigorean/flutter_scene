@@ -193,6 +193,36 @@ void main() {
     return bytes.sublist(i, i + 4);
   }
 
+  test('a draw whose pipeline is still compiling records nothing until '
+      'the pipelines are ready', () async {
+    final fresh = gpu.gpuContext.createRenderPipeline(vertex, fragment);
+    void record() {
+      final host = gpu.gpuContext.createHostBuffer();
+      final commands = gpu.gpuContext.createCommandBuffer();
+      commands.createRenderPass(
+          gpu.RenderTarget.singleColor(gpu.ColorAttachment(texture: target())),
+        )
+        ..bindPipeline(fresh)
+        ..setPrimitiveType(gpu.PrimitiveType.triangleStrip)
+        ..bindVertexBuffer(corners)
+        ..bindUniform(
+          vertex.getUniformSlot('Quad'),
+          host.emplace(_floats([-1, -1, 1, 1, 0.5, 0, 0, 0])),
+        )
+        ..bindUniform(
+          fragment.getUniformSlot('Tint'),
+          host.emplace(_floats([1, 1, 1, 1])),
+        )
+        ..bindTexture(fragment.getUniformSlot('albedo'), white)
+        ..draw(4);
+      commands.submit();
+    }
+
+    expect(gpu.gpuHost.skipCompilingDraws(record), 1);
+    await gpu.gpuHost.pipelinesReady();
+    expect(gpu.gpuHost.skipCompilingDraws(record), 0);
+  });
+
   test('a tinted, textured quad lands in its target', () async {
     final color = target();
     final host = gpu.gpuContext.createHostBuffer();

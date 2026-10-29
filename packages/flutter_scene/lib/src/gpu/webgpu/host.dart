@@ -32,6 +32,38 @@ final class _WebGpuHost extends GpuHost {
         transferOwnership: transferOwnership,
       );
 
+  /// Runs [record], during which a draw whose pipeline variant is unbuilt
+  /// records nothing and starts building it with `createRenderPipelineAsync`,
+  /// off the GPU process's main thread; returns how many draws it skipped.
+  @override
+  int skipCompilingDraws(void Function() record) {
+    final context = _backend.context;
+    if (context.skipsCompiling) {
+      final before = context.skippedDraws;
+      record();
+      return context.skippedDraws - before;
+    }
+    context
+      ..skipsCompiling = true
+      ..skippedDraws = 0;
+    try {
+      record();
+      return context.skippedDraws;
+    } finally {
+      context.skipsCompiling = false;
+    }
+  }
+
+  /// Completes once every variant [skipCompilingDraws] started has finished
+  /// building, whether it built or the browser refused it.
+  @override
+  Future<void> pipelinesReady() async {
+    final compiling = _backend.context.compiling;
+    while (compiling.isNotEmpty) {
+      await Future.wait([...compiling]);
+    }
+  }
+
   /// Destroys [texture]'s `GPUTexture`, which WebGPU defers until submitted
   /// work using it completes.
   @override
