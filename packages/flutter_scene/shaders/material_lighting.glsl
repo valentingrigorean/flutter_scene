@@ -236,8 +236,9 @@ vec3 MultiBounceOcclusion(float visibility, vec3 albedo) {
 
 // Widens a specular lobe to cover unresolved normal variation in one pixel.
 float SpecularAARoughness(vec3 normal, float roughness) {
-  // The derivatives sit outside any branch and the function returns once, so
-  // no backend wraps them in the one pass loop an early return compiles to.
+  // Derivatives come before the branch and the function returns once. An
+  // early return compiles to a one-iteration loop, and ANGLE writes a
+  // derivative inside such a loop as 0.0.
   vec3 d_normal_x = dFdx(normal);
   vec3 d_normal_y = dFdy(normal);
   float filtered = roughness;
