@@ -1,5 +1,6 @@
 ## 0.24.4
 
+* `GpuCapabilities.orderedAttachmentReuse` states that a device orders the frames that render into one attachment; there the render graph keeps one texture for each attachment no shader samples, such as the multisampled scene color and depth, in place of one per frame in flight.
 * `GpuContext.createCommandBuffer` and `CommandBuffer.createRenderPass` take a `label` that names the work in a GPU capture or trace on a native GPU backend and on WebGPU; a render graph pass labels the work it records with its name.
 * `Scene.frameImageOf` makes the image a screen view draws of its frame, so a host whose canvas cannot cheaply turn a texture into an image can show a frame it decoded itself.
 * `reopenGpuContext` opens the GPU backend's context again after its device is lost, and the scene's fullscreen quads, placeholder textures, texture cache, static resources and frame pools are made again on the new device; `gpuContextGeneration` counts the reopens.
