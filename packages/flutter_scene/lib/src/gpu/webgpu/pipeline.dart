@@ -434,6 +434,12 @@ final class _PipelineVariant {
   String? error;
 }
 
+/// Thrown from a draw inside [_WebGpuHost.skipCompilingDraws] whose variant
+/// is still building, so the draw records nothing.
+final class _CompilingPipeline implements Exception {
+  const _CompilingPipeline();
+}
+
 /// Thrown from a draw whose pipeline WebGPU refuses, before anything is
 /// encoded, so the renderer skips the draw (and, if it keeps failing, the
 /// pipeline) instead of losing the whole command buffer to it.
@@ -480,6 +486,7 @@ final class _WebGpuRenderPipeline extends RenderPipeline {
   final VertexLayout? vertexLayout;
 
   final Map<_VariantKey, _PipelineVariant> _variants = {};
+  final Map<_VariantKey, Future<void>> _compiling = {};
   int _vertexGeneration = -1;
   int _fragmentGeneration = -1;
 
@@ -544,6 +551,10 @@ final class _WebGpuRenderPipeline extends RenderPipeline {
       GpuSampleSignature(slots),
       float32Blendable: _context.float32Blendable,
     );
+    if (!_variants.containsKey(key) && _context.skipsCompiling) {
+      _compiling[key] ??= _buildAhead(key, slots);
+      throw const _CompilingPipeline();
+    }
     final variant = _variants[key] ??= _build(key, slots);
     // A variant still pending validation is drawn with. Skipping it would
     // leave a one-shot render (an environment prefilter, a capture) with
@@ -578,31 +589,57 @@ final class _WebGpuRenderPipeline extends RenderPipeline {
     final device = _context.device.device;
     device.pushErrorScope('validation');
     final bindings = _context._bindingLayoutFor(_layoutEntries(slots));
-    final pipeline = device.createRenderPipeline(
-      _obj({
-        'label': '${vertexShader.name} + ${fragmentShader.name}',
-        'layout': bindings.pipelineLayout,
-        'vertex': {
-          'module': vertexShader.module,
-          'entryPoint': vertexShader.entryPoint,
-          'buffers': _vertexBuffers,
-        },
-        'fragment': {
-          'module': fragmentShader.module,
-          'entryPoint': fragmentShader.entryPoint,
-          'targets': key.colorTargets,
-        },
-        'primitive': key.primitive,
-        if (key.depthStencil case final depthStencil?)
-          'depthStencil': depthStencil,
-        'multisample': {'count': key.target.samples},
-      }),
-    );
+    final pipeline = device.createRenderPipeline(_descriptor(key, bindings));
     final validation = device.popErrorScope().toDart.then(
       (error) => error?.message,
     );
     return _PipelineVariant(pipeline, bindings, validation);
   }
+
+  /// Builds the variant for [key] with `createRenderPipelineAsync`, which
+  /// compiles off the GPU process's main thread, and keeps it once built. A
+  /// build the browser refuses keeps nothing, so the next draw builds the
+  /// variant where it is drawn and reports the error there.
+  Future<void> _buildAhead(_VariantKey key, List<GpuSampleSlot> slots) {
+    final bindings = _context._bindingLayoutFor(_layoutEntries(slots));
+    final generation = (_vertexGeneration, _fragmentGeneration);
+    late final Future<void> build;
+    build = _context.device.device
+        .createRenderPipelineAsync(_descriptor(key, bindings))
+        .toDart
+        .then<void>((pipeline) {
+          if (generation != (_vertexGeneration, _fragmentGeneration)) return;
+          _variants[key] ??= _PipelineVariant(
+            pipeline,
+            bindings,
+            Future.value(),
+          );
+        }, onError: (Object _) {})
+        .whenComplete(() {
+          _compiling.remove(key);
+          _context.compiling.remove(build);
+        });
+    _context.compiling.add(build);
+    return build;
+  }
+
+  JSObject _descriptor(_VariantKey key, _BindingLayout bindings) => _obj({
+    'label': '${vertexShader.name} + ${fragmentShader.name}',
+    'layout': bindings.pipelineLayout,
+    'vertex': {
+      'module': vertexShader.module,
+      'entryPoint': vertexShader.entryPoint,
+      'buffers': _vertexBuffers,
+    },
+    'fragment': {
+      'module': fragmentShader.module,
+      'entryPoint': fragmentShader.entryPoint,
+      'targets': key.colorTargets,
+    },
+    'primitive': key.primitive,
+    if (key.depthStencil case final depthStencil?) 'depthStencil': depthStencil,
+    'multisample': {'count': key.target.samples},
+  });
 
   /// Bind group layout entries for both stages. Everything sits in group 0
   /// with the bundle's binding numbers, which never overlap across stages.

@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:js_interop';
 import 'dart:typed_data';
 import 'dart:ui_web' as ui_web;
@@ -15,6 +14,11 @@ import 'package:web/web.dart' as web;
 /// unchanged asset costs a 304. A custom [bundle] is read as is.
 Future<ByteData> loadGeneratedAsset(String key, {AssetBundle? bundle}) async {
   if (bundle != null && !identical(bundle, rootBundle)) return bundle.load(key);
+  final buffer = await (await _fetch(key)).arrayBuffer().toDart;
+  return ByteData.view(buffer.toDart);
+}
+
+Future<web.Response> _fetch(String key) async {
   // Encoded the way the framework encodes a key before the engine encodes it
   // again into a URL.
   final url = ui_web.assetManager.getAssetUrl(
@@ -28,12 +32,11 @@ Future<ByteData> loadGeneratedAsset(String key, {AssetBundle? bundle}) async {
       'Unable to load asset: "$key" (HTTP ${response.status}).',
     );
   }
-  final buffer = await response.arrayBuffer().toDart;
-  return ByteData.view(buffer.toDart);
+  return response;
 }
 
 /// Loads the generated asset at [key] as UTF-8 text, revalidating like
-/// [loadGeneratedAsset].
+/// [loadGeneratedAsset]. The browser decodes the text.
 Future<String> loadGeneratedAssetString(
   String key, {
   AssetBundle? bundle,
@@ -41,8 +44,5 @@ Future<String> loadGeneratedAssetString(
   if (bundle != null && !identical(bundle, rootBundle)) {
     return bundle.loadString(key);
   }
-  final data = await loadGeneratedAsset(key);
-  return utf8.decode(
-    data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
-  );
+  return (await (await _fetch(key)).text().toDart).toDart;
 }
