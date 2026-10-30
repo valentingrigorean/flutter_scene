@@ -1592,7 +1592,7 @@ class PhysicallyBasedMaterial extends Material {
 
   @override
   bool get colorRetainable {
-    if (environment != null || clipVolume != null) return false;
+    if (environment != null) return false;
     _ensurePreparedVariant();
     final prepared = _preparedVariant;
     if (prepared != null) return prepared.colorRetainable;
@@ -1611,7 +1611,11 @@ class PhysicallyBasedMaterial extends Material {
     // TextureTransforms), so a kept delegated draw pins those.
     final prepared = _preparedVariant;
     if (prepared != null) return prepared.heldFragmentBlocks;
-    return [heldMatInfo, _heldTextureTransforms];
+    return [
+      heldMatInfo,
+      _heldTextureTransforms,
+      if (clipVolume != null) heldClipInfo,
+    ];
   }
 
   /// Strength of geometric specular antialiasing.
@@ -1804,10 +1808,10 @@ class PhysicallyBasedMaterial extends Material {
       transientsBuffer,
       lighting,
     );
-    EngineLightingUniforms.bindClipVolume(
+    EngineLightingUniforms.bindHeldClipVolume(
       pass,
       shader,
-      transientsBuffer,
+      heldClipInfo,
       clipVolume,
     );
   }

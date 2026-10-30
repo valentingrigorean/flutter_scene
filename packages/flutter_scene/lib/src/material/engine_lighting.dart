@@ -528,6 +528,23 @@ class EngineLightingUniforms {
     );
   }
 
+  /// Binds [volume] as the `ClipInfo` block from [held], the material's own
+  /// held block, so a still color draw binds no per-frame buffer and can be
+  /// kept as a backend item.
+  static void bindHeldClipVolume(
+    gpu.RenderPass pass,
+    gpu.Shader shader,
+    HeldBlock held,
+    ClipVolume? volume,
+  ) {
+    final slot = shader.getUniformSlot('ClipInfo');
+    if (slot.sizeInBytes == null) return;
+    pass.bindUniform(
+      slot,
+      volume == null ? _noClipVolume.value : held.bound(volume.uniformFloats),
+    );
+  }
+
   // The zero ClipInfo block, device-resident so an unclipped draw binds no
   // per-frame buffer.
   static final gpu.DeviceLocal<gpu.BufferView> _noClipVolume = gpu.DeviceLocal(

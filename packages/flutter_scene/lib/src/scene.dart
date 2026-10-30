@@ -15,6 +15,7 @@ import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/depth_conflicts.dart'
     as depth_conflicts
     show DepthConflictReport, probeDepthConflicts;
+import 'package:flutter_scene/src/render/retained_draws.dart';
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
@@ -651,6 +652,14 @@ base class Scene implements SceneGraph {
   void setDrawOrigin(double x, double y, double z) {
     if (renderScene.drawOrigin.moveTo(x, y, z)) markSceneDrawChanged();
   }
+
+  /// Has every draw the backend keeps as a render item checked against its
+  /// material on the next frame, and recorded again where what it binds
+  /// changed, for a change no node was told of
+  /// ([Node.markMaterialsChanged]): a material getter that answers from app
+  /// state, such as a [Material.clipVolume] that follows a cut the app moves.
+  /// A frame that calls it reads every item once.
+  void markKeptDrawsChanged() => renderScene.relogItems();
 
   /// Supplies the bytes [bytes] gives, each frame, as the uniform block
   /// [name] to every color-pass draw the backend keeps as a render item, or
@@ -1819,12 +1828,25 @@ base class Scene implements SceneGraph {
   void addRenderPass(CustomRenderPass pass) {
     if (_renderPasses.contains(pass)) return;
     _renderPasses.add(pass);
+    if (pass.keepsDraw) {
+      renderScene.keepPass(
+        pass,
+        pass.keptViewBlocks,
+        slots: SceneItems.customPasses,
+      );
+    }
   }
 
   /// Removes a previously [addRenderPass]ed [pass]. Returns whether it was
   /// present.
   /// {@category Rendering}
-  bool removeRenderPass(CustomRenderPass pass) => _renderPasses.remove(pass);
+  bool removeRenderPass(CustomRenderPass pass) {
+    renderScene.releasePass(
+      pass,
+      (held) => (held as CustomRenderPass).keptViewBlocks,
+    );
+    return _renderPasses.remove(pass);
+  }
 
   /// Steady-state rendering statistics: the last frame's draw, culling,
   /// batching, and pipeline counters broken down by view and by pass, with

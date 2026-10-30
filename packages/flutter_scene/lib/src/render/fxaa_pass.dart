@@ -5,7 +5,7 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 
-import 'package:flutter_scene/src/render/kept_fullscreen.dart';
+import 'package:flutter_scene/src/render/kept_pass_draw.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/resolve_pass.dart';
@@ -84,7 +84,7 @@ class FxaaPass extends RenderGraphPass {
       drawCompat(pass, 6);
     }
 
-    final kept = KeptFullscreen.of(_renderScene, SceneItems.postPass);
+    final kept = KeptPassDraw.of(_renderScene, SceneItems.postPass);
     final drawn =
         kept != null &&
         kept.draw(
@@ -93,7 +93,7 @@ class FxaaPass extends RenderGraphPass {
           key: pipeline,
           record: record,
           viewBlocks: [info],
-          viewTextures: KeptFullscreen.viewTextures(sceneColor: input),
+          viewTextures: KeptPassDraw.viewTextures(sceneColor: input),
         );
     if (!drawn) record(renderPass);
     rendererSubmissions.submit(commandBuffer);

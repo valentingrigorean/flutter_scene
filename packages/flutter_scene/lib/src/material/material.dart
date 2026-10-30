@@ -406,6 +406,11 @@ abstract class Material {
   @internal
   final HeldBlock heldMatInfo = HeldBlock(kMatInfoFloats);
 
+  /// The material's `ClipInfo` block, held so a still clipped draw writes no
+  /// clip bytes while the camera moves and a backend can keep the draw.
+  @internal
+  final HeldBlock heldClipInfo = HeldBlock(ClipVolume.uniformByteSize ~/ 4);
+
   gpu.Shader? _fragmentShader;
   String? _fragmentShaderName;
 
@@ -861,9 +866,11 @@ abstract class Material {
   /// Whether the color pass may keep a still draw of this material as a
   /// backend item: its fragment binds only the pass's view blocks
   /// (`ViewInfo`, `FragInfo`, `FogInfo`) and blocks held from frame to frame
-  /// (`MatInfo`, `ItemFragInfo`, a held `TextureTransforms`), with no
-  /// per-material lighting of its own (an environment or clip override) and no
-  /// frame-varying block (animated UV flow). A draw that still binds a
+  /// (`MatInfo`, `ItemFragInfo`, a held `TextureTransforms`, the clip volume's
+  /// `ClipInfo`), with no per-material lighting of its own (an environment
+  /// override) and no frame-varying block (animated UV flow). A kept draw
+  /// takes a new [clipVolume] when its node is refreshed, or when the scene
+  /// rechecks its kept draws (`Scene.markKeptDrawsChanged`). A draw that still binds a
   /// transient buffer or texture is refused by the backend regardless, so this
   /// only has to rule out what that check cannot: a wrong shared view block.
   /// The base is false; a lit engine material that holds its fragment blocks
@@ -885,9 +892,13 @@ abstract class Material {
   /// The held fragment uniform blocks a kept color draw of this material
   /// reads, for [RetainedColorDraws] to pin so their slots are not reused for
   /// other values while the backend still draws from them. The base is the
-  /// shared `MatInfo`; a material that holds more fragment blocks adds them
-  /// (typically `[...super.heldFragmentBlocks, ...]`), so it is public.
-  Iterable<HeldBlock> get heldFragmentBlocks => [heldMatInfo];
+  /// shared `MatInfo`, with the `ClipInfo` while a [clipVolume] cuts the
+  /// draw; a material that holds more fragment blocks adds them (typically
+  /// `[...super.heldFragmentBlocks, ...]`), so it is public.
+  Iterable<HeldBlock> get heldFragmentBlocks => [
+    heldMatInfo,
+    if (clipVolume != null) heldClipInfo,
+  ];
 
   /// The planar reflection capture this material samples, or null when none
   /// is active. Refreshed each frame by the governing reflector; only read

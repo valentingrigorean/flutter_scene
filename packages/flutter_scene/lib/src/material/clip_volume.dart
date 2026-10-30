@@ -90,7 +90,11 @@ final class ClipVolume {
   /// up to [maxKeepPlanes] with zero planes, which keep every point. A volume
   /// with no cut plane writes zero cut planes, whose first one cuts nothing.
   @internal
-  late final ByteData uniformBytes = () {
+  late final ByteData uniformBytes = ByteData.sublistView(uniformFloats);
+
+  /// The floats of [uniformBytes].
+  @internal
+  late final Float32List uniformFloats = () {
     final floats = Float32List(uniformByteSize ~/ 4);
     if (planes.isNotEmpty) {
       for (var index = 0; index < maxPlanes; index++) {
@@ -104,6 +108,6 @@ final class ClipVolume {
     for (var index = 0; index < keep.length; index++) {
       keep[index].copyIntoArray(floats, (maxPlanes + index) * 4);
     }
-    return ByteData.sublistView(floats);
+    return floats;
   }();
 }
