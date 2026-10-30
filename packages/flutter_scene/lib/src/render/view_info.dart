@@ -125,8 +125,9 @@ bool _same(Float32List a, Float32List b) {
 /// ([currentViewInstanceBand]) and the animation time.
 ///
 /// Every draw of a view gets the one block, emplaced on the first; a pass
-/// that draws several views (shadow cascades) gets one each.
-@internal
+/// that draws several views (shadow cascades) gets one each. A geometry
+/// whose vertex stage reads `ViewInfo` binds it from here, so a pass that
+/// keeps its draw supplies the view in its place.
 gpu.BufferView viewInfoOf(
   TransientWriter writer,
   Matrix4 cameraTransform,
