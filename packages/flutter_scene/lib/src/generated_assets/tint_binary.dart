@@ -67,9 +67,19 @@ String? tintHostKey([Abi? abi]) => switch (abi ?? Abi.current()) {
 };
 
 /// Resolves the binary path for [input], downloading it if needed.
-Future<String> resolveTintBinary(BuildInput input) async {
+Future<String> resolveTintBinary(BuildInput input) {
   final define = input.userDefines[kTintUserDefine];
-  final override = define is String ? define : Platform.environment[kTintEnv];
+  return resolveTintBinaryIn(
+    input.outputDirectoryShared,
+    override: define is String ? define : null,
+  );
+}
+
+/// Resolves the binary path with no build hook: [override], else the
+/// `FLUTTER_SCENE_TINT` environment variable, else the release download,
+/// cached under [cache].
+Future<String> resolveTintBinaryIn(Uri cache, {String? override}) async {
+  override ??= Platform.environment[kTintEnv];
   if (override != null && override.isNotEmpty) {
     if (!File(override).existsSync()) {
       throw TintBinaryException(
@@ -91,7 +101,7 @@ Future<String> resolveTintBinary(BuildInput input) async {
   }
 
   final dir = Directory.fromUri(
-    input.outputDirectoryShared.resolve('flutter_scene_tint/$kTintReleaseTag/'),
+    cache.resolve('flutter_scene_tint/$kTintReleaseTag/'),
   )..createSync(recursive: true);
   final file = File('${dir.path}${entry.file}');
   if (file.existsSync() && _sha256(file.readAsBytesSync()) == entry.sha256) {
