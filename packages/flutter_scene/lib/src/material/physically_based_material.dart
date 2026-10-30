@@ -1592,16 +1592,15 @@ class PhysicallyBasedMaterial extends Material {
 
   @override
   bool get colorRetainable {
-    if (environment != null || clipVolume != null) return false;
+    if (environment != null) return false;
     _ensurePreparedVariant();
     final prepared = _preparedVariant;
     if (prepared != null) return prepared.colorRetainable;
-    // The standard shader's own retainability: opaque (a blend or
-    // transmissive surface draws in the translucent phase or samples the
-    // transient scene color), with static UV flow (animated flow rewrites
-    // TextureTransforms every frame).
+    // The standard shader's own retainability: no transmission (a
+    // transmissive surface samples the transient scene color), with static
+    // UV flow (animated flow rewrites TextureTransforms every frame). A
+    // blended surface is kept in the translucent phase's back-to-front order.
     return transmission == 0.0 &&
-        alphaMode != AlphaMode.blend &&
         _normalTextureFlow.x == 0.0 &&
         _normalTextureFlow.y == 0.0;
   }
@@ -1612,7 +1611,11 @@ class PhysicallyBasedMaterial extends Material {
     // TextureTransforms), so a kept delegated draw pins those.
     final prepared = _preparedVariant;
     if (prepared != null) return prepared.heldFragmentBlocks;
-    return [heldMatInfo, _heldTextureTransforms];
+    return [
+      heldMatInfo,
+      _heldTextureTransforms,
+      if (clipVolume != null) heldClipInfo,
+    ];
   }
 
   /// Strength of geometric specular antialiasing.
@@ -1805,10 +1808,10 @@ class PhysicallyBasedMaterial extends Material {
       transientsBuffer,
       lighting,
     );
-    EngineLightingUniforms.bindClipVolume(
+    EngineLightingUniforms.bindHeldClipVolume(
       pass,
       shader,
-      transientsBuffer,
+      heldClipInfo,
       clipVolume,
     );
   }

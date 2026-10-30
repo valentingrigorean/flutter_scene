@@ -351,7 +351,6 @@ class PreprocessedMaterial extends Material implements HotReloadableFmat {
       (shadingModel == FmatShadingModel.lit ||
           shadingModel == FmatShadingModel.physical) &&
       environment == null &&
-      clipVolume == null &&
       !_usesPlanarReflection &&
       !_sceneInputs.contains(RenderInput.opaqueSceneColor) &&
       !_sceneInputs.contains(RenderInput.filteredSceneColor);
@@ -576,10 +575,10 @@ class PreprocessedMaterial extends Material implements HotReloadableFmat {
           transientsBuffer,
           lighting,
         );
-        EngineLightingUniforms.bindClipVolume(
+        EngineLightingUniforms.bindHeldClipVolume(
           pass,
           shader,
-          transientsBuffer,
+          heldClipInfo,
           clipVolume,
         );
       }

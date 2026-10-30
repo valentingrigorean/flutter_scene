@@ -336,6 +336,7 @@ abstract final class ItemSet {
     required List<ByteData> viewBlocks,
     required Float32List clip,
     List<Texture> viewTextures = const [],
+    ItemSort sort = ItemSort.key,
   });
   void dispose();
 }
