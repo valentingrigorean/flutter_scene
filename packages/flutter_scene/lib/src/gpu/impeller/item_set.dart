@@ -9,14 +9,21 @@ part of '_gpu.dart';
 /// it names until it is kept again or removed, with the resources it bound:
 /// a change to what it draws keeps it again.
 final class ItemSet {
-  ItemSet._(GpuBackendItemSet this._backend, this._viewBlockNames)
-    : _impeller = null;
-  ItemSet._impeller(_ItemSet this._impeller, this._viewBlockNames)
-    : _backend = null;
+  ItemSet._(
+    GpuBackendItemSet this._backend,
+    this._viewBlockNames,
+    this._viewTextureNames,
+  ) : _impeller = null;
+  ItemSet._impeller(
+    _ItemSet this._impeller,
+    this._viewBlockNames,
+    this._viewTextureNames,
+  ) : _backend = null;
 
   final GpuBackendItemSet? _backend;
   final _ItemSet? _impeller;
   final List<String> _viewBlockNames;
+  final List<String> _viewTextureNames;
 
   /// A pass that records draws for [keep], for attachments shaped like
   /// [target]'s.
@@ -84,8 +91,9 @@ final class ItemSet {
 
   /// Draws the items of pass [index] into [pass] where it stands, under its
   /// viewport and scissor and leaving its fixed-function state as it stood,
-  /// with [viewBlocks] as the pass's view blocks, in the order
-  /// [GpuContext.createItemSet] named them, culled by [clip].
+  /// with [viewBlocks] as the pass's view blocks and [viewTextures] as its
+  /// view textures, each in the order [GpuContext.createItemSet] named them,
+  /// culled by [clip].
   ///
   /// The items bind what they draw with on [pass], so the caller binds its
   /// own pipeline and blocks again for the draws it encodes afterwards.
@@ -94,6 +102,7 @@ final class ItemSet {
     int index, {
     required List<ByteData> viewBlocks,
     required Float32List clip,
+    List<Texture> viewTextures = const [],
   }) {
     final impeller = _impeller;
     if (impeller != null) {
@@ -103,10 +112,17 @@ final class ItemSet {
         index,
         viewBlocks: viewBlocks,
         clip: clip,
+        viewTextures: [for (final texture in viewTextures) texture._impeller!],
       );
       return;
     }
-    _backend!.draw(pass._backend!, index, viewBlocks: viewBlocks, clip: clip);
+    _backend!.draw(
+      pass._backend!,
+      index,
+      viewBlocks: viewBlocks,
+      clip: clip,
+      viewTextures: [for (final texture in viewTextures) texture._backend!],
+    );
   }
 
   /// Releases every item.

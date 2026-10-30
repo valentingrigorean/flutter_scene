@@ -201,6 +201,7 @@ final class _ItemDraw {
     required this.uniforms,
     required this.viewUniforms,
     required this.textures,
+    required this.viewTextures,
     required this.count,
     required this.instanceCount,
     required this.indexed,
@@ -214,6 +215,7 @@ final class _ItemDraw {
   final List<(fg.UniformSlot, fg.BufferView)> uniforms;
   final List<(fg.UniformSlot, int)> viewUniforms;
   final List<(fg.UniformSlot, fg.Texture, SamplerOptions)> textures;
+  final List<(fg.UniformSlot, int, SamplerOptions)> viewTextures;
   final int count;
   final int instanceCount;
   final bool indexed;
@@ -227,9 +229,10 @@ final class _ItemDraw {
 // nothing on the device and resolves the one draw it recorded into an
 // [_ItemDraw] the set keeps.
 final class _ItemRecorder {
-  _ItemRecorder(this._viewBlockNames);
+  _ItemRecorder(this._viewBlockNames, this._viewTextureNames);
 
   final List<String> _viewBlockNames;
+  final List<String> _viewTextureNames;
 
   final _ItemDrawState state = _ItemDrawState();
 
@@ -289,6 +292,16 @@ final class _ItemRecorder {
         viewUniforms.add((slot._impeller!, at));
       }
     }
+    final textures = <(fg.UniformSlot, fg.Texture, SamplerOptions)>[];
+    final viewTextures = <(fg.UniformSlot, int, SamplerOptions)>[];
+    for (final (slot, texture, sampler) in _textures.values) {
+      final at = _viewTextureNames.indexOf(slot.uniformName);
+      if (at < 0) {
+        textures.add((slot._impeller!, texture._impeller!, sampler));
+      } else {
+        viewTextures.add((slot._impeller!, at, sampler));
+      }
+    }
     _recorded = _ItemDraw(
       pipeline: pipeline,
       vertices: [
@@ -299,10 +312,8 @@ final class _ItemRecorder {
       indexType: _indexType,
       uniforms: uniforms,
       viewUniforms: viewUniforms,
-      textures: [
-        for (final (slot, texture, sampler) in _textures.values)
-          (slot._impeller!, texture._impeller!, sampler),
-      ],
+      textures: textures,
+      viewTextures: viewTextures,
       count: count,
       instanceCount: instanceCount,
       indexed: indexed,
@@ -324,14 +335,19 @@ final class _ItemRecorder {
 // holds no secondary command buffers, so a replay costs the pass calls of
 // each item it draws and nothing of the walk that built it.
 final class _ItemSet {
-  _ItemSet(this._context, this._viewBlockNames, int viewBlockLength)
-    : _blockStride = _aligned(
+  _ItemSet(
+    this._context,
+    this._viewBlockNames,
+    int viewBlockLength,
+    this._viewTextureNames,
+  ) : _blockStride = _aligned(
         viewBlockLength,
         _context.minimumUniformByteAlignment,
       );
 
   final fg.GpuContext _context;
   final List<String> _viewBlockNames;
+  final List<String> _viewTextureNames;
   final int _blockStride;
 
   final Map<int, _ItemDraw> _items = {};
@@ -348,7 +364,7 @@ final class _ItemSet {
   static int _aligned(int size, int alignment) =>
       (size + alignment - 1) ~/ alignment * alignment;
 
-  _ItemRecorder recorder() => _ItemRecorder(_viewBlockNames);
+  _ItemRecorder recorder() => _ItemRecorder(_viewBlockNames, _viewTextureNames);
 
   int? keep(
     _ItemRecorder recorder, {
@@ -377,6 +393,7 @@ final class _ItemSet {
     int index, {
     required List<ByteData> viewBlocks,
     required Float32List clip,
+    required List<fg.Texture> viewTextures,
   }) {
     if (_items.isEmpty) return;
     final mask = 1 << index;
@@ -409,6 +426,11 @@ final class _ItemSet {
       }
       for (final (slot, texture, sampler) in draw.textures) {
         pass.bindTexture(slot, texture, sampler: sampler);
+      }
+      for (final (slot, at, sampler) in draw.viewTextures) {
+        if (at < viewTextures.length) {
+          pass.bindTexture(slot, viewTextures[at], sampler: sampler);
+        }
       }
       if (draw.indexed) {
         pass.drawIndexed(draw.count, instanceCount: draw.instanceCount);

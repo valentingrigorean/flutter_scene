@@ -353,7 +353,8 @@ class PreprocessedMaterial extends Material implements HotReloadableFmat {
       environment == null &&
       clipVolume == null &&
       !_usesPlanarReflection &&
-      _sceneInputs.isEmpty;
+      !_sceneInputs.contains(RenderInput.opaqueSceneColor) &&
+      !_sceneInputs.contains(RenderInput.filteredSceneColor);
 
   @override
   double? get sceneColorSampleBoundsExpansion => _sceneColorReach;
