@@ -8,6 +8,25 @@
 
 #include <material_scene_inputs.glsl>
 
+// The per-item fragment values, held with the render item and rewritten only
+// when they change, so a still item writes no fragment uniform bytes while the
+// camera moves (the camera lives in frag_info).
+uniform ItemFragInfo {
+  // xyz: the draw's model scale (world-space lengths of the model transform's
+  // basis vectors), for scaling local-space lengths into world units. An
+  // instanced draw carries its node's scale, a skinned draw its node's. w
+  // unused.
+  highp vec4 model_scale;
+  // x: the item's punctual-light slice count, y its offset into the per-frame
+  // light-index buffer; z: the LOD cross-fade coverage, 1 drawing every
+  // fragment; w: 1 when the primary directional light reaches this item's
+  // light channels and 0 when it does not, which suppresses the direct sun and
+  // its cast shadow for the item (the per-node channel gate, read here because
+  // the light itself rides the shared view block).
+  highp vec4 params;
+}
+item_frag;
+
 // The per-draw model scale (see ItemFragInfo.model_scale).
 highp vec3 GetModelScale() { return item_frag.model_scale.xyz; }
 
