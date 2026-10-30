@@ -4,8 +4,9 @@
 /// flutter_scene's own `hook/build.dart` calls [buildOwnEngineAssets], so a
 /// consumer needs no hook of their own. It writes into flutter_scene's own
 /// `flutter_scene_generated/`, one directory per target, which its pubspec
-/// lists with a platform filter each. Every output is stamped
-/// with the identity of the engine that compiled it, because a shader bundle is
+/// lists with a platform filter each, and declares each output as a hook
+/// dependency, so a build that finds one gone compiles it again. Every output
+/// is stamped with the identity of the engine that compiled it, because a shader bundle is
 /// only valid for that engine, so one pub cache shared by projects on different
 /// Flutter versions rebuilds on each switch instead of loading a bundle the
 /// engine cannot read.
@@ -110,6 +111,33 @@ Future<void> _build({
     fileVariant: await engineIdentity(),
     debugViews: debugViews,
   );
+  GeneratedAssetTree.open(
+    buildInput.packageRoot,
+    buildInput.packageName,
+    options: HookOptions.of(buildInput),
+  ).dependOnOutputs(
+    buildOutput,
+    owner: _engineOwner,
+    target: shaderBundleTargetKey(buildInput),
+    sourcesModified: _newestModified([
+      for (final directory in ['shaders/', 'assets/materials/', 'lib/'])
+        Directory.fromUri(root.resolve(directory)),
+    ]),
+  );
+}
+
+/// The newest modification time of a file under [directories].
+DateTime _newestModified(Iterable<Directory> directories) {
+  var newest = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+  for (final directory in directories) {
+    if (!directory.existsSync()) continue;
+    for (final file in directory.listSync(recursive: true)) {
+      if (file is! File) continue;
+      final modified = file.lastModifiedSync();
+      if (modified.isAfter(newest)) newest = modified;
+    }
+  }
+  return newest;
 }
 
 /// flutter_scene's package root. There is no top-level `flutter_scene.dart`

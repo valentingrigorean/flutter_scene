@@ -9,6 +9,7 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:hooks/hooks.dart';
 import 'package:yaml/yaml.dart';
 import 'package:yaml_edit/yaml_edit.dart';
 
@@ -206,6 +207,10 @@ final class GeneratedAssetTree {
   final GeneratedAssetManifest _manifest;
   final HookOptions options;
 
+  // The entries this instance wrote or removed. [save] takes every other entry
+  // from the manifest on disk, which another build may have changed since.
+  final Set<(GeneratedAssetFamily, String, String?)> _touched = {};
+
   Uri get _root => packageRoot.resolve('$generatedAssetsDirectory/');
 
   /// The target directories this package's pubspec lists, which are the only
@@ -300,23 +305,27 @@ final class GeneratedAssetTree {
     String? owner,
     String? source,
     String? target,
-  }) => _manifest.put(
-    GeneratedAssetEntry(
-      family: family,
-      id: id,
-      owner: owner ?? packageName,
-      file: file,
-      // Digested, not stored verbatim: a stamp naming every input runs to
-      // kilobytes, and the manifest ships in the app bundle.
-      stamp: _digest(stamp),
-      source: source,
-      target: target,
-    ),
-  );
+  }) {
+    _touched.add((family, id, target));
+    _manifest.put(
+      GeneratedAssetEntry(
+        family: family,
+        id: id,
+        owner: owner ?? packageName,
+        file: file,
+        // Digested, not stored verbatim: a stamp naming every input runs to
+        // kilobytes, and the manifest ships in the app bundle.
+        stamp: _digest(stamp),
+        source: source,
+        target: target,
+      ),
+    );
+  }
 
   /// Drops the [family]/[id] entry for [target] and deletes its output, for an
   /// output a build stopped producing (a sidecar whose switch was turned off).
   void drop(GeneratedAssetFamily family, String id, {String? target}) {
+    _touched.add((family, id, target));
     final entry = _manifest.remove(family, id, target: target);
     if (entry != null) _deleteIfPresent(_root.resolve(entry.file));
   }
@@ -365,6 +374,7 @@ final class GeneratedAssetTree {
       final source = entry.source;
       if (source == null || entry.owner != packageName) continue;
       if (File.fromUri(packageRoot.resolve(source)).existsSync()) continue;
+      _touched.add((entry.family, entry.id, entry.target));
       _manifest.entries.remove(entry);
       _deleteIfPresent(_root.resolve(entry.file));
       stdout.writeln(
@@ -381,6 +391,7 @@ final class GeneratedAssetTree {
     var dropped = 0;
     for (final entry in _manifest.ofFamily(family).toList()) {
       if (entry.owner != owner) continue;
+      _touched.add((entry.family, entry.id, entry.target));
       _manifest.entries.remove(entry);
       _deleteIfPresent(_root.resolve(entry.file));
       dropped++;
@@ -403,7 +414,29 @@ final class GeneratedAssetTree {
   /// moments ago while a variant left by a Flutter version retired weeks back
   /// is only weight in a directory that ships, survives `flutter clean`, and
   /// for a pub-cache consumer is shared with every project on the machine.
-  void save() {
+  ///
+  /// Builds sharing the tree save one at a time, each into the manifest the
+  /// last one wrote: an entry this instance did not record or drop is kept as
+  /// the disk has it, so two builds for different targets cannot drop each
+  /// other's entries, and the sweep spares every file the merged manifest names.
+  void save() => _locked(_saveLocked);
+
+  void _saveLocked() {
+    final onDisk = _readManifest(packageRoot, packageName);
+    if (onDisk != null) {
+      final ours = [
+        for (final entry in _manifest.entries)
+          if (_touched.contains((entry.family, entry.id, entry.target))) entry,
+      ];
+      _manifest.entries
+        ..clear()
+        ..addAll([
+          for (final entry in onDisk.entries)
+            if (!_touched.contains((entry.family, entry.id, entry.target)))
+              entry,
+        ])
+        ..addAll(ours);
+    }
     // Entry files are relative to the tree, so a target directory's outputs
     // carry the directory name.
     final referenced = {for (final entry in _manifest.entries) entry.file};
@@ -433,8 +466,10 @@ final class GeneratedAssetTree {
           if (!isGeneratedFileName(name)) continue;
           final relative = '$prefix$name';
           if (referenced.contains(relative)) continue;
+          // The change time, since [dependOnOutputs] moves the modification
+          // time of a fresh output back to its sources'.
           if (variantsOfReferenced.contains(generatedNameWithoutTag(name)) &&
-              file.statSync().modified.isAfter(keepAfter)) {
+              file.statSync().changed.isAfter(keepAfter)) {
             continue;
           }
           file.deleteSync();
@@ -455,6 +490,52 @@ final class GeneratedAssetTree {
     }
     writeGeneratedString(manifestFile.uri, contents);
   }
+
+  /// Declares the output of every entry [owner] recorded for [target] as a
+  /// dependency of this hook run, so a build after one is deleted (the tree is
+  /// shared, and a pub cache checkout can be swept or fetched again) reruns the
+  /// hook instead of reusing its cached result and shipping nothing.
+  ///
+  /// The hook runner reads a dependency modified during the run as an edit, so
+  /// each output's modification time is moved back to [sourcesModified], the
+  /// newest modification time of the sources it was built from.
+  void dependOnOutputs(
+    BuildOutputBuilder buildOutput, {
+    required String owner,
+    required String target,
+    required DateTime sourcesModified,
+  }) {
+    for (final entry in _manifest.entries) {
+      if (entry.owner != owner || entry.target != target) continue;
+      final file = File.fromUri(_root.resolve(entry.file));
+      if (!file.existsSync()) continue;
+      if (file.lastModifiedSync().isAfter(sourcesModified)) {
+        guardGeneratedWrite(
+          file.uri,
+          () => file.setLastModifiedSync(sourcesModified),
+        );
+      }
+      buildOutput.dependencies.add(file.uri);
+    }
+  }
+
+  // Runs [body] holding the tree's lock, which lives outside the tree because
+  // every file in a listed asset directory ships.
+  void _locked(void Function() body) {
+    final lock = File.fromUri(packageRoot.resolve(_lockPath));
+    final handle = guardGeneratedWrite(lock.uri, () {
+      lock.parent.createSync(recursive: true);
+      return lock.openSync(mode: FileMode.append);
+    });
+    try {
+      handle.lockSync(FileLock.blockingExclusive);
+      body();
+    } finally {
+      handle.closeSync();
+    }
+  }
+
+  static const String _lockPath = '.dart_tool/flutter_scene/generated.lock';
 
   static String _digest(String stamp) => fnv1aHex(utf8.encode(stamp));
 
@@ -575,10 +656,9 @@ PubspecEditResult ensureGeneratedAssetsEntry(File pubspec) {
         'its target directories to pubspec.yaml.',
       );
     } else if (editor.parseAt(<Object>[
-          'flutter',
-          'assets',
-        ], orElse: () => wrapAsYamlNode(null))
-        is YamlList) {
+      'flutter',
+      'assets',
+    ], orElse: () => wrapAsYamlNode(null)) is YamlList) {
       // Inserted in reverse at one index, so each lands after a plain entry.
       // Appending after a mapping entry that a sibling key follows makes
       // yaml_edit write into that sibling.
