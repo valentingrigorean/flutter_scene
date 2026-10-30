@@ -108,6 +108,19 @@ final class ItemSet {
     recorder.clearBindings();
   }
 
+  /// Replaces the records and [bounds] of item [id], kept with instances of
+  /// the same slot, stride and count, each culled by its own bounds where it
+  /// was kept so, without recording its draw again: a kept draw that only
+  /// moved draws from where it now stands. Returns false, changing nothing,
+  /// where [id] was kept otherwise.
+  bool place(int id, {Float32List? bounds, required ItemInstances instances}) {
+    final impeller = _impeller;
+    if (impeller != null) {
+      return impeller.place(id, bounds: bounds, instances: instances);
+    }
+    return _backend!.place(id, bounds: bounds, instances: instances);
+  }
+
   /// Removes item [id].
   void remove(int id) {
     final impeller = _impeller;
