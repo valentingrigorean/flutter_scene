@@ -62,7 +62,7 @@ texture_transforms;
 // material from the FragInfo parameters and the material textures. The shared
 // lighting framework (material_lighting.glsl) consumes it.
 void Surface(inout MaterialInputs material) {
-  vec4 vertex_color = mix(vec4(1), v_color, frag_info.vertex_color_weight);
+  vec4 vertex_color = mix(vec4(1), v_color, mat_info.vertex_color_weight);
   // base_color_rotation.w (padding in each record) carries a single flag set
   // when any of the five records transforms its UVs or selects UV set 1.
   // Every record is identity for a default glTF material, and the identity
@@ -76,14 +76,14 @@ void Surface(inout MaterialInputs material) {
       : GetUV0();
   vec4 base_color_srgb = FLUTTER_SCENE_BASE_COLOR_SAMPLE(base_color_uv);
   vec4 base_color =
-      FLUTTER_SCENE_BASE_COLOR(base_color_srgb, vertex_color, frag_info.color);
+      FLUTTER_SCENE_BASE_COLOR(base_color_srgb, vertex_color, mat_info.color);
   vec3 albedo = base_color.rgb;
   float alpha = base_color.a;
   // MASK alpha mode renders fully opaque (glTF treats MASK output as binary).
   // The cutout itself comes from the main pass's coverage pre-draw, so this
   // shader never discards; a discard would turn off early depth testing and
   // hidden-surface removal for every draw on tiled GPUs.
-  if (frag_info.alpha_mode == 1.0) {
+  if (mat_info.alpha_mode == 1.0) {
     alpha = 1.0;
   }
   material.base_color = vec4(albedo, alpha);
@@ -91,7 +91,7 @@ void Surface(inout MaterialInputs material) {
   // Note: PerturbNormal needs the non-normalized view vector
   //       (camera_position - vertex_position).
   vec3 normal = GetWorldNormal();
-  if (frag_info.has_normal_map > 0.5) {
+  if (mat_info.has_normal_map > 0.5) {
     highp vec4 normal_transform = texture_transforms.normal_transform;
     normal_transform.xy +=
         texture_transforms.normal_flow.xy * texture_transforms.normal_flow.z;
@@ -100,7 +100,7 @@ void Surface(inout MaterialInputs material) {
                             texture_transforms.normal_rotation)
         : GetUV0();
     normal = PerturbNormal(normal_texture, normal, v_viewvector,
-                           normal_uv, frag_info.normal_scale);
+                           normal_uv, mat_info.normal_scale);
   }
   material.normal = normal;
 
@@ -111,10 +111,10 @@ void Surface(inout MaterialInputs material) {
       : GetUV0();
   vec4 metallic_roughness =
       texture(metallic_roughness_texture, metallic_roughness_uv);
-  material.metallic = clamp(metallic_roughness.b * frag_info.metallic_factor,
+  material.metallic = clamp(metallic_roughness.b * mat_info.metallic_factor,
                             0.0, 1.0);
   material.roughness =
-      clamp(metallic_roughness.g * frag_info.roughness_factor, kMinRoughness,
+      clamp(metallic_roughness.g * mat_info.roughness_factor, kMinRoughness,
             1.0);
 
   highp vec2 occlusion_uv = transformed_uvs
@@ -125,10 +125,10 @@ void Surface(inout MaterialInputs material) {
   // A zero strength (also what a material without an occlusion texture
   // packs) leaves the occlusion at 1, so the read is skipped.
   float occlusion = 1.0;
-  if (frag_info.occlusion_strength != 0.0) {
+  if (mat_info.occlusion_strength != 0.0) {
     occlusion = texture(occlusion_texture, occlusion_uv).r;
   }
-  material.occlusion = 1.0 - (1.0 - occlusion) * frag_info.occlusion_strength;
+  material.occlusion = 1.0 - (1.0 - occlusion) * mat_info.occlusion_strength;
 
   highp vec2 emissive_uv = transformed_uvs
       ? MaterialTextureUv(
@@ -137,7 +137,7 @@ void Surface(inout MaterialInputs material) {
       : GetUV0();
   // Most materials emit nothing, so they skip the read and the sRGB decode.
   material.emissive = vec3(0.0);
-  vec3 emissive_scale = frag_info.emissive_factor.rgb * frag_info.emissive_factor.a;
+  vec3 emissive_scale = mat_info.emissive_factor.rgb * mat_info.emissive_factor.a;
   if (dot(abs(emissive_scale), vec3(1.0)) > 0.0) {
     material.emissive =
         SRGBToLinear(texture(emissive_texture, emissive_uv).rgb) *
@@ -160,5 +160,5 @@ void main() {
     lit = EvaluateLighting(material);
   }
   frag_color = DebugViewOutput(material, lit);
-  frag_color *= LodFadeOpacity(frag_info.fade);
+  frag_color *= LodFadeOpacity(item_frag.params.z);
 }

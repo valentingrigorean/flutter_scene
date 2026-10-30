@@ -25,6 +25,13 @@ const int kViewInfoFloats = 36;
 /// The floats of the `ItemInfo` block.
 const int kItemInfoFloats = 88;
 
+/// The floats of the fragment-stage `MatInfo` block (held per material) and
+/// `ItemFragInfo` block (held per item) of the #6508 material split. Kept here
+/// with [HeldBlock] so the holders and the packing agree without a dependency
+/// cycle through the material library.
+const int kMatInfoFloats = 24;
+const int kItemFragInfoFloats = 8;
+
 /// The camera axis and projection kind of the view the draws bound next
 /// draw, stated by a color pass for the fragment stage's view direction.
 /// Null for a pass whose fragments read no view direction.
@@ -39,6 +46,12 @@ bool currentViewOrthographic = false;
 /// geometry's `bind`; null for a draw of no item, whose block is emplaced.
 @internal
 HeldItemInfo? currentDrawItemInfo;
+
+/// The render item's held `ItemFragInfo` block for the draw bound next, for a
+/// material's fragment `bind`; null for a draw of no item, whose block is
+/// emplaced per draw. The vertex counterpart is [currentDrawItemInfo].
+@internal
+HeldBlock? currentDrawFragItem;
 
 /// The `ViewInfo` block the vertex stage of the last draw bound, which the
 /// fragment stage of the same draw binds as well, when it was stated for the
@@ -465,4 +478,118 @@ bool _sameStorage(Float32List held, Float32List storage) {
     if (held[index] != storage[index]) return false;
   }
   return true;
+}
+
+/// A fixed-size uniform block one owner (a render item or a material) holds
+/// from frame to frame, written only when its bytes change, so a still owner
+/// writes no uniform bytes while the camera moves. Where [HeldItemInfo]
+/// compares the structured vertex-item state, this compares the raw block
+/// bytes, so it serves any fixed-size fragment-stage block: the material's
+/// `MatInfo` (held per material) and a draw's `ItemFragInfo` (held per item)
+/// of the #6508 split.
+///
+/// A changed value takes a fresh slot and releases the old one, so a frame
+/// still on the GPU keeps reading the block it drew with. [pin] keeps a slot a
+/// backend's kept item still reads from being handed back for other values.
+final class HeldBlock {
+  HeldBlock(this._floats);
+
+  final int _floats;
+  static const int _kept = 4;
+  final List<_HeldBlockEntry> _entries = [];
+
+  /// The block [bound] returned last.
+  gpu.BufferView? lastBound;
+
+  /// The view of the block holding [values], written if no held slot already
+  /// holds those bytes. [values] may be reused after the call.
+  gpu.BufferView bound(Float32List values) {
+    final generation = gpu.gpuContextGeneration;
+    final frame = rendererSubmissions.latestSubmission;
+    // Entries made on a lost device's pool are invalid; drop them rather than
+    // let a long-lived owner (a material) accumulate them across generations.
+    _entries.removeWhere((entry) => entry.slots.generation != generation);
+    for (final entry in _entries) {
+      if (entry.holds(values)) {
+        entry.used = frame;
+        return lastBound = entry.view;
+      }
+    }
+    _HeldBlockEntry? entry;
+    final unpinned = _entries.where((e) => e.pins == 0);
+    if (unpinned.length >= _kept) {
+      entry = unpinned.reduce((a, b) => a.used <= b.used ? a : b);
+      _entries.remove(entry);
+      entry.slots.release(entry.slot);
+    }
+    final slots = HeldSlots.of(
+      _floats * Float32List.bytesPerElement,
+      alignment: gpu.gpuContext.minimumUniformByteAlignment,
+    );
+    final slot = slots.take();
+    entry = _HeldBlockEntry(
+      _floats,
+      slots,
+      slot,
+      slots.write(slot, scratchBytesOf(values)),
+    )..take(values);
+    entry.used = frame;
+    _entries.add(entry);
+    return lastBound = entry.view;
+  }
+
+  /// Keeps the block [view] names from being taken back for other values
+  /// until [unpin]; returns whether [view] is one of this holder's blocks.
+  bool pin(gpu.BufferView view) {
+    for (final entry in _entries) {
+      if (_sameView(entry.view, view)) {
+        entry.pins++;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Ends one [pin] of the block [view] names.
+  void unpin(gpu.BufferView view) {
+    for (final entry in _entries) {
+      if (_sameView(entry.view, view) && entry.pins > 0) {
+        entry.pins--;
+        return;
+      }
+    }
+  }
+
+  /// Gives every slot back as the owner leaves its render scene.
+  void release() {
+    for (final entry in _entries) {
+      entry.slots.release(entry.slot);
+    }
+    _entries.clear();
+    lastBound = null;
+  }
+
+  static bool _sameView(gpu.BufferView a, gpu.BufferView b) =>
+      identical(a.buffer, b.buffer) && a.offsetInBytes == b.offsetInBytes;
+}
+
+final class _HeldBlockEntry {
+  _HeldBlockEntry(int floats, this.slots, this.slot, this.view)
+    : _values = Float32List(floats);
+
+  final HeldSlots slots;
+  final int slot;
+  final gpu.BufferView view;
+  final Float32List _values;
+  int used = 0;
+  int pins = 0;
+
+  void take(Float32List values) => _values.setAll(0, values);
+
+  bool holds(Float32List values) {
+    for (var i = 0; i < _values.length; i++) {
+      if (_values[i] != values[i]) return false;
+    }
+    return true;
+  }
 }

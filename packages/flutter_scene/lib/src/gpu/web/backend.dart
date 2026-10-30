@@ -311,6 +311,10 @@ abstract base class CommandBuffer {
 /// items that could read it.
 void markTransientBuffer(DeviceBuffer buffer) {}
 
+/// States that [texture] is reallocated across frames; the web keeps no items
+/// that could sample it.
+void markTransientTexture(Texture texture) {}
+
 /// Render items a backend keeps and draws inside a render pass; the web
 /// makes none ([GpuContext.createItemSet]).
 abstract final class ItemSet {

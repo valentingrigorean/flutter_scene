@@ -22,7 +22,6 @@ const int _coolSyncs = 30;
 /// What a kept draw was recorded from; a change records it again.
 final class _Kept {
   int id = 0;
-  gpu.BufferView? pinned;
   int changedAt = -1;
   bool encoded = false;
 
@@ -67,6 +66,11 @@ abstract base class RetainedDraws {
   final int generation = gpu.gpuContextGeneration;
 
   final Map<RenderItem, _Kept> _kept = Map.identity();
+
+  /// The held-block slots each kept item's draw reads, pinned so they are not
+  /// taken back for other values while the backend still draws from them.
+  /// Each is an unpin called when the draw is forgotten or re-recorded.
+  final Map<RenderItem, List<void Function()>> _pins = Map.identity();
 
   /// The items the pass encodes each frame: those it draws that cannot be
   /// kept, and those that changed in two syncs in a row.
@@ -245,10 +249,28 @@ abstract base class RetainedDraws {
       return;
     }
     kept.id = id;
-    final view = item.heldItemInfo.lastBound;
-    if (view != null && item.heldItemInfo.pin(view)) kept.pinned = view;
+    pinHeld(item);
     _encode(item, kept, false);
     activeRenderCounters.drawsKept++;
+  }
+
+  /// Pins the held-block slots the backend's kept draw of [item] reads, so
+  /// they are not handed back for other values while it still draws from
+  /// them. The default pins the vertex `ItemInfo`; a pass with held fragment
+  /// blocks overrides to pin those too, through [recordPin].
+  @protected
+  void pinHeld(RenderItem item) {
+    final view = item.heldItemInfo.lastBound;
+    if (view != null && item.heldItemInfo.pin(view)) {
+      recordPin(item, () => item.heldItemInfo.unpin(view));
+    }
+  }
+
+  /// Registers an [unpin] to run when [item]'s kept draw is forgotten or
+  /// re-recorded, for a [pinHeld] override.
+  @protected
+  void recordPin(RenderItem item, void Function() unpin) {
+    (_pins[item] ??= []).add(unpin);
   }
 
   // Whether [item] draws one mesh from buffers it holds, with no per-frame
@@ -288,10 +310,11 @@ abstract base class RetainedDraws {
   }
 
   void _unpin(RenderItem item, _Kept kept) {
-    final pinned = kept.pinned;
-    if (pinned == null) return;
-    item.heldItemInfo.unpin(pinned);
-    kept.pinned = null;
+    final pins = _pins.remove(item);
+    if (pins == null) return;
+    for (final unpin in pins) {
+      unpin();
+    }
   }
 
   void _drop(RenderItem item) {

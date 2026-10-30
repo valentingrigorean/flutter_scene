@@ -207,6 +207,9 @@ final class RenderPass {
         sampler: sampler,
       );
     } else {
+      if (_records != null && (_transientTextures[texture] ?? false)) {
+        _readsTransient = true;
+      }
       _backend!.bindTexture(
         slot.shader._backend!,
         slot.uniformName,
