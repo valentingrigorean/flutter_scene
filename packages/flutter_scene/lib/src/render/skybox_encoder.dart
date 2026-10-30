@@ -5,6 +5,9 @@ import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/fullscreen_quad.dart';
+import 'package:flutter_scene/src/render/kept_pass_draw.dart';
+import 'package:flutter_scene/src/render/render_scene.dart';
+import 'package:flutter_scene/src/render/retained_draws.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:vector_math/vector_math.dart';
 
@@ -25,8 +28,11 @@ import 'package:flutter_scene/src/render/uniform_slots.dart';
 /// and tone mapping are applied later by the resolve pass, so the sky is
 /// emitted as linear HDR radiance with premultiplied alpha.
 ///
-/// The render pass is left with the skybox's fixed-function state (no depth
-/// write, `lessEqual` depth compare, no cull, no blend); the scene encoder
+/// With [renderScene] and the [target] of [renderPass], an environment sky
+/// is kept as the [SceneItems.skyPass] item of the scene's item set, so a
+/// frame encodes none of it; the pass then keeps its own fixed-function
+/// state. An encoded sky leaves the pass with the skybox's (no depth write,
+/// `lessEqual` depth compare, no cull, no blend); the scene encoder
 /// re-asserts the opaque-phase state when it is constructed afterward.
 void encodeSkybox(
   gpu.RenderPass renderPass,
@@ -39,6 +45,8 @@ void encodeSkybox(
   ui.Size dimensions, {
   EnvironmentMap? environmentMapB,
   double environmentBlend = 0.0,
+  RenderScene? renderScene,
+  gpu.RenderTarget? target,
 }) {
   final source = skybox.source;
   final vertexShader = baseShaderLibrary['SkyboxVertex']!;
@@ -56,73 +64,91 @@ void encodeSkybox(
 
   // Share the scene encoder's pipeline cache so a hot-reloaded sky fragment is
   // rebuilt (the cache is evicted by shader identity on reload).
-  renderPass.clearBindings();
-  renderPass.bindTrackedPipeline(resolvePipeline(vertexShader, fragmentShader));
-  renderPass.setTrackedColorBlendEnable(false);
-  // Draw at the far plane behind everything: pass where nothing has been
-  // drawn (depth still at the cleared far value) and never write depth, so
-  // opaque geometry draws in front.
-  renderPass.setTrackedDepthWriteEnable(false);
-  renderPass.setTrackedDepthCompareOperation(
-    depthRasterOf(camera).nearerOrEqual,
-  );
-  renderPass.setTrackedCullMode(gpu.CullMode.none);
-  renderPass.setTrackedPrimitiveType(gpu.PrimitiveType.triangle);
-  bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
-
+  final pipeline = resolvePipeline(vertexShader, fragmentShader);
+  final raster = depthRasterOf(camera);
   // Reconstruct the world view ray from inverse projection and camera
   // rotation, then apply the environment transform.
-  _bindFrameInfo(
-    renderPass,
-    transientsBuffer,
-    vertexShader,
-    environmentTransform,
-    camera,
-    dimensions,
+  final frameInfo = ByteData.sublistView(
+    skyboxFrameInfoOf(
+      skyboxInverseViewProjection(camera, dimensions),
+      camera.position,
+      environmentTransform,
+      farClipDepth: raster.farClipDepth,
+    ),
   );
+  // Only a static secondary environment cross-fades the visible sky; with no
+  // cross-fade the primary is bound to the `_b` samplers (a no-op, since the
+  // blend factor is 0).
+  final environmentB = environmentMapB ?? environment;
+  final skyboxInfo = source is EnvironmentSkySource
+      ? ByteData.sublistView(
+          _skyboxInfoOf(
+            source,
+            environment,
+            environmentIntensity * skybox.intensity,
+            environmentBlend,
+          ),
+        )
+      : null;
 
-  // Fragment bindings depend on the source.
-  if (source is EnvironmentSkySource) {
-    _bindEnvironmentSource(
-      renderPass,
-      transientsBuffer,
-      fragmentShader,
-      source,
-      environment,
-      environmentIntensity * skybox.intensity,
-      // Only a static secondary environment cross-fades the visible sky; with
-      // no cross-fade the primary is bound to the `_b` samplers (a no-op, since
-      // the blend factor is 0).
-      environmentMapB ?? environment,
-      environmentBlend,
+  void record(gpu.RenderPass pass) {
+    pass.clearBindings();
+    pass.bindTrackedPipeline(pipeline);
+    pass.setTrackedColorBlendEnable(false);
+    // Draw at the far plane behind everything: pass where nothing has been
+    // drawn (depth still at the cleared far value) and never write depth, so
+    // opaque geometry draws in front.
+    pass.setTrackedDepthWriteEnable(false);
+    pass.setTrackedDepthCompareOperation(raster.nearerOrEqual);
+    pass.setTrackedCullMode(gpu.CullMode.none);
+    pass.setTrackedPrimitiveType(gpu.PrimitiveType.triangle);
+    bindVertexBufferCompat(pass, fullscreenQuadView, 6);
+    pass.bindUniform(
+      vertexShader.cachedUniformSlot('SkyboxFrameInfo'),
+      transientsBuffer.emplace(frameInfo),
     );
-  } else if (source is ShaderSkySource) {
-    source.bind(renderPass, transientsBuffer, environment);
+    // Fragment bindings depend on the source.
+    if (source is EnvironmentSkySource) {
+      _bindEnvironmentSource(
+        pass,
+        transientsBuffer,
+        fragmentShader,
+        skyboxInfo!,
+        environment,
+        environmentB,
+      );
+    } else if (source is ShaderSkySource) {
+      source.bind(pass, transientsBuffer, environment);
+    }
+    drawCompat(pass, 6);
   }
 
-  drawCompat(renderPass, 6);
-}
-
-// Binds SkyboxFrameInfo (inverse view-projection, environment rotation as a
-// mat4, camera position) on the sky vertex shader.
-void _bindFrameInfo(
-  gpu.RenderPass renderPass,
-  TransientWriter transientsBuffer,
-  gpu.Shader vertexShader,
-  Matrix3? environmentTransform,
-  Camera camera,
-  ui.Size dimensions,
-) {
-  final inverseViewProjection = skyboxInverseViewProjection(camera, dimensions);
-  bindSkyboxFrameInfo(
-    renderPass,
-    transientsBuffer,
-    vertexShader,
-    inverseViewProjection,
-    camera.position,
-    environmentTransform,
-    farClipDepth: depthRasterOf(camera).farClipDepth,
-  );
+  // The environment sky reads only the view blocks and the environment's
+  // textures, so the scene's item set keeps it; a shader sky binds what its
+  // source chooses and is encoded.
+  if (source is EnvironmentSkySource && target != null) {
+    final kept = KeptPassDraw.of(renderScene, SceneItems.skyPass);
+    if (kept != null &&
+        kept.draw(
+          renderPass,
+          target,
+          key: (
+            pipeline,
+            raster.nearerOrEqual,
+            environment.prefilteredRadiance,
+            environment.backgroundTexture,
+            environment.usesMipRadianceLayout,
+            environmentB.prefilteredRadiance,
+          ),
+          record: record,
+          viewBlocks: [frameInfo, skyboxInfo!],
+        )) {
+      // The kept sky bound its own pipeline and blocks on the pass.
+      renderPass.clearBindings();
+      return;
+    }
+  }
+  record(renderPass);
 }
 
 /// Builds the skybox transform without camera translation.
@@ -141,13 +167,9 @@ Matrix4 skyboxInverseViewProjection(Camera camera, ui.Size dimensions) {
   return viewProjection..invert();
 }
 
-/// Binds the sky vertex shader's `SkyboxFrameInfo` from an explicit
-/// [inverseViewProjection] and [cameraPosition]. Shared by the per-frame sky
-/// draw (via the camera) and the offscreen bake (one call per cube face).
-void bindSkyboxFrameInfo(
-  gpu.RenderPass renderPass,
-  TransientWriter transientsBuffer,
-  gpu.Shader vertexShader,
+/// The sky vertex shader's `SkyboxFrameInfo` for an explicit
+/// [inverseViewProjection] and [cameraPosition].
+Float32List skyboxFrameInfoOf(
   Matrix4 inverseViewProjection,
   Vector3 cameraPosition,
   Matrix3? environmentTransform, {
@@ -170,36 +192,65 @@ void bindSkyboxFrameInfo(
   frameInfo[33] = cameraPosition.y;
   frameInfo[34] = cameraPosition.z;
   frameInfo[35] = farClipDepth;
+  return frameInfo;
+}
+
+/// Binds the sky vertex shader's `SkyboxFrameInfo` from an explicit
+/// [inverseViewProjection] and [cameraPosition]. The offscreen bake binds it
+/// once per cube face.
+void bindSkyboxFrameInfo(
+  gpu.RenderPass renderPass,
+  TransientWriter transientsBuffer,
+  gpu.Shader vertexShader,
+  Matrix4 inverseViewProjection,
+  Vector3 cameraPosition,
+  Matrix3? environmentTransform, {
+  double farClipDepth = 1.0,
+}) {
+  final frameInfo = skyboxFrameInfoOf(
+    inverseViewProjection,
+    cameraPosition,
+    environmentTransform,
+    farClipDepth: farClipDepth,
+  );
   renderPass.bindUniform(
     vertexShader.cachedUniformSlot('SkyboxFrameInfo'),
     transientsBuffer.emplace(ByteData.sublistView(frameInfo)),
   );
 }
 
-// Binds the built-in environment sky fragment: SkyboxInfo (blurriness +
-// combined intensity + the IBL cross-fade blend) and the prefiltered-radiance
-// atlases (primary plus the secondary cross-fade pair).
-void _bindEnvironmentSource(
-  gpu.RenderPass renderPass,
-  TransientWriter transientsBuffer,
-  gpu.Shader fragmentShader,
+// The built-in environment sky fragment's SkyboxInfo: blurriness, combined
+// intensity and the IBL cross-fade blend.
+Float32List _skyboxInfoOf(
   EnvironmentSkySource source,
   EnvironmentMap environment,
   double intensity,
-  EnvironmentMap environmentB,
   double blend,
 ) {
   // std140: blurriness/intensity/has_background/source_is_linear fill the first
   // vec4; radiance_blend starts the second, so the block rounds up to 8 floats.
-  final skyboxInfo = Float32List(8);
-  skyboxInfo[0] = source.blurriness;
-  skyboxInfo[1] = intensity;
-  skyboxInfo[2] = environment.hasBackgroundTexture ? 1.0 : 0.0;
-  skyboxInfo[3] = environment.backgroundIsLinear ? 1.0 : 0.0;
-  skyboxInfo[4] = blend.clamp(0.0, 1.0);
+  return Float32List(8)
+    ..[0] = source.blurriness
+    ..[1] = intensity
+    ..[2] = environment.hasBackgroundTexture ? 1.0 : 0.0
+    ..[3] = environment.backgroundIsLinear ? 1.0 : 0.0
+    ..[4] = blend.clamp(0.0, 1.0);
+}
+
+// Binds the built-in environment sky fragment: [skyboxInfo] as SkyboxInfo
+// and the prefiltered-radiance atlases (primary plus the secondary
+// cross-fade pair).
+void _bindEnvironmentSource(
+  gpu.RenderPass renderPass,
+  TransientWriter transientsBuffer,
+  gpu.Shader fragmentShader,
+  ByteData skyboxInfo,
+  EnvironmentMap environment,
+  EnvironmentMap environmentB,
+) {
   renderPass.bindUniform(
     fragmentShader.cachedUniformSlot('SkyboxInfo'),
-    transientsBuffer.emplace(ByteData.sublistView(skyboxInfo)),
+    transientsBuffer.emplace(skyboxInfo),
   );
 
   // The prefiltered radiance, bound through the shared helper so the sky

@@ -9,6 +9,7 @@ import 'package:vector_math/vector_math.dart';
 import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/light.dart';
 import 'package:flutter_scene/src/render/depth_prepass.dart';
+import 'package:flutter_scene/src/render/kept_pass_draw.dart';
 import 'package:flutter_scene/src/render/linear_depth_probe.dart';
 import 'package:flutter_scene/src/render/object_filter.dart';
 import 'package:flutter_scene/src/render/projection_params.dart';
@@ -17,6 +18,7 @@ import 'package:flutter_scene/src/render/render_graph_capture.dart'
     show RenderGraphDebug;
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/resolve_pass.dart';
+import 'package:flutter_scene/src/render/retained_draws.dart';
 import 'package:flutter_scene/src/render/scene_pass.dart';
 import 'package:flutter_scene/src/render/shadow_pass.dart';
 import 'package:flutter_scene/src/shader_uniform_bindings.dart';
@@ -227,6 +229,19 @@ abstract class CustomRenderPass {
   /// [RenderPassContext.drawObjects]. False by default.
   bool get drawsInPlace => false;
 
+  /// Whether this pass, drawing in place, makes its one draw through
+  /// [RenderPassContext.drawKept], so a backend that keeps render items keeps
+  /// it and a frame that draws the same one encodes none of it. Read once,
+  /// when the pass is added to a scene. False by default.
+  bool get keepsDraw => false;
+
+  /// The names of the uniform blocks the draw [RenderPassContext.drawKept]
+  /// keeps reads afresh each frame, in the order that call supplies their
+  /// bytes; four at most. Every other block the draw binds must hold its
+  /// bytes from frame to frame. Read once, when the pass is added to a
+  /// scene. Empty by default.
+  List<String> get keptViewBlocks => const [];
+
   /// Records this pass's work for one frame using [context].
   void execute(RenderPassContext context);
 }
@@ -251,6 +266,7 @@ class RenderPassContext {
     this._viewLayerMask,
     this._passKey,
     this._time,
+    this._pass,
   );
 
   final RenderGraphContext _context;
@@ -278,6 +294,7 @@ class RenderPassContext {
   final int _viewLayerMask;
   final String _passKey;
   final double _time;
+  final CustomRenderPass _pass;
   bool _wrote = false;
 
   gpu.Texture get _ownDestination =>
@@ -540,6 +557,47 @@ class RenderPassContext {
   /// Call at most once per pass; for multiple chained effects use multiple
   /// [CustomRenderPass]es. At an HDR stage the shader must output linear HDR
   /// premultiplied by alpha (the material-shader contract).
+  /// Draws, in a render pass of its own that loads [currentColor], the one
+  /// draw [record] makes on the pass it is given, for a pass that
+  /// [CustomRenderPass.keepsDraw].
+  ///
+  /// Where the backend keeps render items the draw is recorded once and kept
+  /// while [key] stays equal, with [viewBlocks] as the bytes of the blocks
+  /// [CustomRenderPass.keptViewBlocks] names, in that order: [record] then
+  /// runs only when [key] changes, and binds those blocks however it likes.
+  /// Anywhere else, and where the backend refuses to keep the draw, [record]
+  /// encodes it into the pass each frame. [key] states everything [record]
+  /// binds but those blocks: its pipeline, state, buffers and textures.
+  void drawKept({
+    required Object key,
+    required void Function(gpu.RenderPass pass) record,
+    List<ByteData> viewBlocks = const [],
+  }) {
+    final commands = gpu.gpuContext.createCommandBuffer(label: _pass.name);
+    final target = gpu.RenderTarget.singleColor(
+      gpu.ColorAttachment(
+        texture: currentColor,
+        loadAction: gpu.LoadAction.load,
+      ),
+    );
+    final pass = commands.createRenderPass(target, label: _pass.name);
+    final slot = _renderScene.keptPassSlots[_pass];
+    final kept = slot == null
+        ? null
+        : KeptPassDraw.of(_renderScene, SceneItems.customPass + slot);
+    final drawn =
+        kept != null &&
+        kept.draw(
+          pass,
+          target,
+          key: key,
+          record: record,
+          viewBlocks: viewBlocks,
+        );
+    if (!drawn) record(pass);
+    rendererSubmissions.submit(commands);
+  }
+
   void applyShader(
     gpu.Shader fragmentShader, {
     Map<String, gpu.Texture> textures = const {},
@@ -646,6 +704,7 @@ class UserRenderGraphPass extends RenderGraphPass {
       _viewLayerMask,
       '${_pass.stage.name}_$_passIndex',
       _time,
+      _pass,
     );
     _pass.execute(passContext);
     final destination = _destination;

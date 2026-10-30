@@ -251,10 +251,10 @@ class TransientTextureDescriptor {
 ///
 /// Keyed by [TransientTextureDescriptor]; for each descriptor it keeps a
 /// ring of [framesInFlight] textures so a texture written this frame is
-/// not overwritten while an earlier frame still references it. An attachment
-/// no shader samples keeps one texture where the backend states
-/// `GpuCapabilities.orderedAttachmentReuse`, since its contents never outlive
-/// the frame and the device orders the frames that render into it. This is the
+/// not overwritten while an earlier frame still references it. A descriptor
+/// keeps one texture where the backend states
+/// `GpuCapabilities.orderedTextureReuse`, since its contents never outlive
+/// the frame and the device orders the frames that use it. This is the
 /// minimal "transient resource" mechanism — there is no intra-frame
 /// lifetime aliasing; a pass that needs two simultaneously-live textures
 /// of the same shape must give them distinct [TransientTextureDescriptor.debugName]s.
@@ -282,10 +282,7 @@ class TransientTexturePool {
     final ring = _rings.putIfAbsent(
       descriptor,
       () => List<gpu.Texture?>.filled(
-        !descriptor.enableShaderReadUsage &&
-                gpu.gpuHost.capabilities.orderedAttachmentReuse
-            ? 1
-            : framesInFlight,
+        gpu.gpuHost.capabilities.orderedTextureReuse ? 1 : framesInFlight,
         null,
       ),
     );
@@ -305,7 +302,7 @@ class TransientTexturePool {
       statesExternalBytes(texture, statedRenderTargetBytes(texture));
       // A ring of more than one entry alternates handles across frames, so a
       // draw that samples it cannot be kept; a single-entry ring (ordered
-      // attachment reuse) hands out a stable handle a kept draw may sample.
+      // texture reuse) hands out a stable handle a kept draw may sample.
       if (ring.length > 1) gpu.markTransientTexture(texture);
       ring[slot] = texture;
     }

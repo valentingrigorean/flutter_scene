@@ -15,6 +15,7 @@ import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/depth_conflicts.dart'
     as depth_conflicts
     show DepthConflictReport, probeDepthConflicts;
+import 'package:flutter_scene/src/render/retained_draws.dart';
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
@@ -1827,12 +1828,25 @@ base class Scene implements SceneGraph {
   void addRenderPass(CustomRenderPass pass) {
     if (_renderPasses.contains(pass)) return;
     _renderPasses.add(pass);
+    if (pass.keepsDraw) {
+      renderScene.keepPass(
+        pass,
+        pass.keptViewBlocks,
+        slots: SceneItems.customPasses,
+      );
+    }
   }
 
   /// Removes a previously [addRenderPass]ed [pass]. Returns whether it was
   /// present.
   /// {@category Rendering}
-  bool removeRenderPass(CustomRenderPass pass) => _renderPasses.remove(pass);
+  bool removeRenderPass(CustomRenderPass pass) {
+    renderScene.releasePass(
+      pass,
+      (held) => (held as CustomRenderPass).keptViewBlocks,
+    );
+    return _renderPasses.remove(pass);
+  }
 
   /// Steady-state rendering statistics: the last frame's draw, culling,
   /// batching, and pipeline counters broken down by view and by pass, with
@@ -4929,6 +4943,7 @@ base class Scene implements SceneGraph {
             ? (debug.split ?? -1.0)
             : -1.0,
         debugSkipsPost: debugActive,
+        renderScene: renderScene,
       ),
     );
 
@@ -4985,7 +5000,11 @@ base class Scene implements SceneGraph {
     // application after the anti-aliasing pass.
     if (enableFxaa) {
       displaySteps.add(
-        (output) => FxaaPass(output: output, dimensions: pixelSize),
+        (output) => FxaaPass(
+          output: output,
+          dimensions: pixelSize,
+          renderScene: renderScene,
+        ),
       );
     }
     if (enableSmaa) {
