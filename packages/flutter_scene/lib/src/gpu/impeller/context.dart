@@ -142,6 +142,29 @@ final class GpuContext {
     return DeviceBuffer._backend(_backend!.createDeviceBufferWithCopy(data));
   }
 
+  /// Allocates host-visible GPU memory whose writes reach the GPU in order:
+  /// an [DeviceBuffer.overwrite] is read by every draw submitted after it,
+  /// kept draws ([ItemSet]) included, and by none submitted before it. A draw
+  /// a backend keeps can then read data rewritten in place without being
+  /// recorded again.
+  ///
+  /// A registered backend writes through its queue, which orders the write
+  /// ahead of the work submitted after it (wgpu stages the copy at the head
+  /// of the next submission), so this is a plain buffer there. On Impeller,
+  /// which copies no buffer into another on the GPU, a write the GPU may
+  /// still be reading moves to another copy of the buffer, which each later
+  /// bind reads; the buffer keeps a host mirror of its bytes and a copy for
+  /// each frame in flight it was rewritten in.
+  DeviceBuffer createOrderedDeviceBuffer(int sizeInBytes) {
+    final impeller = _impeller;
+    if (impeller != null) {
+      return DeviceBuffer._ordered(_OrderedCopies(impeller, sizeInBytes));
+    }
+    return DeviceBuffer._backend(
+      _backend!.createDeviceBuffer(StorageMode.hostVisible, sizeInBytes),
+    );
+  }
+
   /// Creates a per-frame bump allocator over a list of buffer blocks.
   HostBuffer createHostBuffer({
     int blockLengthInBytes = HostBuffer.kDefaultBlockLengthInBytes,
