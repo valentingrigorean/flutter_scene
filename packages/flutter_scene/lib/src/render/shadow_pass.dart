@@ -322,7 +322,7 @@ class ShadowPass extends RenderGraphPass {
         _cascades.length + spotCount + pointCount * kPointShadowTilesPerLight;
     final atlasWidth = _tileResolution * totalTiles;
     final depthMap = shadowMapIsDepth;
-    final color = context.texturePool.acquire(
+    final color = context.sizelessTexturePool.acquire(
       depthMap
           ? TransientTextureDescriptor(
               width: atlasWidth,
@@ -339,7 +339,7 @@ class ShadowPass extends RenderGraphPass {
               debugName: 'directional_shadow_map',
             ),
     );
-    final depth = context.texturePool.acquire(
+    final depth = context.sizelessTexturePool.acquire(
       TransientTextureDescriptor.depth(
         width: atlasWidth,
         height: _tileResolution,
