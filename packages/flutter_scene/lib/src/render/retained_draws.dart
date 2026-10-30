@@ -327,6 +327,11 @@ abstract base class RetainedDraws {
   /// kept, and those that changed in two syncs in a row.
   final List<RenderItem> encoded = [];
 
+  /// Whether the pass's draws for another camera are its kept draws as they
+  /// stand ([CameraReplay]): it encodes none, and none draws at a level of
+  /// detail the camera selects.
+  bool get keepsForAnyCamera => encoded.isEmpty && _leveled.isEmpty;
+
   /// The pass's recorder, current after [sync] began.
   @protected
   late gpu.RenderPass recorder;

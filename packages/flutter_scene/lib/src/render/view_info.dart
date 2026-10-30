@@ -7,7 +7,10 @@
 /// camera moves.
 library;
 
+import 'dart:ui' as ui;
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/instance_band.dart';
@@ -15,6 +18,7 @@ import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/held_slots.dart';
 import 'package:flutter_scene/src/render/uniform_slots.dart';
+import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:flutter_scene/src/vertex_spin.dart';
 import 'package:vector_math/vector_math.dart';
@@ -144,6 +148,76 @@ gpu.BufferView viewInfoOf(
 ByteData viewInfoBytesOf(Matrix4 cameraTransform, Vector3 cameraPosition) {
   _packViewInfo(cameraTransform, cameraPosition);
   return _views.bytes;
+}
+
+/// What a kept pass's `ViewInfo` block was packed under besides its camera,
+/// read when the pass draws ([ViewInfoState.current]), so a camera replay
+/// packs the block for another camera as the pass packed it: the depth
+/// raster and pixel slope of that camera where the pass stated its own, the
+/// camera's forward where the pass stated one, and the pass's orthographic
+/// flag and band depth range.
+@internal
+final class ViewInfoState {
+  /// The state the next [viewInfoBytesOf] packs under.
+  ViewInfoState.current()
+    : _raster = !identical(currentDrawDepthRaster, DepthRaster.standard),
+      _slope = currentDrawPixelSlope != 0.0,
+      _forward = currentViewForward != null,
+      _orthographic = currentViewOrthographic,
+      _bandForward =
+          currentViewInstanceBand[4] != 0.0 ||
+          currentViewInstanceBand[5] != 0.0 ||
+          currentViewInstanceBand[6] != 0.0,
+      _depthFrom = currentViewInstanceBand[8],
+      _depthTo = currentViewInstanceBand[9];
+
+  final bool _raster;
+  final bool _slope;
+  final bool _forward;
+  final bool _orthographic;
+  final bool _bandForward;
+  final double _depthFrom;
+  final double _depthTo;
+
+  /// A copy of the `ViewInfo` block of the pass for [camera] drawing into a
+  /// [dimensions] target through [cameraTransform] at [viewScale].
+  ByteData bytesFor(
+    Matrix4 cameraTransform,
+    Camera camera,
+    ui.Size dimensions,
+    double viewScale,
+  ) {
+    final forward = currentViewForward;
+    final orthographic = currentViewOrthographic;
+    final scale = currentViewScale;
+    final band = Float32List.fromList(currentViewInstanceBand);
+    final position = camera.position;
+    final seen = camera.forward.normalized();
+    currentViewForward = _forward ? seen : null;
+    currentViewOrthographic = _orthographic;
+    currentViewScale = viewScale;
+    currentViewInstanceBand
+      ..[0] = position.x
+      ..[1] = position.y
+      ..[2] = position.z
+      ..[4] = _bandForward ? seen.x : 0.0
+      ..[5] = _bandForward ? seen.y : 0.0
+      ..[6] = _bandForward ? seen.z : 0.0
+      ..[8] = _depthFrom
+      ..[9] = _depthTo;
+    _packViewInfo(cameraTransform, position);
+    final raster = _raster ? depthRasterOf(camera) : DepthRaster.standard;
+    final slope = _slope ? pixelDepthSlopeOf(camera, dimensions) : 0.0;
+    final floats = Float32List.fromList(_views.scratch)
+      ..[32] = raster.stepScale
+      ..[33] = raster.stepClip
+      ..[34] = (raster.reversed ? 1.0 : -1.0) * slope;
+    currentViewForward = forward;
+    currentViewOrthographic = orthographic;
+    currentViewScale = scale;
+    currentViewInstanceBand.setAll(0, band);
+    return ByteData.sublistView(floats);
+  }
 }
 
 void _packViewInfo(Matrix4 cameraTransform, Vector3 cameraPosition) {

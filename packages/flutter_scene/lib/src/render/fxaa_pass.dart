@@ -94,6 +94,7 @@ class FxaaPass extends RenderGraphPass {
           record: record,
           viewBlocks: [info],
           viewTextures: KeptPassDraw.viewTextures(sceneColor: input),
+          replay: (view) => view.dimensions == _dimensions ? [info] : null,
         );
     if (!drawn) record(renderPass);
     rendererSubmissions.submit(commandBuffer);

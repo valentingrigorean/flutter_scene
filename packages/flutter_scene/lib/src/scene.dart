@@ -17,6 +17,7 @@ import 'package:flutter_scene/src/depth_conflicts.dart'
     show DepthConflictReport, probeDepthConflicts;
 import 'package:flutter_scene/src/render/kept_pass_draw.dart';
 import 'package:flutter_scene/src/render/retained_draws.dart';
+import 'package:flutter_scene/src/render/camera_replay.dart';
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
@@ -2942,6 +2943,168 @@ base class Scene implements SceneGraph {
       if (light.node.internalEffectiveVisible) light,
   ];
 
+  _HeldCameraReplay? _cameraReplay;
+
+  /// The view blocks and clip matrices, by pass of the scene's item set, of
+  /// the frame [views] would render, where it differs from the frame this
+  /// scene rendered last only in its camera: or null where the frame must
+  /// render ([renderViews]).
+  ///
+  /// The last frame qualifies when it rendered one view into a
+  /// [RenderTexture] that presents, and each of its passes drew only kept
+  /// items of the scene's item set whose view blocks follow the camera
+  /// ([CameraReplay]). A frame stays one where, since then, no item changed,
+  /// the target, its size and the view's settings stayed, the directional
+  /// light kept its direction and shadow settings, and no setting turned a
+  /// pass on or off. The scene's tick runs as [renderViews] runs it, so a
+  /// [renderViews] after a null result in the same frame does not tick again.
+  ///
+  /// The caller draws the frame from the result: each pass's blocks and clip
+  /// matrix in place of those the last frame stated.
+  Map<int, CameraReplayBlocks>? cameraFrame(List<RenderView> views) {
+    _checkNotDisposed('cameraFrame');
+    final held = _cameraReplay;
+    if (held == null || views.length != 1 || this.views.isNotEmpty) {
+      return null;
+    }
+    final view = views.single;
+    final target = view.target;
+    if (!identical(target, held.target)) return null;
+    currentAnimationTime = animationTime;
+    renderScene.recordRenderedViews(views);
+    if (!_tickedThisFrame) {
+      final nowMillis = DateTime.now().millisecondsSinceEpoch;
+      final lastMillis = _lastTickMillis ?? nowMillis;
+      _tick((nowMillis - lastMillis) / 1000.0);
+      _tickedThisFrame = true;
+    }
+    final environmentMap = environment ?? Material.getDefaultEnvironmentMap();
+    if (!_sameKey(_cameraReplayKey(view, target!, environmentMap), held.key)) {
+      return null;
+    }
+    final pixelSize = ui.Size(
+      target.width.toDouble(),
+      target.height.toDouble(),
+    );
+    final camera = ViewportBoundCamera(
+      view.camera,
+      pixelSize,
+      raster: _depthRasterFor(view, pixelSize, -1),
+    );
+    final lightComponent = renderScene.primaryDirectionalLight;
+    final light = lightComponent?.light;
+    final projection = ProjectionParams.of(camera.projection, pixelSize);
+    final projectionValid =
+        projection.scaleX > 0.0 &&
+        projection.scaleY > 0.0 &&
+        projection.far > projection.near;
+    final cascades = light != null && light.castsShadow && projectionValid
+        ? light.computeCascades(
+            camera,
+            pixelSize.width / pixelSize.height,
+            lightComponent?.worldDirection,
+          )
+        : const <ShadowCascade>[];
+    if (cascades.isNotEmpty &&
+        light!.cacheStaticShadows &&
+        _refreshStaticShadowMetadata()) {
+      return null;
+    }
+    currentAnimationTime = animationTime;
+    final blocks = held.replay.blocksFor(
+      CameraReplayView(
+        camera: camera,
+        dimensions: pixelSize,
+        cascades: cascades,
+        viewScale: view.viewScale,
+        time: DateTime.now().millisecondsSinceEpoch.remainder(100000) / 1000.0,
+      ),
+    );
+    if (blocks != null) _tickedThisFrame = false;
+    return blocks;
+  }
+
+  // What a frame [cameraFrame] replays keeps from the frame it replays: the
+  // target, the view's settings, the items and the scene's settings its
+  // passes read or that turn a pass on or off.
+  List<Object?> _cameraReplayKey(
+    RenderView view,
+    RenderTexture target,
+    EnvironmentMap environmentMap,
+  ) {
+    final lightComponent = renderScene.primaryDirectionalLight;
+    final light = lightComponent?.light;
+    final direction = lightComponent?.worldDirection;
+    final size = ui.Size(target.width.toDouble(), target.height.toDouble());
+    return [
+      target.width,
+      target.height,
+      view.layerMask,
+      view.antiAliasingMode,
+      view.cullingPlanes.isEmpty,
+      view.instanceDepthFrom,
+      view.instanceDepthTo,
+      _resolveAntiAliasingMode(view.antiAliasingMode ?? _antiAliasingMode),
+      _debugViewFrame(size) == null,
+      for (final pass in _viewPasses(view)) pass,
+      renderScene.changeLog.length,
+      renderScene.changeLogEpoch,
+      renderScene.viewBlocksRevision,
+      renderScene.drawOrigin.revision,
+      renderScene.staticShadowRevision,
+      renderScene.materialSummary.inputs.isEmpty,
+      renderScene.hasVisibleDisplayReferred,
+      renderScene.directionalLights.length,
+      renderScene.pointLights.isEmpty,
+      renderScene.spotLights.isEmpty,
+      renderScene.rectAreaLights.isEmpty,
+      renderScene.environmentVolumeComponents.isEmpty,
+      environmentVolumes.isEmpty,
+      skyEnvironment == null,
+      _sunLight == null,
+      environmentMap,
+      _crossfadeEnvironment,
+      _crossfadeBlend,
+      environmentIntensity,
+      ...environmentTransform.storage,
+      skybox,
+      skybox?.intensity,
+      fog.enabled,
+      fog.mode,
+      exposure,
+      toneMapping,
+      agxWhite,
+      agxContrast,
+      lightComponent,
+      light,
+      direction?.x,
+      direction?.y,
+      direction?.z,
+      light?.castsShadow,
+      light?.shadowCascadeCount,
+      light?.shadowMapResolution,
+      light?.cacheStaticShadows,
+      postProcess.bloom.enabled,
+      postProcess.colorGrading.lut,
+      for (final effect in postProcess.customEffects) effect.enabled,
+      ambientOcclusion.enabled,
+      autoExposure.enabled,
+      depthOfField.enabled,
+      godRays.enabled,
+      screenDistortion.enabled,
+      screenSpaceReflections.enabled,
+      globalIllumination.enabled,
+    ];
+  }
+
+  static bool _sameKey(List<Object?> a, List<Object?> b) {
+    if (a.length != b.length) return false;
+    for (var index = 0; index < a.length; index++) {
+      if (a[index] != b[index]) return false;
+    }
+    return true;
+  }
+
   /// Renders a list of [views] of this scene onto [canvas].
   ///
   /// Each [RenderView] binds a camera to a normalized sub-rectangle of
@@ -2968,6 +3131,7 @@ base class Scene implements SceneGraph {
     double? pixelRatio,
   }) {
     _checkNotDisposed('renderViews');
+    _cameraReplay = null;
     currentAnimationTime = animationTime;
     renderScene.recordRenderedViews(views);
     if (!isReadyToRender) {
@@ -3284,23 +3448,47 @@ base class Scene implements SceneGraph {
       final capturer = frameCapture == null
           ? null
           : RenderGraphCapturer(request: frameCapture.request);
-      _renderViewToTexture(
-        view: view,
-        outputColor: target.acquireNextTexture(),
-        pixelSize: ui.Size(target.width.toDouble(), target.height.toDouble()),
-        pool: target.transientTexturePool,
-        environmentMap: environmentMap,
-        transientsBuffer: transientsBuffer,
-        lightComponent: lightComponent,
-        punctualLighting: punctualLighting,
-        spotShadowFrame: spotShadowFrame,
-        pointShadowFrame: pointShadowFrame,
-        capturer: capturer,
-        captureLinearColor: target.linearColor,
-        primaryView: target.presents,
-        capturePlanarReflections:
-            !target.linearColor && identical(view, planarCaptureView),
-      );
+      // The one view of a frame that presents records how its passes'
+      // view blocks follow the camera, for [cameraFrame].
+      final replay =
+          target.presents &&
+              !target.linearColor &&
+              capturer == null &&
+              textureViews.length == 1 &&
+              ordered.isEmpty
+          ? CameraReplay()
+          : null;
+      CameraReplay.recording = replay;
+      try {
+        _renderViewToTexture(
+          view: view,
+          outputColor: target.acquireNextTexture(),
+          pixelSize: ui.Size(target.width.toDouble(), target.height.toDouble()),
+          pool: target.transientTexturePool,
+          environmentMap: environmentMap,
+          transientsBuffer: transientsBuffer,
+          lightComponent: lightComponent,
+          punctualLighting: punctualLighting,
+          spotShadowFrame: spotShadowFrame,
+          pointShadowFrame: pointShadowFrame,
+          capturer: capturer,
+          captureLinearColor: target.linearColor,
+          primaryView: target.presents,
+          capturePlanarReflections:
+              !target.linearColor && identical(view, planarCaptureView),
+        );
+      } finally {
+        CameraReplay.recording = null;
+      }
+      if (replay != null &&
+          !replay.refused &&
+          deferredPipelineBuilds == deferred) {
+        _cameraReplay = _HeldCameraReplay(
+          replay,
+          target,
+          _cameraReplayKey(view, target, environmentMap),
+        );
+      }
       if (capturer != null) {
         frameCaptures!.add(
           capturer.finish(pixelWidth: target.width, pixelHeight: target.height),
@@ -5406,4 +5594,14 @@ class _RepaintRequest extends ChangeNotifier {
 class _NearFitState {
   double? fitted;
   NearPlaneFit? last;
+}
+
+// The recording of the last frame [Scene.cameraFrame] may replay, the target
+// it rendered into and what it kept ([Scene._cameraReplayKey]).
+final class _HeldCameraReplay {
+  _HeldCameraReplay(this.replay, this.target, this.key);
+
+  final CameraReplay replay;
+  final RenderTexture target;
+  final List<Object?> key;
 }

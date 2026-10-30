@@ -104,25 +104,26 @@ class ResolvePass extends RenderGraphPass {
     final renderPass = commandBuffer.createRenderPass(target);
     final pipeline = resolvePipeline(_vertexShader, _fragmentShader);
 
-    // Wall-clock seconds (wrapped to keep float precision) drive the
-    // animated film grain.
-    final timeSeconds =
-        DateTime.now().millisecondsSinceEpoch.remainder(100000) / 1000.0;
     // Render-to-texture content is stored top-down on every backend, so the
     // resolve samples without a fragment-stage V-flip (flipY is always false).
-    final info = ByteData.sublistView(
+    ByteData infoAt(double time) => ByteData.sublistView(
       packResolveInfo(
         exposure: _exposure,
         toneMappingMode: _toneMappingMode,
         agxWhite: _agxWhite,
         agxContrast: _agxContrast,
         flipY: false,
-        time: timeSeconds,
+        time: time,
         settings: _postProcess,
         debugViewActive: _debugViewActive,
         debugViewSplit: _debugViewSplit,
         bloomEnabled: _postProcess.bloom.enabled && !_debugSkipsPost,
       ),
+    );
+    // Wall-clock seconds (wrapped to keep float precision) drive the
+    // animated film grain.
+    final info = infoAt(
+      DateTime.now().millisecondsSinceEpoch.remainder(100000) / 1000.0,
     );
     // Bloom is present only when BloomPass ran this frame; otherwise a
     // placeholder fills the slot and the resolve skips it (flag off).
@@ -185,6 +186,7 @@ class ResolvePass extends RenderGraphPass {
             bloom: bloomTexture,
             exposureFactor: exposureFactor,
           ),
+          replay: (view) => [infoAt(view.time)],
         );
     if (!drawn) record(renderPass);
     rendererSubmissions.submit(commandBuffer);

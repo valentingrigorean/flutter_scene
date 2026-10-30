@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/material/material.dart';
+import 'package:flutter_scene/src/render/camera_replay.dart';
 import 'package:flutter_scene/src/render/draw_recorder.dart';
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
@@ -83,6 +84,10 @@ final class KeptPassDraw {
   /// view blocks and view textures. Returns false, drawing nothing, where
   /// the backend refused to keep the draw.
   ///
+  /// [replay] rebuilds [viewBlocks] for another camera of the frame
+  /// ([CameraReplay]), or returns null where it cannot; a draw with none
+  /// refuses the frame's camera replay.
+  ///
   /// The draw binds what it draws with on [pass].
   bool draw(
     gpu.RenderPass pass,
@@ -91,6 +96,7 @@ final class KeptPassDraw {
     required void Function(gpu.RenderPass recorder) record,
     required List<ByteData> viewBlocks,
     List<gpu.Texture> viewTextures = const [],
+    List<ByteData>? Function(CameraReplayView view)? replay,
   }) {
     final colors = target.colorAttachments;
     final depth = target.depthStencilAttachment?.texture;
@@ -110,6 +116,17 @@ final class KeptPassDraw {
       _refused = id == null;
     }
     if (_refused) return false;
+    final recording = CameraReplay.recording;
+    if (recording != null) {
+      if (replay == null) {
+        recording.refuse();
+      } else {
+        recording.pass(_index, (view) {
+          final blocks = replay(view);
+          return blocks == null ? null : (blocks: blocks, clip: _clip);
+        });
+      }
+    }
     _items.draw(
       pass,
       _index,
