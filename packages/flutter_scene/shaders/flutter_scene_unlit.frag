@@ -5,7 +5,10 @@
 precision mediump float;
 precision highp int;
 
-uniform FragInfo {
+// The material's own constants, held from frame to frame. Not named
+// FragInfo: that is the color pass's shared lighting block, which a kept
+// draw reads from the pass.
+uniform UnlitInfo {
   vec4 color;
   float vertex_color_weight;
   // LOD cross-fade coverage; see lod_fade.glsl.
