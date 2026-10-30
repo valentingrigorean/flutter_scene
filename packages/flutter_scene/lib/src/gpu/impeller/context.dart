@@ -237,12 +237,16 @@ final class GpuContext {
   ItemSet? createItemSet({
     required List<String> viewBlockNames,
     required int viewBlockLength,
+    List<String> viewTextureNames = const [],
   }) {
     final set = _backend?.createItemSet(
       viewBlockNames: viewBlockNames,
       viewBlockLength: viewBlockLength,
+      viewTextureNames: viewTextureNames,
     );
-    return set == null ? null : ItemSet._(set, viewBlockNames);
+    return set == null
+        ? null
+        : ItemSet._(set, viewBlockNames, viewTextureNames);
   }
 
   /// Creates a command buffer that records and submits GPU work. [label]

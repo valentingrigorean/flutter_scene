@@ -9,10 +9,11 @@ part of '_gpu.dart';
 /// it names until it is kept again or removed, with the resources it bound:
 /// a change to what it draws keeps it again.
 final class ItemSet {
-  ItemSet._(this._backend, this._viewBlockNames);
+  ItemSet._(this._backend, this._viewBlockNames, this._viewTextureNames);
 
   final GpuBackendItemSet _backend;
   final List<String> _viewBlockNames;
+  final List<String> _viewTextureNames;
 
   /// A pass that records draws for [keep], for attachments shaped like
   /// [target]'s.
@@ -59,18 +60,21 @@ final class ItemSet {
   void remove(int id) => _backend.remove(id);
 
   /// Draws the items of pass [index] into [pass] where it stands, with
-  /// [viewBlocks] as the pass's view blocks, in the order
-  /// [GpuContext.createItemSet] named them, culled by [clip].
+  /// [viewBlocks] as the pass's view blocks and [viewTextures] as its view
+  /// textures, each in the order [GpuContext.createItemSet] named them,
+  /// culled by [clip].
   void draw(
     RenderPass pass,
     int index, {
     required List<ByteData> viewBlocks,
     required Float32List clip,
+    List<Texture> viewTextures = const [],
   }) => _backend.draw(
     pass._backend!,
     index,
     viewBlocks: viewBlocks,
     clip: clip,
+    viewTextures: [for (final texture in viewTextures) texture._backend!],
   );
 
   /// Releases every item.

@@ -207,7 +207,10 @@ final class RenderPass {
         sampler: sampler,
       );
     } else {
-      if (_records != null && (_transientTextures[texture] ?? false)) {
+      final records = _records;
+      if (records != null &&
+          (_transientTextures[texture] ?? false) &&
+          !records._viewTextureNames.contains(slot.uniformName)) {
         _readsTransient = true;
       }
       _backend!.bindTexture(
