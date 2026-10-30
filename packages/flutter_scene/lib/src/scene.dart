@@ -4915,6 +4915,7 @@ base class Scene implements SceneGraph {
             ? (debug.split ?? -1.0)
             : -1.0,
         debugSkipsPost: debugActive,
+        renderScene: renderScene,
       ),
     );
 
@@ -4971,7 +4972,11 @@ base class Scene implements SceneGraph {
     // application after the anti-aliasing pass.
     if (enableFxaa) {
       displaySteps.add(
-        (output) => FxaaPass(output: output, dimensions: pixelSize),
+        (output) => FxaaPass(
+          output: output,
+          dimensions: pixelSize,
+          renderScene: renderScene,
+        ),
       );
     }
     if (enableSmaa) {

@@ -483,6 +483,8 @@ class ScenePass extends RenderGraphPass {
         _dimensions,
         environmentMapB: _environmentMapB,
         environmentBlend: _environmentBlend,
+        renderScene: _renderScene,
+        target: target,
       );
     }
 
