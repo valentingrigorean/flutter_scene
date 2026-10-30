@@ -269,6 +269,7 @@ export 'src/light.dart'
         SpotLight;
 export 'src/render/custom_render_pass.dart'
     show CustomRenderPass, RenderInput, RenderPassContext, RenderStage;
+export 'src/render/kept_pass_draw.dart' show KeptItem, KeptPassItems;
 export 'src/render/frame_transients.dart'
     show GpuSubmissions, TransientWriter, gpuSubmissions, transientDrawKey;
 export 'src/render/shadow_pass.dart'
