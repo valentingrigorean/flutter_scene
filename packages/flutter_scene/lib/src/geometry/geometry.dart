@@ -1429,6 +1429,22 @@ abstract class Geometry with RenderSourceListeners {
     tellRenderSourceListeners();
   }
 
+  /// Whether a pass may keep a draw of this geometry as a render item a
+  /// backend draws, though it is no [UnskinnedGeometry]: its [bind] binds
+  /// only buffers and blocks it holds from frame to frame beside the pass's
+  /// `ViewInfo`, no model-transform instance, and [draw] issues one draw
+  /// while [currentDrawKept]. False by default.
+  ///
+  /// Such a geometry calls [markKeptDrawChanged] whenever a value its kept
+  /// draw binds changes, so the passes that keep it record it again.
+  /// {@category Geometry}
+  bool get keepsItsDraw => false;
+
+  /// Tells the passes that keep a draw of this geometry ([keepsItsDraw])
+  /// that what its [bind] binds changed, so they record the draw again.
+  @protected
+  void markKeptDrawChanged() => _buffersChanged();
+
   /// Binds all of this geometry's vertex streams (to slots 0, 1, ...) and
   /// its index buffer onto [pass] without binding any uniforms.
   ///
