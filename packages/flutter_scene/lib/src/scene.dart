@@ -2955,9 +2955,11 @@ base class Scene implements SceneGraph {
   /// items of the scene's item set whose view blocks follow the camera
   /// ([CameraReplay]). A frame stays one where, since then, no item changed,
   /// the target, its size and the view's settings stayed, the directional
-  /// light kept its direction and shadow settings, and no setting turned a
-  /// pass on or off. The scene's tick runs as [renderViews] runs it, so a
-  /// [renderViews] after a null result in the same frame does not tick again.
+  /// light kept its direction and shadow settings, no setting turned a pass
+  /// on or off, and the animation time stayed in its fold
+  /// ([animationTimeEpoch]). The scene's tick runs as [renderViews] runs it,
+  /// so a [renderViews] after a null result in the same frame does not tick
+  /// again.
   ///
   /// The caller draws the frame from the result: each pass's blocks and clip
   /// matrix in place of those the last frame stated.
@@ -3049,6 +3051,8 @@ base class Scene implements SceneGraph {
       for (final pass in _viewPasses(view)) pass,
       renderScene.changeLog.length,
       renderScene.changeLogEpoch,
+      // A kept draw that turns holds its phases for one fold of the time.
+      animationTimeEpoch(animationTime),
       renderScene.viewBlocksRevision,
       renderScene.drawOrigin.revision,
       renderScene.staticShadowRevision,

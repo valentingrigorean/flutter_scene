@@ -22,6 +22,7 @@ import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:flutter_scene/src/render/view_info.dart';
+import 'package:flutter_scene/src/vertex_spin.dart';
 
 // The syncs an item that changed in two syncs in a row stays encoded each
 // frame before it is kept again.
@@ -47,6 +48,11 @@ final class _Kept {
   int primitive = -1;
   final Float32List bounds = Float32List(6);
   bool bounded = false;
+
+  // The turns the recorded draw's held `ItemInfo` carries, and the fold of
+  // the animation time their phases were written for.
+  Object? spin;
+  double spinEpoch = 0.0;
 
   // What the recorded draw read that its transform reaches: the instance
   // record's slot and floats (no slot: it binds none), the model scale and
@@ -270,7 +276,7 @@ final class SceneItems {
 /// camera encodes none of them.
 ///
 /// A draw is kept when it binds only what its item holds from frame to
-/// frame: an unskinned, unmorphed, non-instanced mesh with no turns or draw
+/// frame: an unskinned, unmorphed, non-instanced mesh with no draw
 /// selection, at one level of detail a pass selects ([levelOf]), through a
 /// position-only depth path, or the vertex stage of a geometry that keeps
 /// its draw, whose material has no vertex stage, mask or surface, and whose
@@ -283,7 +289,10 @@ final class SceneItems {
 /// its draw: the set holds that record from its first move, and each move
 /// places it again ([gpu.ItemSet.place]) without recording the draw. Any
 /// other item that changes in two syncs in a row is encoded each frame like
-/// every draw that cannot be kept, until it rests for a while.
+/// every draw that cannot be kept, until it rests for a while. A mesh that
+/// turns ([VertexSpin]) reads the animation time from the pass's view
+/// block, so its kept draw holds until the time leaves the fold its phases
+/// were written for ([animationTimeEpoch]), and is then recorded again.
 /// The pass then draws the kept items natively and encodes [encoded].
 ///
 /// An item with levels of detail is checked each [sync] for the level the
@@ -322,6 +331,11 @@ abstract base class RetainedDraws {
 
   // The kept runs a member of moved in this sync.
   final Set<_Run> _movedRuns = LinkedHashSet.identity();
+
+  // The items the pass draws that turn, checked again when the animation
+  // time enters a new fold, and the fold of the last sync.
+  final Set<RenderItem> _spun = LinkedHashSet.identity();
+  double _spinEpoch = 0.0;
 
   /// The items the pass encodes each frame: those it draws that cannot be
   /// kept, and those that changed in two syncs in a row.
@@ -476,6 +490,9 @@ abstract base class RetainedDraws {
     if (changed) _recorder = null;
     recorder = _recorder ??= createTrackedRecorder(items, target);
     beginSync();
+    final spinEpoch = animationTimeEpoch(currentAnimationTime);
+    final newFold = spinEpoch != _spinEpoch;
+    _spinEpoch = spinEpoch;
     final log = scene.changeLog;
     if (changed || _epoch != scene.changeLogEpoch) {
       _key = fullKey;
@@ -507,6 +524,11 @@ abstract base class RetainedDraws {
         for (final (item, level) in moved) {
           _visit(item, level);
         }
+      }
+    }
+    if (newFold) {
+      for (final item in [..._spun]) {
+        _visit(item);
       }
     }
     for (var index = encoded.length - 1; index >= 0; index--) {
@@ -546,6 +568,7 @@ abstract base class RetainedDraws {
     final kept = _kept[item] ??= _Kept();
     if (!draws(item)) {
       _leveled.remove(item);
+      _spun.remove(item);
       kept.level = wholeItem;
       _forget(item, kept);
       _encode(item, kept, false);
@@ -557,6 +580,13 @@ abstract base class RetainedDraws {
     } else {
       _leveled.add(item);
     }
+    final spin = item.nodeSpin;
+    if (spin == null) {
+      _spun.remove(item);
+    } else {
+      _spun.add(item);
+    }
+    final spinEpoch = spin == null ? 0.0 : _spinEpoch;
     if (level == culledLevel) {
       _forget(item, kept);
       _encode(item, kept, false);
@@ -584,18 +614,15 @@ abstract base class RetainedDraws {
         kept.transform == item.worldTransformRevision &&
         kept.flipped == item.windingFlipped &&
         kept.primitive == geometry.primitiveType.index &&
+        identical(kept.spin, spin) &&
+        kept.spinEpoch == spinEpoch &&
         _sameBounds(kept, bounds)) {
       return;
     }
-    final moved = _movedOnly(
-      item,
-      kept,
-      material,
-      geometry,
-      pipeline,
-      state,
-      bounds,
-    );
+    final moved =
+        identical(kept.spin, spin) &&
+        kept.spinEpoch == spinEpoch &&
+        _movedOnly(item, kept, material, geometry, pipeline, state, bounds);
     if (moved) {
       kept.moves = true;
       if ((kept.id != 0 || kept.run != null) && _place(item, kept, bounds)) {
@@ -613,7 +640,9 @@ abstract base class RetainedDraws {
       ..buffers = geometry.buffersRevision
       ..transform = item.worldTransformRevision
       ..flipped = item.windingFlipped
-      ..primitive = geometry.primitiveType.index;
+      ..primitive = geometry.primitiveType.index
+      ..spin = spin
+      ..spinEpoch = spinEpoch;
     _takeBounds(kept, bounds);
     if (hot || pipeline == null) {
       _forget(item, kept);
@@ -1038,8 +1067,8 @@ abstract base class RetainedDraws {
   }
 
   // Whether [item] draws one mesh, [geometry], from buffers it holds, or one
-  // draw of a geometry that keeps its draw, with no per-frame turns, skin,
-  // morph, instances or draw selection.
+  // draw of a geometry that keeps its draw, with no skin, morph, instances or
+  // draw selection. A mesh may turn; a geometry that keeps its draw may not.
   static bool _holdsItsBuffers(RenderItem item, Geometry geometry) {
     if (geometry.keepsItsDraw) {
       return item.instanceTransforms == null &&
@@ -1055,7 +1084,6 @@ abstract base class RetainedDraws {
         item.instanceTransforms == null &&
         item.sharedRows == null &&
         item.instanceSource == null &&
-        item.spin == null &&
         !hasMeshDrawSelector(item) &&
         geometry.instancedVertexLayout != null &&
         geometry.bindsModelTransformInstance;
@@ -1090,6 +1118,7 @@ abstract base class RetainedDraws {
 
   void _drop(RenderItem item) {
     _leveled.remove(item);
+    _spun.remove(item);
     final kept = _kept.remove(item);
     if (kept == null) return;
     _keptCountStale = true;
@@ -1109,6 +1138,7 @@ abstract base class RetainedDraws {
     _changedRuns.clear();
     _movedRuns.clear();
     _leveled.clear();
+    _spun.clear();
     _kept.clear();
     _keptCount = 0;
     _keptCountStale = false;
