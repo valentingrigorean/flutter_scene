@@ -291,8 +291,8 @@ class TranslucentDepthPatchPass extends RenderGraphPass {
   final Vector3 _cameraForward;
   final int _layerMask;
   final List<Plane> _cullingPlanes;
-  // Whether this is a screen view, for mesh draw selectors, so the patch
-  // draws what the color pass drew.
+  // Whether this is the view a surface shows, for mesh draw selectors, so the
+  // patch draws what the color pass drew.
   final bool _primaryView;
 
   // The view's one cull, which the patch draws from while it is current.
@@ -772,7 +772,7 @@ class _DepthPrepassEncoder {
   final List<Plane> _cullingPlanes;
   final bool _writeNormals;
 
-  // Whether this encodes a screen view's camera, for [MeshDrawSelector]s.
+  // Whether this encodes the view a surface shows, for [MeshDrawSelector]s.
   final bool _primaryView;
 
   // Flips the item filter from the prepass's opaque set to the translucent

@@ -94,7 +94,8 @@ class OpaqueSplit {
 /// [ShadowPass] ran earlier this frame its shadow map is picked up from
 /// the blackboard and threaded into the per-draw [Lighting].
 class ScenePass extends RenderGraphPass {
-  // Whether this renders a screen view's camera, for [MeshDrawSelector]s.
+  // Whether this renders the view a surface shows, for [MeshDrawSelector]s
+  // and the kept color draws.
   final bool _primaryView;
 
   static final RenderProfileAccumulator _profile = RenderProfileAccumulator();
