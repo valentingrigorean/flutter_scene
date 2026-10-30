@@ -122,10 +122,12 @@ final class _RunKey {
 ///
 /// Pass [casterPass] and the three after it are the directional shadow
 /// cascades, [depthPass] the primary view's depth prepass, [colorPass] its
-/// color pass and [translucentPass] onwards its translucent draws. Each pass
-/// states its own view blocks: `ViewInfo` first, then `DepthInfo` for the
-/// prepass, or `FragInfo`, `FogInfo` and the app's blocks
-/// (`Scene.setViewBlock`) for the color pass and its translucent draws.
+/// color pass and [translucentPass] onwards its translucent draws. The indices
+/// between them are the sky (6), the resolve (7), the post-processing (8)
+/// and the custom scene passes (9 to 15). Each pass states its own view
+/// blocks: `ViewInfo` first, then `DepthInfo` for the prepass, or `FragInfo`,
+/// `FogInfo` and the app's blocks (`Scene.setViewBlock`) for the color pass
+/// and its translucent draws.
 final class SceneItems {
   SceneItems._(this.items, this._blocksRevision);
 
@@ -140,7 +142,7 @@ final class SceneItems {
 
   /// The first of the color pass's translucent pass indices, one per render
   /// order whose draws it keeps, [translucentPasses] at most.
-  static const int translucentPass = 6;
+  static const int translucentPass = 16;
 
   /// The number of translucent pass indices, up to the 32 a set holds.
   static const int translucentPasses = 32 - translucentPass;
