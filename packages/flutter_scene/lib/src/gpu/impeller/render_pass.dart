@@ -128,6 +128,13 @@ final class RenderPass {
   final fg.RenderPass? _impeller;
   final GpuBackendRenderPass? _backend;
 
+  // The item set this pass records draws for; null for a pass that encodes.
+  ItemSet? _records;
+
+  // Whether the draw being recorded reads a buffer the frame's transient
+  // arena hands out, which no kept item may hold.
+  bool _readsTransient = false;
+
   void bindPipeline(RenderPipeline pipeline) {
     final impeller = _impeller;
     if (impeller != null) {
@@ -142,6 +149,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.bindVertexBuffer(bufferView._impeller!, slot: slot);
     } else {
+      if (_records != null) _note(bufferView.buffer);
       _backend!.bindVertexBuffer(
         bufferView.buffer._backend!,
         bufferView.offsetInBytes,
@@ -156,6 +164,7 @@ final class RenderPass {
     if (impeller != null) {
       impeller.bindIndexBuffer(bufferView._impeller!, indexType);
     } else {
+      if (_records != null) _note(bufferView.buffer);
       _backend!.bindIndexBuffer(
         bufferView.buffer._backend!,
         bufferView.offsetInBytes,
@@ -170,6 +179,10 @@ final class RenderPass {
     if (impeller != null) {
       impeller.bindUniform(slot._impeller!, bufferView._impeller!);
     } else {
+      final records = _records;
+      if (records != null && slot.uniformName != records._viewBlockName) {
+        _note(bufferView.buffer);
+      }
       _backend!.bindUniform(
         slot.shader._backend!,
         slot.uniformName,
@@ -200,6 +213,10 @@ final class RenderPass {
         sampler,
       );
     }
+  }
+
+  void _note(DeviceBuffer buffer) {
+    if (_transientBuffers[buffer] ?? false) _readsTransient = true;
   }
 
   void clearBindings() {

@@ -230,6 +230,21 @@ final class GpuContext {
     );
   }
 
+  /// A set of render items the backend keeps and draws inside a pass, or
+  /// null where it keeps none (Impeller). A draw's uniform block
+  /// [viewBlockName], of at most [viewBlockLength] bytes, is the view block
+  /// each [ItemSet.draw] states.
+  ItemSet? createItemSet({
+    required String viewBlockName,
+    required int viewBlockLength,
+  }) {
+    final set = _backend?.createItemSet(
+      viewBlockName: viewBlockName,
+      viewBlockLength: viewBlockLength,
+    );
+    return set == null ? null : ItemSet._(set, viewBlockName);
+  }
+
   /// Creates a command buffer that records and submits GPU work. [label]
   /// names it in a GPU capture or trace; Impeller has no label and drops it.
   CommandBuffer createCommandBuffer({String? label}) {

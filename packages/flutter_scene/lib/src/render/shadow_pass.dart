@@ -13,6 +13,7 @@ import 'package:flutter_scene/src/render/point_shadow.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/shadow_cache.dart';
+import 'package:flutter_scene/src/render/retained_casters.dart';
 import 'package:flutter_scene/src/render/shadow_encoder.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/linear_depth_probe.dart';
@@ -394,6 +395,19 @@ class ShadowPass extends RenderGraphPass {
       encoder.flush();
     }
 
+    // Without a cache plan, the casters the backend keeps draw natively in
+    // each cascade tile and only the rest are encoded.
+    final retained = plan == null && _cascades.isNotEmpty
+        ? RetainedShadowCasters.of(_renderScene)
+        : null;
+    retained?.sync(
+      target: target,
+      casterFaces: _casterFaces,
+      casterChannelMask: _casterChannelMask,
+      transients: context.transientsBuffer,
+      cameraPosition: _casterCameraPosition,
+    );
+
     // Cascade tiles first (0..cascades.length), then the spot cones. With a
     // cache plan, each cascade tile replays its cached static content and
     // draws only the dynamic casters; otherwise everything renders. The
@@ -423,6 +437,30 @@ class ShadowPass extends RenderGraphPass {
           receiverPlanes: _receiverPlanesFor(c),
         );
         for (final item in _renderScene.items) {
+          encoder.submit(item);
+        }
+        encoder.flush();
+      } else if (retained != null) {
+        final matrix = _cascades[c].lightSpaceMatrix;
+        renderPass.setViewport(
+          gpu.Viewport(
+            x: c * _tileResolution,
+            y: 0,
+            width: _tileResolution,
+            height: _tileResolution,
+          ),
+        );
+        retained.draw(renderPass, c, matrix, _casterCameraPosition);
+        final encoder = ShadowEncoder(
+          renderPass,
+          context.transientsBuffer,
+          matrix,
+          _casterCameraPosition,
+          _casterFaces,
+          casterChannelMask: _casterChannelMask,
+          receiverPlanes: _receiverPlanesFor(c),
+        );
+        for (final item in retained.encoded) {
           encoder.submit(item);
         }
         encoder.flush();

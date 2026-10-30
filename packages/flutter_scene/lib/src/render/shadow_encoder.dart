@@ -1,3 +1,4 @@
+import 'package:meta/meta.dart' show internal;
 import 'package:flutter_scene/src/render/view_info.dart';
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
@@ -374,6 +375,11 @@ class ShadowEncoder {
     }
     _records.clear();
   }
+
+  /// Encodes [item]'s caster draw with no frustum or caster test, for a
+  /// recorder whose draws a backend keeps (`RetainedShadowCasters`).
+  @internal
+  void encodeItem(RenderItem item) => _encode(item);
 
   void _encode(RenderItem item) {
     final geometry = item.geometry;

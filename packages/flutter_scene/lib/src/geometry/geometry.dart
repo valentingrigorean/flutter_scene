@@ -254,7 +254,7 @@ abstract class Geometry with RenderSourceListeners {
   /// turn-key path that allocates and uploads in one step, see
   /// [uploadVertexData].
   void setVertices(gpu.BufferView vertices, int vertexCount) {
-    _bindRevision++;
+    _buffersChanged();
     _clearResolvedOnLayoutChange(1);
     _vertexStreams = [vertices];
     _vertexCount = vertexCount;
@@ -268,7 +268,7 @@ abstract class Geometry with RenderSourceListeners {
   /// uses [setVertices].
   @internal
   void setVertexStreams(List<gpu.BufferView> streams, int vertexCount) {
-    _bindRevision++;
+    _buffersChanged();
     _clearResolvedOnLayoutChange(streams.length);
     _vertexStreams = streams;
     _vertexCount = vertexCount;
@@ -513,7 +513,7 @@ abstract class Geometry with RenderSourceListeners {
   /// The element count is computed automatically from the buffer view's
   /// byte length.
   void setIndices(gpu.BufferView indices, gpu.IndexType indexType) {
-    _bindRevision++;
+    _buffersChanged();
     _indices = indices;
     _indexType = indexType;
     _debugEdges = null;
@@ -1415,6 +1415,19 @@ abstract class Geometry with RenderSourceListeners {
   /// Moves [bindRevision].
   @protected
   void markBindChanged() => _bindRevision++;
+
+  /// Counts the changes to the vertex streams and the index buffer this
+  /// geometry draws from, which a render item a backend keeps holds; a
+  /// change also tells the nodes that draw it ([tellRenderSourceListeners]).
+  @internal
+  int get buffersRevision => _buffersRevision;
+  int _buffersRevision = 0;
+
+  void _buffersChanged() {
+    _bindRevision++;
+    _buffersRevision++;
+    tellRenderSourceListeners();
+  }
 
   /// Binds all of this geometry's vertex streams (to slots 0, 1, ...) and
   /// its index buffer onto [pass] without binding any uniforms.

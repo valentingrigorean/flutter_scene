@@ -305,6 +305,67 @@ abstract interface class GpuBackendContext {
     int height, {
     required PixelFormat format,
   });
+
+  /// Creates a set of render items the backend keeps and draws inside a
+  /// render pass, or null where it keeps none. A draw's uniform block
+  /// [viewBlockName] is the view block, of at most [viewBlockLength] bytes,
+  /// which each [GpuBackendItemSet.draw] states.
+  GpuBackendItemSet? createItemSet({
+    required String viewBlockName,
+    required int viewBlockLength,
+  });
+}
+
+/// Render items a backend keeps from frame to frame and draws inside a
+/// render pass, so an unchanged item costs no encoding.
+///
+/// A draw is recorded on a [recorder] as it would be encoded into a pass and
+/// kept as an item by [keep]; it draws in each [draw] of a pass it names
+/// until it is kept again or removed. The resources it binds stay bound to
+/// it, so a buffer it reads keeps the range it named: a change to what the
+/// item draws keeps it again.
+@experimental
+abstract interface class GpuBackendItemSet {
+  /// A pass that records draws for [keep] instead of encoding them, for
+  /// attachments of [colorFormats], [depthStencilFormat] and [sampleCount].
+  /// Its [GpuBackendRenderPass.clearBindings] also drops the draws it
+  /// recorded since the last keep.
+  GpuBackendRenderPass recorder({
+    required List<PixelFormat> colorFormats,
+    required PixelFormat? depthStencilFormat,
+    required int sampleCount,
+  });
+
+  /// Keeps the one draw [recorder] recorded since its last keep as item
+  /// [id] (0: a new one) and returns its id, which then draws in the passes
+  /// of [passes] (bit n: pass n). [bounds] holds min x, y, z and max x, y, z
+  /// in the space a [draw]'s clip matrix maps, and a null [bounds] is never
+  /// culled. Returns null, keeping nothing and removing [id], when the
+  /// recorder recorded no draw or several. The recorder's bindings are
+  /// cleared either way.
+  int? keep(
+    GpuBackendRenderPass recorder, {
+    int id = 0,
+    required int passes,
+    Float32List? bounds,
+  });
+
+  /// Removes item [id]; an unknown id is ignored.
+  void remove(int id);
+
+  /// Draws the items of pass [index] into [pass] where it stands, under its
+  /// viewport and scissor, with [viewBlock] as the pass's view block, culled
+  /// by [clip] (a column-major matrix into clip space). A command buffer
+  /// draws a pass index once.
+  void draw(
+    GpuBackendRenderPass pass,
+    int index, {
+    required ByteData viewBlock,
+    required Float32List clip,
+  });
+
+  /// Releases every item.
+  void destroy();
 }
 
 /// The compute half of a [GpuBackendContext]: pipelines compiled from WGSL

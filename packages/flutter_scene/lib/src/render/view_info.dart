@@ -114,6 +114,20 @@ gpu.BufferView viewInfoOf(
   Matrix4 cameraTransform,
   Vector3 cameraPosition,
 ) {
+  _packViewInfo(cameraTransform, cameraPosition);
+  return _views.emplace(writer);
+}
+
+/// The bytes of the `ViewInfo` block [viewInfoOf] would emplace, for a pass
+/// whose items a backend keeps ([gpu.ItemSet.draw]). They are rewritten by
+/// the next call.
+@internal
+ByteData viewInfoBytesOf(Matrix4 cameraTransform, Vector3 cameraPosition) {
+  _packViewInfo(cameraTransform, cameraPosition);
+  return _views.bytes;
+}
+
+void _packViewInfo(Matrix4 cameraTransform, Vector3 cameraPosition) {
   final raster = currentDrawDepthRaster;
   final forward = currentViewForward;
   final band = currentViewInstanceBand;
@@ -140,7 +154,6 @@ gpu.BufferView viewInfoOf(
     ..[34] = (raster.reversed ? 1.0 : -1.0) * currentDrawPixelSlope
     ..[35] = 0.0;
   assert(scratch.length == kViewInfoFloats);
-  return _views.emplace(writer);
 }
 
 /// Binds the `ViewInfo` block [viewInfoOf] returns, and the `ItemInfo` block
@@ -295,13 +308,43 @@ final class HeldItemInfo {
 
   final List<_HeldItem> _entries = [];
 
+  /// The block [bound] returned last.
+  gpu.BufferView? lastBound;
+
   /// Gives every slot back as the item leaves its render scene.
   void release() {
     for (final entry in _entries) {
       entry.slots.release(entry.slot);
     }
     _entries.clear();
+    lastBound = null;
   }
+
+  /// Keeps the block [view] names from being taken back for other values
+  /// until [unpin], while a backend's kept item reads it; returns whether
+  /// [view] is one of this item's blocks.
+  bool pin(gpu.BufferView view) {
+    for (final entry in _entries) {
+      if (_sameView(entry.view, view)) {
+        entry.pins++;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Ends one [pin] of the block [view] names.
+  void unpin(gpu.BufferView view) {
+    for (final entry in _entries) {
+      if (_sameView(entry.view, view) && entry.pins > 0) {
+        entry.pins--;
+        return;
+      }
+    }
+  }
+
+  static bool _sameView(gpu.BufferView a, gpu.BufferView b) =>
+      identical(a.buffer, b.buffer) && a.offsetInBytes == b.offsetInBytes;
 
   /// The block of the draw bound next, written if no held one matches.
   gpu.BufferView bound(double depthBias) {
@@ -314,12 +357,13 @@ final class HeldItemInfo {
       if (entry.slots.generation == generation &&
           entry.holds(depthBias, epoch)) {
         entry.used = frame;
-        return entry.view;
+        return lastBound = entry.view;
       }
     }
     _HeldItem? entry;
-    if (_entries.length == _kept) {
-      entry = _entries.reduce((a, b) => a.used <= b.used ? a : b);
+    final unpinned = _entries.where((entry) => entry.pins == 0);
+    if (unpinned.length >= _kept) {
+      entry = unpinned.reduce((a, b) => a.used <= b.used ? a : b);
       _entries.remove(entry);
       entry.slots.release(entry.slot);
     }
@@ -337,7 +381,7 @@ final class HeldItemInfo {
     )..take(depthBias, epoch);
     entry.used = frame;
     _entries.add(entry);
-    return entry.view;
+    return lastBound = entry.view;
   }
 }
 
@@ -348,6 +392,7 @@ final class _HeldItem {
   final int slot;
   final gpu.BufferView view;
   int used = 0;
+  int pins = 0;
 
   // The current-draw state the block was packed from.
   final Float32List _depth = Float32List(6);
