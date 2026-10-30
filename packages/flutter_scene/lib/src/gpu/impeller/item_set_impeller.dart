@@ -521,6 +521,7 @@ final class _ItemSet {
     required List<ByteData> viewBlocks,
     required Float32List clip,
     required List<fg.Texture> viewTextures,
+    required ItemSort sort,
   }) {
     if (_items.isEmpty) return;
     final mask = 1 << index;
@@ -528,7 +529,10 @@ final class _ItemSet {
     List<fg.BufferView>? views;
     _ItemDrawState? saved;
     fg.RenderPipeline? bound;
-    for (final draw in _ordered()) {
+    for (final draw
+        in sort == ItemSort.farthestFirst
+            ? _farthestFirst(mask, clip)
+            : _ordered()) {
       if (draw.passes & mask == 0) continue;
       final bounds = draw.bounds;
       if (bounds != null && !_inside(planes, bounds, 0)) continue;
@@ -637,6 +641,25 @@ final class _ItemSet {
       );
     }
     return views;
+  }
+
+  // The items of the pass [mask] names, the farthest first by the clip-space
+  // w of their bounds' centre; an item with no bounds at 0.
+  List<_ItemDraw> _farthestFirst(int mask, Float32List clip) {
+    double depth(_ItemDraw draw) {
+      final b = draw.bounds;
+      if (b == null) return 0.0;
+      return clip[3] * (b[0] + b[3]) * 0.5 +
+          clip[7] * (b[1] + b[4]) * 0.5 +
+          clip[11] * (b[2] + b[5]) * 0.5 +
+          clip[15];
+    }
+
+    final draws = [
+      for (final draw in _items.values)
+        if (draw.passes & mask != 0) (depth(draw), draw),
+    ]..sort((a, b) => b.$1.compareTo(a.$1));
+    return [for (final (_, draw) in draws) draw];
   }
 
   // The six planes of the volume [clip] maps into clip space, each

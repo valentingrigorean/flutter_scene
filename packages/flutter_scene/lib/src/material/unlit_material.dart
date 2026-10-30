@@ -116,16 +116,16 @@ class UnlitMaterial extends Material {
   /// applies it.
   double vertexColorWeight = 1.0;
 
-  /// Kept when opaque, scene-referred and depth-tested as usual, with no clip
-  /// volume and a still base color texture: its blocks are then held and the
-  /// rest it reads (`ViewInfo`, `FogInfo`) are the color pass's view blocks.
+  /// Kept when scene-referred and depth-tested as usual, with no clip volume
+  /// and a still base color texture: its blocks are then held and the rest it
+  /// reads (`ViewInfo`, `FogInfo`) are the color pass's view blocks. A
+  /// blended surface is kept in the translucent phase's back-to-front order.
   /// A display-referred surface draws in its own layer, a surface drawn
   /// regardless of depth relies on its place in the draw order, which a kept
   /// draw does not keep, and a render texture changes what it samples from
   /// frame to frame.
   @override
   bool get colorRetainable =>
-      alphaMode == AlphaMode.opaque &&
       !displayReferred &&
       depthCompare == gpu.CompareFunction.lessEqual &&
       clipVolume == null &&
