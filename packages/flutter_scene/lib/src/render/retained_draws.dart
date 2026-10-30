@@ -71,10 +71,11 @@ final class _Kept {
   bool placed = false;
 
   // The revision of the rows a kept instanced draw holds as its instances
-  // ([RetainedDraws._rowsRevisionOf]), the ranges it takes of them and
-  // whether they reverse the winding; -1 for a draw of no rows.
+  // ([RetainedDraws._rowsRevisionOf]), a copy of the ranges it takes of
+  // them (a mesh may restate its ranges in the same list) and whether they
+  // reverse the winding; -1 for a draw of no rows.
   int rows = -1;
-  Object? ranges;
+  Uint32List? ranges;
   bool rowsFlipped = false;
 
   // The band and local transform the recorded draw's held `ItemInfo`
@@ -654,9 +655,8 @@ abstract base class RetainedDraws {
         kept.rows >= 0 &&
         kept.spinEpoch == spinEpoch &&
         _rowsOnly(item, kept, material, geometry, pipeline, state)) {
-      kept
-        ..rows = _rowsRevisionOf(item)
-        ..ranges = item.instanceRanges;
+      kept.rows = _rowsRevisionOf(item);
+      _keepRanges(item, kept);
       _takeBounds(kept, bounds);
       if (items.place(
         kept.id,
@@ -691,8 +691,8 @@ abstract base class RetainedDraws {
       ..spin = spin
       ..spinEpoch = spinEpoch
       ..rows = _rowsRevisionOf(item)
-      ..ranges = item.instanceRanges
       ..rowsFlipped = _rowsFlipped(item);
+    _keepRanges(item, kept);
     _heldDrawOf(item, kept.heldDraw);
     _takeBounds(kept, bounds);
     if (hot || pipeline == null) {
@@ -791,7 +791,26 @@ abstract base class RetainedDraws {
 
   static bool _sameRows(RenderItem item, _Kept kept) =>
       kept.rows == _rowsRevisionOf(item) &&
-      identical(kept.ranges, item.instanceRanges);
+      _sameRanges(kept.ranges, item.instanceRanges);
+
+  static bool _sameRanges(Uint32List? kept, Uint32List? ranges) {
+    if (kept == null || ranges == null) return kept == ranges;
+    if (kept.length != ranges.length) return false;
+    for (var at = 0; at < ranges.length; at++) {
+      if (kept[at] != ranges[at]) return false;
+    }
+    return true;
+  }
+
+  static void _keepRanges(RenderItem item, _Kept kept) {
+    final ranges = item.instanceRanges;
+    final held = kept.ranges;
+    kept.ranges = ranges == null
+        ? null
+        : held != null && held.length == ranges.length
+        ? (held..setAll(0, ranges))
+        : Uint32List.fromList(ranges);
+  }
 
   // The revision of the rows [item] draws: those of the mesh whose records
   // it draws, else its own pack; -1 for an item that draws no rows.
