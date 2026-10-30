@@ -1444,7 +1444,7 @@ base class SceneEncoder {
     if (pipeline == null) return;
     _encode(
       pipeline,
-      item.worldTransform,
+      item.drawTransform,
       geometry,
       material,
       item.windingFor(geometry),
