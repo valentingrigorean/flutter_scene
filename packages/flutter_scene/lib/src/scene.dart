@@ -3278,6 +3278,7 @@ base class Scene implements SceneGraph {
         pointShadowFrame: pointShadowFrame,
         capturer: capturer,
         captureLinearColor: target.linearColor,
+        primaryView: target.presents,
         capturePlanarReflections:
             !target.linearColor && identical(view, planarCaptureView),
       );
@@ -4037,6 +4038,10 @@ base class Scene implements SceneGraph {
     // The screen view index for stats attribution, or -1 for an offscreen
     // render (a render texture, a probe, a warm-up frame).
     int viewIndex = -1,
+    // Whether the view is the frame a surface shows, which keeps its still
+    // draws across frames: every screen view, and a texture view that
+    // presents.
+    bool? primaryView,
     // A linear-HDR capture (environment probes): the graph stops after the
     // scene pass and blits the lit scene color into [outputColor], with no
     // reflections, indirect-light history, post-processing, anti-aliasing,
@@ -4048,6 +4053,7 @@ base class Scene implements SceneGraph {
     bool capturePlanarReflections = false,
   }) {
     currentAnimationTime = animationTime;
+    final primary = primaryView ?? viewIndex >= 0;
     // The entry points check first with their own names; this catches a bake
     // stepper taken before dispose.
     if (_disposed) {
@@ -4499,7 +4505,7 @@ base class Scene implements SceneGraph {
             cameraUp: cameraUp,
             cullingPlanes: view.cullingPlanes,
             cameraTransform: currentJitteredViewProjection,
-            primaryView: viewIndex >= 0,
+            primaryView: primary,
             visibleItems: visibleItems,
           ),
         );
@@ -4631,7 +4637,7 @@ base class Scene implements SceneGraph {
     graph.addPass(
       ScenePass(
         camera: camera,
-        primaryView: viewIndex >= 0,
+        primaryView: primary,
         renderScene: renderScene,
         dimensions: pixelSize,
         environmentMap: environmentMap,
@@ -4772,7 +4778,7 @@ base class Scene implements SceneGraph {
           cameraForward: camera.forward,
           layerMask: view.layerMask,
           cullingPlanes: view.cullingPlanes,
-          primaryView: viewIndex >= 0,
+          primaryView: primary,
           visibleItems: visibleItems,
         ),
       );
@@ -4923,6 +4929,7 @@ base class Scene implements SceneGraph {
             ? (debug.split ?? -1.0)
             : -1.0,
         debugSkipsPost: debugActive,
+        renderScene: renderScene,
       ),
     );
 
@@ -4979,7 +4986,11 @@ base class Scene implements SceneGraph {
     // application after the anti-aliasing pass.
     if (enableFxaa) {
       displaySteps.add(
-        (output) => FxaaPass(output: output, dimensions: pixelSize),
+        (output) => FxaaPass(
+          output: output,
+          dimensions: pixelSize,
+          renderScene: renderScene,
+        ),
       );
     }
     if (enableSmaa) {

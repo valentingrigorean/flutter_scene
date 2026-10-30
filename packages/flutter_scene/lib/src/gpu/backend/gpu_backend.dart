@@ -355,12 +355,18 @@ abstract interface class GpuBackendItemSet {
   /// With [instances], the item draws its recorded draw as one instanced
   /// draw of the instances each [draw] does not cull by their own bounds
   /// ([ItemInstances]); [bounds] then holds them all.
+  ///
+  /// With [order], a pass draws its items in ascending [order], so a set
+  /// that states one for every item draws them in that order, such as paint
+  /// order. Without it the backend orders a pass's items as it draws them
+  /// fastest.
   int? keep(
     GpuBackendRenderPass recorder, {
     int id = 0,
     required int passes,
     Float32List? bounds,
     ItemInstances? instances,
+    int? order,
   });
 
   /// Removes item [id]; an unknown id is ignored.

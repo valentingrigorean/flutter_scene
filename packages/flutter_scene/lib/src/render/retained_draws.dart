@@ -122,12 +122,17 @@ final class _RunKey {
 ///
 /// Pass [casterPass] and the three after it are the directional shadow
 /// cascades, [depthPass] the primary view's depth prepass, [colorPass] its
-/// color pass and [translucentPass] onwards its translucent draws. The indices
-/// between them are the sky (6), the resolve (7), the post-processing (8)
-/// and the custom scene passes (9 to 15). Each pass states its own view
-/// blocks: `ViewInfo` first, then `DepthInfo` for the prepass, or `FragInfo`,
-/// `FogInfo` and the app's blocks (`Scene.setViewBlock`) for the color pass
-/// and its translucent draws.
+/// color pass, [skyPass] the sky behind it, [resolvePass] the resolve and
+/// tone map, [postPass] the anti-aliasing after it, [customPass] and the
+/// [customPasses] after it the draws of custom render passes, and
+/// [translucentPass] onwards the color pass's translucent draws. A walk names
+/// the passes in the order they draw, so an index does not order them.
+///
+/// Each pass states its own view blocks: `ViewInfo` first, then `DepthInfo`
+/// for the prepass, or `FragInfo`, `FogInfo` and the app's blocks
+/// (`Scene.setViewBlock`) for the color pass and its translucent draws;
+/// `SkyboxFrameInfo` and `SkyboxInfo` for the sky, `ResolveInfo` for the
+/// resolve and `FxaaInfo` for the anti-aliasing.
 final class SceneItems {
   SceneItems._(this.items, this._blocksRevision);
 
@@ -140,9 +145,24 @@ final class SceneItems {
   /// The color pass's pass index.
   static const int colorPass = 5;
 
+  /// The sky's pass index, drawn in the color pass's render pass.
+  static const int skyPass = 6;
+
+  /// The resolve and tone map's pass index.
+  static const int resolvePass = 7;
+
+  /// The anti-aliasing pass's index, after the resolve.
+  static const int postPass = 8;
+
+  /// The first of the custom render passes' pass indices.
+  static const int customPass = 9;
+
+  /// The number of custom render pass indices.
+  static const int customPasses = 7;
+
   /// The first of the color pass's translucent pass indices, one per render
   /// order whose draws it keeps, [translucentPasses] at most.
-  static const int translucentPass = 16;
+  static const int translucentPass = customPass + customPasses;
 
   /// The number of translucent pass indices, up to the 32 a set holds.
   static const int translucentPasses = 32 - translucentPass;
@@ -176,11 +196,15 @@ final class SceneItems {
         'FragInfo': 1,
         'FogInfo': 2,
         for (final (index, name) in appBlocks.indexed) name: 3 + index,
+        'SkyboxFrameInfo': 0,
+        'SkyboxInfo': 1,
+        'ResolveInfo': 0,
+        'FxaaInfo': 0,
       },
       viewBlockLength:
           EngineLightingUniforms.fragInfoFloatCount *
           Float32List.bytesPerElement,
-      viewTextureNames: colorViewTextureNames,
+      viewTextureNames: [...colorViewTextureNames, ...fullscreenTextureNames],
     );
     if (items == null) return null;
     _byScene[renderScene] = SceneItems._(items, renderScene.viewBlocksRevision);
@@ -199,6 +223,16 @@ final class SceneItems {
     'punctual_lights',
     'punctual_index',
     'scene_depth',
+  ];
+
+  /// The frame-transient targets a kept full-screen draw samples, after
+  /// [colorViewTextureNames] among a pass's view textures: the scene or
+  /// display color it reads, and the bloom and auto exposure the resolve
+  /// adds.
+  static const fullscreenTextureNames = [
+    'scene_color',
+    'bloom_color',
+    'exposure_factor',
   ];
 }
 
