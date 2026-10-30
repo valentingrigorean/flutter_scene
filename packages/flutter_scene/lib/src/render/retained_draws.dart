@@ -117,6 +117,13 @@ abstract base class RetainedDraws {
   @protected
   void beginSync() {}
 
+  /// Forgets what the pass's recording encoder holds of the bindings on
+  /// [recorder], which [keep] drops at each kept draw, so the next [record]
+  /// binds the full set its item holds instead of skipping a binding it
+  /// believes is still there.
+  @protected
+  void forgetRecorded() {}
+
   /// The number of draws kept as render items.
   @visibleForTesting
   int get keptCount => _kept.values.where((kept) => kept.id != 0).length;
@@ -235,6 +242,7 @@ abstract base class RetainedDraws {
       _encode(item, kept, true);
       return;
     }
+    forgetRecorded();
     record(item);
     final id = items.keep(
       recorder,

@@ -3413,6 +3413,9 @@ final class RetainedColorDraws extends RetainedDraws {
   void beginSync() => _recording = null;
 
   @override
+  void forgetRecorded() => _recording?._clearBindings();
+
+  @override
   bool draws(RenderItem item) =>
       item.drawsColor && (item.layers & _pass._layerMask) != 0;
 
@@ -3516,5 +3519,8 @@ final class RetainedColorDraws extends RetainedDraws {
       ],
       clip: encoder._cameraTransform.storage,
     );
+    // The kept items bound their own pipeline and blocks on the pass, so what
+    // the encoder holds of its bindings no longer stands.
+    encoder._clearBindings();
   }
 }

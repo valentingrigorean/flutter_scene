@@ -231,14 +231,24 @@ final class GpuContext {
   }
 
   /// A set of render items the backend keeps and draws inside a pass, or
-  /// null where it keeps none (Impeller). A draw's uniform blocks named in
+  /// null where it keeps none. A draw's uniform blocks named in
   /// [viewBlockNames], of at most [viewBlockLength] bytes each, are the view
   /// blocks each [ItemSet.draw] states.
+  ///
+  /// On Impeller the set keeps each draw as a resolved record and re-issues
+  /// its pass calls, since Flutter GPU records no render bundles.
   ItemSet? createItemSet({
     required List<String> viewBlockNames,
     required int viewBlockLength,
   }) {
-    final set = _backend?.createItemSet(
+    final impeller = _impeller;
+    if (impeller != null) {
+      return ItemSet._impeller(
+        _ItemSet(impeller, viewBlockNames, viewBlockLength),
+        viewBlockNames,
+      );
+    }
+    final set = _backend!.createItemSet(
       viewBlockNames: viewBlockNames,
       viewBlockLength: viewBlockLength,
     );

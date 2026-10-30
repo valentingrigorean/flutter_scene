@@ -83,6 +83,9 @@ final class RetainedShadowCasters extends RetainedDraws {
   void beginSync() => _encoder = null;
 
   @override
+  void forgetRecorded() => _encoder?.forgetBindings();
+
+  @override
   bool draws(RenderItem item) =>
       shadowCasterDraws(item, ShadowCasterFilter.all, _channels);
 
