@@ -26,8 +26,9 @@ final class ItemSet {
   final List<String> _viewTextureNames;
 
   /// The backend's set, which a backend reaches to draw the items outside a
-  /// pass it encodes, such as from a render thread of its own.
-  GpuBackendItemSet get backend => _backend;
+  /// pass it encodes, such as from a render thread of its own; null on
+  /// Impeller, which keeps its items itself.
+  GpuBackendItemSet? get backend => _backend;
 
   /// A pass that records draws for [keep], for attachments shaped like
   /// [target]'s.
