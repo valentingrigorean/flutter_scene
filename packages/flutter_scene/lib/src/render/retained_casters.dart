@@ -21,7 +21,9 @@ import 'package:flutter_scene/src/scene_encoder.dart' show cachedRenderPipeline;
 /// keeps as render items ([RetainedDraws]), so a cascade of a frame that
 /// moves only the camera or the light encodes none of them. Each cascade
 /// draws the kept casters natively, culled by its light-space matrix, with
-/// a view block of its own, and encodes [encoded].
+/// a view block of its own, and encodes [encoded]. A geometry that keeps
+/// its draw (`Geometry.keepsItsDraw`) keeps it here through its own vertex
+/// stage.
 final class RetainedShadowCasters extends RetainedDraws {
   RetainedShadowCasters._(super.renderScene, super.items);
 
@@ -86,7 +88,9 @@ final class RetainedShadowCasters extends RetainedDraws {
   @override
   bool keepable(RenderItem item) {
     final draw = shadowCasterDraw(item.geometry, item.material);
-    return draw.positionOnly && !draw.masked && draw.materialVertex == null;
+    return (draw.positionOnly || item.geometry.keepsItsDraw) &&
+        !draw.masked &&
+        draw.materialVertex == null;
   }
 
   @override

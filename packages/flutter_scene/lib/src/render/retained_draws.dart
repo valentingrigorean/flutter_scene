@@ -250,8 +250,9 @@ final class SceneItems {
 /// A draw is kept when it binds only what its item holds from frame to
 /// frame: an unskinned, unmorphed, non-instanced mesh with no turns or draw
 /// selection, at one level of detail a pass selects ([levelOf]), through a
-/// position-only depth path whose material has no vertex stage, mask or
-/// surface, and whose every block but the pass's own ([gpu.ItemSet.draw]) is
+/// position-only depth path, or the vertex stage of a geometry that keeps
+/// its draw, whose material has no vertex stage, mask or surface, and whose
+/// every block but the pass's own ([gpu.ItemSet.draw]) is
 /// held. Each [sync] reads the items
 /// the scene logged as joining, leaving or refreshed since the last
 /// ([RenderScene.changeLog]), and every item once after the pass's key
