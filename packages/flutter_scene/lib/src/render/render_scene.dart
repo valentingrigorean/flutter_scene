@@ -31,6 +31,7 @@ import 'package:flutter_scene/src/render/custom_render_pass.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart'
     show invalidateRetainedInstanceData, updateRetainedInstanceRows;
 import 'package:flutter_scene/src/render/instance_records.dart';
+import 'package:flutter_scene/src/render/view_info.dart';
 import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/render/lod.dart';
@@ -718,6 +719,10 @@ class RenderItem {
   /// The record this item binds when it draws one instance.
   @internal
   final HeldInstanceRecord heldInstanceRecord = HeldInstanceRecord();
+
+  /// The `ItemInfo` blocks this item draws with, kept from frame to frame.
+  @internal
+  final HeldItemInfo heldItemInfo = HeldItemInfo();
 
   /// Counts the changes of [worldTransform].
   @internal
@@ -1832,6 +1837,7 @@ class RenderScene {
     }
     item.sceneSlot = -1;
     item.heldInstanceRecord.release();
+    item.heldItemInfo.release();
     _displace(item);
     if (item._countedStaticCaster) {
       item._countedStaticCaster = false;

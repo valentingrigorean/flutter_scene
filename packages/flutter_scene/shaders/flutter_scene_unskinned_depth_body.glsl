@@ -13,45 +13,8 @@
 // camera_position is a placeholder, so a camera-relative displacement is only
 // correct in the shadow map once the real camera position is plumbed here.
 
-uniform FrameInfo {
-  mat4 camera_transform;
-  vec3 camera_position;
-  float depth_bias;
-  // The draw's depth-layer offset (xy) and one instance tie-break rank's
-  // (zw), see ApplyDepthOffset.
-  vec4 depth_offset;
-  // The color body's slope-scaled offsets, unused here: this stage reads no
-  // normal, so it matches the position-only velocity pass instead.
-  vec4 depth_slope;
-  // The transform applied after the instance-rate model transform: a node's
-  // world transform for node-space instance records, the identity otherwise.
-  mat4 instance_frame;
-  // The transform applied before the instance-rate model transform: the
-  // draw's own placement inside each record (InstancedMesh.instanceLocal),
-  // the identity otherwise.
-  mat4 instance_local;
-  // The band test of instance_band.glsl. band_eye: the camera the band reads
-  // (xyz) and whether the draw has a band (w). band_forward: the view
-  // direction (xyz). band_sphere: the record-space bound center (xyz) and
-  // radius (w). band_reach: the near and far reach in row radii (xy) and the
-  // near and far distance (zw). band_edge: the margin (x), the kept fraction
-  // (y) and the view's nearest-depth range (zw).
-  vec4 band_eye;
-  vec4 band_forward;
-  vec4 band_sphere;
-  vec4 band_reach;
-  vec4 band_edge;
-  // The turns of vertex_spin.glsl (VertexSpin): the transform out of the
-  // space the lines are stated in, each turn's axis and rate and its pivot
-  // and phase, and the folded time (x) with the number of turns (y).
-  mat4 spin_frame;
-  vec4 spin_axis_0;
-  vec4 spin_pivot_0;
-  vec4 spin_axis_1;
-  vec4 spin_pivot_1;
-  vec4 spin_time;
-}
-frame_info;
+#include <view_info.glsl>
+#include <item_info.glsl>
 
 #include <instance_band.glsl>
 #include <vertex_spin.glsl>
@@ -73,7 +36,7 @@ in vec4 model_transform_3;
 
 void main() {
   mat4 node_record =
-      frame_info.instance_frame * mat4(model_transform_0, model_transform_1,
+      item_info.instance_frame * mat4(model_transform_0, model_transform_1,
                                        model_transform_2, model_transform_3);
   // A material whose Vertex() draws a row away from its record defines
   // INSTANCE_BAND_OFFSET, the world-space offset to where the row is drawn,
@@ -90,7 +53,7 @@ void main() {
     return;
   }
   mat4 model_transform =
-      node_record * SpinLocal(frame_info.instance_local);
+      node_record * SpinLocal(item_info.instance_local);
   vec4 model_position = model_transform * vec4(position, 1.0);
 
   VertexInputs vertex;
@@ -103,19 +66,19 @@ void main() {
   vertex.uv = vec2(0.0);
   vertex.uv1 = vec2(0.0);
   vertex.color = vec4(0.0);
-  vertex.camera_position = frame_info.camera_position;
+  vertex.camera_position = view_info.camera_position.xyz;
   vertex.model_transform = model_transform;
   Vertex(vertex);
 
   v_position = vertex.world_position;
   vec3 draw_position = ApplyDepthBias(
-      vertex.world_position, frame_info.camera_transform,
-      frame_info.camera_position, frame_info.depth_bias);
-  vec4 clip_position = frame_info.camera_transform * vec4(draw_position, 1.0);
+      vertex.world_position, view_info.camera_transform,
+      view_info.camera_position.xyz, item_info.depth_steps.z);
+  vec4 clip_position = view_info.camera_transform * vec4(draw_position, 1.0);
   gl_Position = ApplyDepthOffset(
-      clip_position, frame_info.depth_offset, model_transform[3].xyz,
-      frame_info.camera_transform, draw_position, frame_info.camera_position);
-  v_viewvector = frame_info.camera_position - vertex.world_position;
+      clip_position, ItemDepthOffset(), model_transform[3].xyz,
+      view_info.camera_transform, draw_position, view_info.camera_position.xyz);
+  v_viewvector = view_info.camera_position.xyz - vertex.world_position;
   v_normal = vec3(0.0);
   v_texture_coords = vec2(0.0);
   v_texture_coords_1 = vec2(0.0);

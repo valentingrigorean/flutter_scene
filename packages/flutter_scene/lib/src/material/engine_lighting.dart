@@ -15,6 +15,7 @@ import 'package:flutter_scene/src/render/custom_render_pass.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/irradiance_field.dart';
 import 'package:flutter_scene/src/render/uniform_slots.dart';
+import 'package:flutter_scene/src/render/view_info.dart';
 
 /// Packs the engine lighting half of the shared `FragInfo` uniform block and
 /// binds the image-based-lighting and shadow samplers.
@@ -354,29 +355,37 @@ class EngineLightingUniforms {
   }
 
   /// Binds the `ViewInfo` block `material_varyings.glsl` declares for
-  /// `GetViewDirection`, which needs the camera axis under an orthographic
-  /// camera. Does nothing when [shader] never reads it (the block is then
-  /// optimized away and reflects no size).
+  /// `GetViewDirection` (see `view_info.glsl`): the block the vertex stage
+  /// of the draw bound, so both stages read one view, or, for a draw whose
+  /// vertex stage binds none, one holding [lighting]'s camera axis. Does
+  /// nothing when [shader] never reads it (the block is then optimized away
+  /// and reflects no size).
   static void bindViewInfo(
     gpu.RenderPass pass,
     gpu.Shader shader,
     TransientWriter transientsBuffer,
     Lighting lighting,
   ) {
-    if (_memoPassIs(pass) && identical(_viewInfoMemo[shader], lighting)) {
+    final view = currentViewInfoFor(lighting.cameraForward);
+    final key = view ?? lighting;
+    if (_memoPassIs(pass) && identical(_viewInfoMemo[shader], key)) {
       return;
     }
     final slot = shader.cachedUniformSlot('ViewInfo');
     if (slot.sizeInBytes == null) return;
-    _viewInfoMemo[shader] = lighting;
-    final forward = lighting.cameraForward;
-    final info = Float32List(4);
-    if (forward != null) {
-      info[0] = forward.x;
-      info[1] = forward.y;
-      info[2] = forward.z;
+    _viewInfoMemo[shader] = key;
+    if (view != null) {
+      pass.bindUniform(slot, view);
+      return;
     }
-    info[3] = lighting.orthographic && forward != null ? 1.0 : 0.0;
+    final forward = lighting.cameraForward;
+    final info = Float32List(kViewInfoFloats);
+    if (forward != null) {
+      info[20] = forward.x;
+      info[21] = forward.y;
+      info[22] = forward.z;
+    }
+    info[23] = lighting.orthographic && forward != null ? 1.0 : 0.0;
     pass.bindUniform(
       slot,
       transientsBuffer.emplace(ByteData.sublistView(info)),
@@ -611,7 +620,7 @@ class EngineLightingUniforms {
   static gpu.RenderPass? _memoPass;
   static final Map<gpu.Shader, (Lighting, EnvironmentMap)> _texturesMemo = {};
   static final Map<gpu.Shader, Lighting> _fogMemo = {};
-  static final Map<gpu.Shader, Lighting> _viewInfoMemo = {};
+  static final Map<gpu.Shader, Object> _viewInfoMemo = {};
 
   /// Forgets all memoized bindings; the encoder calls this whenever it clears
   /// the render pass's bindings.

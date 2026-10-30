@@ -10,84 +10,14 @@ library;
 import 'dart:typed_data';
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
-import 'package:flutter_scene/src/render/frame_transients.dart';
+import 'package:flutter_scene/src/render/held_slots.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
 
-const int _slotsPerBlock = 256;
-
-final class _RecordSlots {
-  _RecordSlots(this.slotBytes);
-
-  final int slotBytes;
-  final int generation = gpu.gpuContextGeneration;
-  final List<gpu.DeviceBuffer> _blocks = [];
-  final List<int> _free = [];
-  final List<int> _cooling = [];
-  final List<int> _coolingAfter = [];
-  int _next = 0;
-
-  int take() {
-    final done = rendererSubmissions.completedThrough;
-    var cooled = 0;
-    while (cooled < _cooling.length && _coolingAfter[cooled] <= done) {
-      _free.add(_cooling[cooled++]);
-    }
-    if (cooled > 0) {
-      _cooling.removeRange(0, cooled);
-      _coolingAfter.removeRange(0, cooled);
-    }
-    if (_free.isNotEmpty) return _free.removeLast();
-    final slot = _next++;
-    if (slot ~/ _slotsPerBlock == _blocks.length) {
-      _blocks.add(
-        gpu.gpuContext.createDeviceBuffer(
-          gpu.StorageMode.hostVisible,
-          _slotsPerBlock * slotBytes,
-        ),
-      );
-    }
-    return slot;
-  }
-
-  // A frame still on the GPU may read the slot, so it is handed out again
-  // only once every submission up to now completed.
-  void release(int slot) {
-    _cooling.add(slot);
-    _coolingAfter.add(rendererSubmissions.latestSubmission);
-  }
-
-  gpu.BufferView write(int slot, ByteData record) {
-    final buffer = _blocks[slot ~/ _slotsPerBlock];
-    final offset = (slot % _slotsPerBlock) * slotBytes;
-    buffer
-      ..overwrite(record, destinationOffsetInBytes: offset)
-      ..flush(offsetInBytes: offset, lengthInBytes: slotBytes);
-    activeRenderCounters.instanceBytesUploaded += slotBytes;
-    return gpu.BufferView(
-      buffer,
-      offsetInBytes: offset,
-      lengthInBytes: slotBytes,
-    );
-  }
-}
-
-final Map<int, _RecordSlots> _slotsByBytes = {};
-
-// The slots of the device the context is open on; those of a lost device
-// are dropped.
-_RecordSlots _slotsOf(int width) {
-  final held = _slotsByBytes[width];
-  if (held != null && held.generation == gpu.gpuContextGeneration) {
-    return held;
-  }
-  return _slotsByBytes[width] = _RecordSlots(width);
-}
-
 /// The record an item that draws one instance holds on the device.
 final class HeldInstanceRecord {
-  _RecordSlots? _slots;
+  HeldSlots? _slots;
   int _slot = -1;
   int _transformRevision = -1;
   gpu.BufferView? _view;
@@ -129,11 +59,12 @@ void bindHeldInstanceRecord(
         ? bytes
         : slots.slotBytes;
     held.release();
-    slots = _slotsOf(width);
+    slots = HeldSlots.of(width);
     held
       .._slots = slots
       .._slot = slots.take()
       .._transformRevision = item.worldTransformRevision;
+    activeRenderCounters.instanceBytesUploaded += width;
     view = held._view = slots.write(
       held._slot,
       ByteData.sublistView(
