@@ -400,7 +400,7 @@ class ShadowPass extends RenderGraphPass {
     final retained = plan == null && _cascades.isNotEmpty
         ? RetainedShadowCasters.of(_renderScene)
         : null;
-    retained?.sync(
+    retained?.syncCasters(
       target: target,
       casterFaces: _casterFaces,
       casterChannelMask: _casterChannelMask,

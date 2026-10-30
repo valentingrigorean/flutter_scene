@@ -180,7 +180,8 @@ final class RenderPass {
       impeller.bindUniform(slot._impeller!, bufferView._impeller!);
     } else {
       final records = _records;
-      if (records != null && slot.uniformName != records._viewBlockName) {
+      if (records != null &&
+          !records._viewBlockNames.contains(slot.uniformName)) {
         _note(bufferView.buffer);
       }
       _backend!.bindUniform(

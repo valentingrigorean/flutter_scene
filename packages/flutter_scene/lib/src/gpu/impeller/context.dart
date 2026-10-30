@@ -231,18 +231,18 @@ final class GpuContext {
   }
 
   /// A set of render items the backend keeps and draws inside a pass, or
-  /// null where it keeps none (Impeller). A draw's uniform block
-  /// [viewBlockName], of at most [viewBlockLength] bytes, is the view block
-  /// each [ItemSet.draw] states.
+  /// null where it keeps none (Impeller). A draw's uniform blocks named in
+  /// [viewBlockNames], of at most [viewBlockLength] bytes each, are the view
+  /// blocks each [ItemSet.draw] states.
   ItemSet? createItemSet({
-    required String viewBlockName,
+    required List<String> viewBlockNames,
     required int viewBlockLength,
   }) {
     final set = _backend?.createItemSet(
-      viewBlockName: viewBlockName,
+      viewBlockNames: viewBlockNames,
       viewBlockLength: viewBlockLength,
     );
-    return set == null ? null : ItemSet._(set, viewBlockName);
+    return set == null ? null : ItemSet._(set, viewBlockNames);
   }
 
   /// Creates a command buffer that records and submits GPU work. [label]

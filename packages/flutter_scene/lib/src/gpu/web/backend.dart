@@ -136,7 +136,7 @@ abstract base class GpuContext {
   /// Render items kept from frame to frame; the web keeps none and encodes
   /// every draw each frame.
   ItemSet? createItemSet({
-    required String viewBlockName,
+    required List<String> viewBlockNames,
     required int viewBlockLength,
   }) => null;
 
@@ -325,7 +325,7 @@ abstract final class ItemSet {
   void draw(
     RenderPass pass,
     int index, {
-    required ByteData viewBlock,
+    required List<ByteData> viewBlocks,
     required Float32List clip,
   });
   void dispose();

@@ -307,11 +307,12 @@ abstract interface class GpuBackendContext {
   });
 
   /// Creates a set of render items the backend keeps and draws inside a
-  /// render pass, or null where it keeps none. A draw's uniform block
-  /// [viewBlockName] is the view block, of at most [viewBlockLength] bytes,
-  /// which each [GpuBackendItemSet.draw] states.
+  /// render pass, or null where it keeps none. A draw's uniform blocks named
+  /// in [viewBlockNames] are the pass's view blocks, of at most
+  /// [viewBlockLength] bytes each, which each [GpuBackendItemSet.draw]
+  /// states in that order.
   GpuBackendItemSet? createItemSet({
-    required String viewBlockName,
+    required List<String> viewBlockNames,
     required int viewBlockLength,
   });
 }
@@ -354,13 +355,13 @@ abstract interface class GpuBackendItemSet {
   void remove(int id);
 
   /// Draws the items of pass [index] into [pass] where it stands, under its
-  /// viewport and scissor, with [viewBlock] as the pass's view block, culled
-  /// by [clip] (a column-major matrix into clip space). A command buffer
-  /// draws a pass index once.
+  /// viewport and scissor, with [viewBlocks] as the pass's view blocks, in
+  /// the order the set names them, culled by [clip] (a column-major matrix
+  /// into clip space). A command buffer draws a pass index once.
   void draw(
     GpuBackendRenderPass pass,
     int index, {
-    required ByteData viewBlock,
+    required List<ByteData> viewBlocks,
     required Float32List clip,
   });
 
