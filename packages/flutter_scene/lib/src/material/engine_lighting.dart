@@ -966,7 +966,16 @@ class EngineLightingUniforms {
     final slot = shader.cachedUniformSlot('SceneInputInfo');
     if (slot.sizeInBytes == null) return;
 
-    final info = _sceneInputInfoScratch..fillRange(0, 24, 0.0);
+    final info = _sceneInputInfoScratch;
+    packSceneInputInfo(info, lighting);
+    pass.bindUniform(slot, transientsBuffer.emplace(scratchBytesOf(info)));
+  }
+
+  /// Packs into [info], 24 floats, the `SceneInputInfo` block
+  /// [bindSceneInputInfo] binds, as [lighting] sees the frame: the color
+  /// pass's view block of that name for its kept draws.
+  static void packSceneInputInfo(Float32List info, Lighting lighting) {
+    info.fillRange(0, 24, 0.0);
     info[0] = lighting.opaqueSceneColor != null ? 1.0 : 0.0;
     info[1] = lighting.sceneDepthLinear != null ? 1.0 : 0.0;
     info[2] = lighting.filteredSceneColor != null ? 1.0 : 0.0;
@@ -998,7 +1007,6 @@ class EngineLightingUniforms {
     info[20] = lighting.projectionOffsetX;
     info[21] = lighting.projectionOffsetY;
     info[22] = lighting.orthographic ? 1.0 : 0.0;
-    pass.bindUniform(slot, transientsBuffer.emplace(scratchBytesOf(info)));
   }
 
   /// Binds the secondary cross-fade environment's prefiltered radiance to the
