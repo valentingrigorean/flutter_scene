@@ -131,8 +131,9 @@ final class _RunKey {
 /// Each pass states its own view blocks: `ViewInfo` first, then `DepthInfo`
 /// for the prepass, or `FragInfo`, `FogInfo` and the app's blocks
 /// (`Scene.setViewBlock`) for the color pass; `SkyboxFrameInfo` and
-/// `SkyboxInfo` for the sky, `ResolveInfo` for the resolve and `FxaaInfo`
-/// for the anti-aliasing.
+/// `SkyboxInfo` for the sky, `ResolveInfo` for the resolve, `FxaaInfo` for
+/// the anti-aliasing, and a custom render pass's
+/// `CustomRenderPass.keptViewBlocks` for its draw.
 final class SceneItems {
   SceneItems._(this.items, this._blocksRevision);
 
@@ -193,6 +194,7 @@ final class SceneItems {
         'SkyboxInfo': 1,
         'ResolveInfo': 0,
         'FxaaInfo': 0,
+        ...renderScene.passViewBlocks,
       },
       viewBlockLength:
           EngineLightingUniforms.fragInfoFloatCount *

@@ -1843,9 +1843,53 @@ class RenderScene {
   @internal
   final Map<String, ByteData Function()> viewBlocks = {};
 
-  /// Counts the changes to [viewBlocks].
+  /// Counts the changes to [viewBlocks] and [passViewBlocks].
   @internal
   int viewBlocksRevision = 0;
+
+  /// The view blocks the kept draws of the scene's custom render passes
+  /// read, by uniform block name, each at its index among the blocks the
+  /// pass supplies (`CustomRenderPass.keptViewBlocks`).
+  @internal
+  final Map<String, int> passViewBlocks = {};
+
+  /// The custom render passes that keep a draw, each with its slot past
+  /// `SceneItems.customPass`.
+  @internal
+  final Map<Object, int> keptPassSlots = Map.identity();
+
+  /// Gives [pass] the lowest free kept-draw slot below [slots], naming
+  /// [blocks] among [passViewBlocks]; false where every slot is taken.
+  @internal
+  bool keepPass(Object pass, List<String> blocks, {required int slots}) {
+    if (keptPassSlots.containsKey(pass)) return true;
+    final taken = keptPassSlots.values.toSet();
+    var slot = 0;
+    while (taken.contains(slot)) {
+      slot++;
+    }
+    if (slot >= slots) return false;
+    keptPassSlots[pass] = slot;
+    for (final (index, name) in blocks.indexed) {
+      passViewBlocks[name] = index;
+    }
+    viewBlocksRevision++;
+    return true;
+  }
+
+  /// Frees the kept-draw slot of [pass], and the view block names only it
+  /// read.
+  @internal
+  void releasePass(Object pass, List<String> Function(Object pass) blocksOf) {
+    if (keptPassSlots.remove(pass) == null) return;
+    passViewBlocks.clear();
+    for (final held in keptPassSlots.keys) {
+      for (final (index, name) in blocksOf(held).indexed) {
+        passViewBlocks[name] = index;
+      }
+    }
+    viewBlocksRevision++;
+  }
 
   /// Appends [item] to [changeLog].
   @internal
