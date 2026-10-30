@@ -252,17 +252,32 @@ final class KeptPassItems {
 
   /// Draws the kept items into [pass] where it stands, with [viewBlocks] and
   /// [viewTextures] as the pass's view blocks and view textures.
+  ///
+  /// [replay] rebuilds [viewBlocks] for another camera of the frame
+  /// ([CameraReplay]), or returns null where it cannot; a draw with none
+  /// leaves the pass out of the frame's camera replay, which then draws no
+  /// other camera.
   void draw(
     gpu.RenderPass pass, {
     List<ByteData> viewBlocks = const [],
     List<gpu.Texture> viewTextures = const [],
-  }) => _items.draw(
-    pass,
-    _index,
-    viewBlocks: viewBlocks,
-    clip: _clip,
-    viewTextures: viewTextures,
-  );
+    List<ByteData>? Function(CameraReplayView view)? replay,
+  }) {
+    final recording = CameraReplay.recording;
+    if (recording != null && replay != null) {
+      recording.pass(_index, (view) {
+        final blocks = replay(view);
+        return blocks == null ? null : (blocks: blocks, clip: _clip);
+      });
+    }
+    _items.draw(
+      pass,
+      _index,
+      viewBlocks: viewBlocks,
+      clip: _clip,
+      viewTextures: viewTextures,
+    );
+  }
 
   void _clear() {
     for (final held in _held.values) {

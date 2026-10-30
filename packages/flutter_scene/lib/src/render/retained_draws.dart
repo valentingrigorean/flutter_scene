@@ -212,14 +212,14 @@ final class SceneItems {
   static const int customPass = 9;
 
   /// The number of custom render pass indices.
-  static const int customPasses = 7;
+  static const int customPasses = 23;
 
   /// The first of the color pass's translucent pass indices, one per render
   /// order whose draws it keeps, [translucentPasses] at most.
   static const int translucentPass = customPass + customPasses;
 
-  /// The number of translucent pass indices, up to the 32 a set holds.
-  static const int translucentPasses = 32 - translucentPass;
+  /// The number of translucent pass indices, up to the 64 a set holds.
+  static const int translucentPasses = 64 - translucentPass;
 
   /// The backend's item set.
   final gpu.ItemSet items;
@@ -869,8 +869,9 @@ abstract base class RetainedDraws {
     final slot = instanceSlotOf(item, geometry);
     final shared = item.sharedRows;
     if (shared != null) {
-      final (:records, :stride) = sharedInstanceRowsOf(shared)
-          .recordsOf(item.instanceRanges);
+      final (:records, :stride) = sharedInstanceRowsOf(
+        shared,
+      ).recordsOf(item.instanceRanges);
       return gpu.ItemInstances(slot: slot, stride: stride, records: records);
     }
     return gpu.ItemInstances(
