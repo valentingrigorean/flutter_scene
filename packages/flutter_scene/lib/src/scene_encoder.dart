@@ -3414,9 +3414,6 @@ final class RetainedColorDraws extends RetainedDraws {
     EngineLightingUniforms.fragInfoFloatCount,
   );
   final Float32List _fogScratch = Float32List(24);
-  final Float32List _sceneInputScratch = Float32List(
-    EngineLightingUniforms.sceneInputInfoFloatCount,
-  );
 
   @override
   int get passes => 1 << SceneItems.colorPass;
@@ -3539,8 +3536,7 @@ final class RetainedColorDraws extends RetainedDraws {
   }
 
   /// Draws the kept color items into [pass], the render pass [encoder]
-  /// encodes, supplying the view's `ViewInfo`, `FragInfo`, `FogInfo` and
-  /// `SceneInputInfo`.
+  /// encodes, supplying the view's `ViewInfo`, `FragInfo` and `FogInfo`.
   void drawKept(gpu.RenderPass pass, SceneEncoder encoder) {
     final lighting = encoder._lighting;
     final view = viewInfoBytesOf(
@@ -3562,12 +3558,6 @@ final class RetainedColorDraws extends RetainedDraws {
         ByteData.sublistView(_fragInfoScratch),
         ByteData.sublistView(_fogScratch),
         for (final bytes in _appBlocks) bytes(),
-        ByteData.sublistView(
-          EngineLightingUniforms.packSceneInputInfo(
-            _sceneInputScratch,
-            lighting,
-          ),
-        ),
       ],
       clip: encoder._cameraTransform.storage,
       viewTextures: [
@@ -3664,9 +3654,6 @@ final class RetainedTranslucentDraws extends RetainedDraws {
     EngineLightingUniforms.fragInfoFloatCount,
   );
   final Float32List _fogScratch = Float32List(24);
-  final Float32List _sceneInputScratch = Float32List(
-    EngineLightingUniforms.sceneInputInfoFloatCount,
-  );
   List<ByteData>? _viewBlocks;
 
   @override
@@ -3880,9 +3867,6 @@ final class RetainedTranslucentDraws extends RetainedDraws {
       ByteData.sublistView(_fragInfoScratch),
       ByteData.sublistView(_fogScratch),
       for (final bytes in _appBlocks) bytes(),
-      ByteData.sublistView(
-        EngineLightingUniforms.packSceneInputInfo(_sceneInputScratch, lighting),
-      ),
     ];
   }
 
