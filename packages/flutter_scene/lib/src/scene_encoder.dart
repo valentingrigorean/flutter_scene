@@ -3359,12 +3359,35 @@ base class SceneEncoder {
 /// A draw is kept when it is an opaque, non-LOD, unskinned, unmorphed,
 /// non-instanced mesh (the structural checks [RetainedDraws] makes) whose
 /// material holds its fragment blocks and binds no per-material lighting of its
-/// own ([Material.colorRetainable]), and whose every bound block and texture is
-/// persistent — a draw binding a frame-transient buffer or texture (a shadow
-/// atlas, the ambient-occlusion or scene-color textures, the punctual-light
-/// data textures) is refused by the backend and encoded instead.
+/// own ([Material.colorRetainable]). The frame-transient engine textures a lit
+/// draw samples — the shadow atlas, ambient occlusion, the punctual-light
+/// data textures, and the opaque linear depth a scene-input material reads —
+/// are supplied each [drawKept] as the pass's view textures, so a kept draw
+/// holds only persistent resources beside them. A draw binding any other
+/// frame-transient buffer or texture (the scene-color textures) is refused by
+/// the backend and encoded instead. The app's own view blocks
+/// ([RenderScene.viewBlocks]) are supplied each [drawKept] beside the
+/// engine's, so a kept draw may read a value that changes every frame.
 final class RetainedColorDraws extends RetainedDraws {
-  RetainedColorDraws._(super.renderScene, super.items);
+  RetainedColorDraws._(super.renderScene, super.items, this._appBlocks)
+    : _blocksRevision = renderScene.viewBlocksRevision;
+
+  final List<ByteData Function()> _appBlocks;
+  final int _blocksRevision;
+
+  // The frame-transient engine textures a kept lit draw samples, re-supplied
+  // each [drawKept] so the backend keeps the draw instead of refusing it: the
+  // directional shadow atlas, ambient occlusion, the two punctual-light data
+  // textures, and the opaque linear depth a scene-input material samples.
+  // [drawKept] supplies them in this order. Any other transient texture a
+  // draw binds is still refused by the backend.
+  static const _viewTextureNames = [
+    'shadow_map',
+    'ssao_texture',
+    'punctual_lights',
+    'punctual_index',
+    'scene_depth',
+  ];
 
   static final Expando<RetainedColorDraws> _byScene = Expando(
     'retained color draws',
@@ -3374,18 +3397,24 @@ final class RetainedColorDraws extends RetainedDraws {
   /// items.
   static RetainedColorDraws? of(RenderScene renderScene) {
     final held = _byScene[renderScene];
-    if (held != null && held.generation == gpu.gpuContextGeneration) {
+    if (held != null &&
+        held.generation == gpu.gpuContextGeneration &&
+        held._blocksRevision == renderScene.viewBlocksRevision) {
       return held;
     }
     held?.dispose();
+    final appBlocks = renderScene.viewBlocks;
     final items = gpu.gpuContext.createItemSet(
-      viewBlockNames: const ['ViewInfo', 'FragInfo', 'FogInfo'],
+      viewBlockNames: ['ViewInfo', 'FragInfo', 'FogInfo', ...appBlocks.keys],
       viewBlockLength:
           EngineLightingUniforms.fragInfoFloatCount *
           Float32List.bytesPerElement,
+      viewTextureNames: _viewTextureNames,
     );
     if (items == null) return null;
-    return _byScene[renderScene] = RetainedColorDraws._(renderScene, items);
+    return _byScene[renderScene] = RetainedColorDraws._(renderScene, items, [
+      ...appBlocks.values,
+    ]);
   }
 
   late SceneEncoder _pass;
@@ -3411,6 +3440,9 @@ final class RetainedColorDraws extends RetainedDraws {
 
   @override
   void beginSync() => _recording = null;
+
+  @override
+  void forgetRecorded() => _recording?._clearBindings();
 
   @override
   bool draws(RenderItem item) =>
@@ -3473,6 +3505,9 @@ final class RetainedColorDraws extends RetainedDraws {
   }
 
   @override
+  Iterable<HeldBlock> heldBlocksOf(RenderItem item) => [item.heldFragItem];
+
+  @override
   void pinHeld(RenderItem item) {
     // The vertex ItemInfo.
     super.pinHeld(item);
@@ -3513,8 +3548,22 @@ final class RetainedColorDraws extends RetainedDraws {
         view,
         ByteData.sublistView(_fragInfoScratch),
         ByteData.sublistView(_fogScratch),
+        for (final bytes in _appBlocks) bytes(),
       ],
       clip: encoder._cameraTransform.storage,
+      viewTextures: [
+        Material.whitePlaceholder(lighting.shadowMap),
+        Material.whitePlaceholder(lighting.ssaoMap),
+        Material.whitePlaceholder(lighting.punctualParamsTexture),
+        Material.whitePlaceholder(lighting.punctualIndexTexture),
+        Material.whitePlaceholder(lighting.sceneDepthLinear),
+      ],
     );
+    activeRenderCounters
+      ..colorItemsKept += keptCount
+      ..colorItemsEncoded += encoded.length;
+    // The kept items bound their own pipeline and blocks on the pass, so what
+    // the encoder holds of its bindings no longer stands.
+    encoder._clearBindings();
   }
 }

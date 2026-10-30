@@ -138,6 +138,7 @@ abstract base class GpuContext {
   ItemSet? createItemSet({
     required List<String> viewBlockNames,
     required int viewBlockLength,
+    List<String> viewTextureNames = const [],
   }) => null;
 
   PixelFormat get defaultColorFormat;
@@ -324,13 +325,16 @@ abstract final class ItemSet {
     int id = 0,
     required int passes,
     Float32List? bounds,
+    ItemInstances? instances,
   });
+  void discard(RenderPass recorder);
   void remove(int id);
   void draw(
     RenderPass pass,
     int index, {
     required List<ByteData> viewBlocks,
     required Float32List clip,
+    List<Texture> viewTextures = const [],
   });
   void dispose();
 }

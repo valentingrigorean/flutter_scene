@@ -44,6 +44,7 @@ import 'package:vector_math/vector_math.dart' as vm;
 
 import '../shared/gpu_capabilities.dart';
 import '../shared/gpu_labels.dart';
+import '../shared/item_instances.dart';
 import '../backend/gpu_backend.dart';
 
 export 'package:flutter_gpu/gpu.dart'
@@ -92,6 +93,7 @@ part 'encoded_image.dart';
 part 'host.dart';
 part 'image_surface.dart';
 part 'item_set.dart';
+part 'item_set_impeller.dart';
 part 'present.dart';
 part 'render_pass.dart';
 part 'shader.dart';

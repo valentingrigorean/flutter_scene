@@ -40,6 +40,7 @@ import 'package:meta/meta.dart' show experimental;
 import 'package:vector_math/vector_math.dart' as vm;
 
 import '../shared/gpu_capabilities.dart';
+import '../shared/item_instances.dart';
 
 /// A GPU backend the shim can render through instead of Impeller.
 @experimental
@@ -310,10 +311,14 @@ abstract interface class GpuBackendContext {
   /// render pass, or null where it keeps none. A draw's uniform blocks named
   /// in [viewBlockNames] are the pass's view blocks, of at most
   /// [viewBlockLength] bytes each, which each [GpuBackendItemSet.draw]
-  /// states in that order.
+  /// states in that order. A draw's textures named in [viewTextureNames] are
+  /// the pass's view textures, re-supplied in that order each
+  /// [GpuBackendItemSet.draw], so a kept item may sample a frame-transient
+  /// target whose handle changes each frame.
   GpuBackendItemSet? createItemSet({
     required List<String> viewBlockNames,
     required int viewBlockLength,
+    List<String> viewTextureNames = const [],
   });
 }
 
@@ -344,25 +349,32 @@ abstract interface class GpuBackendItemSet {
   /// culled. Returns null, keeping nothing and removing [id], when the
   /// recorder recorded no draw or several. The recorder's bindings are
   /// cleared either way.
+  ///
+  /// With [instances], the item draws its recorded draw as one instanced
+  /// draw of the instances each [draw] does not cull by their own bounds
+  /// ([ItemInstances]); [bounds] then holds them all.
   int? keep(
     GpuBackendRenderPass recorder, {
     int id = 0,
     required int passes,
     Float32List? bounds,
+    ItemInstances? instances,
   });
 
   /// Removes item [id]; an unknown id is ignored.
   void remove(int id);
 
   /// Draws the items of pass [index] into [pass] where it stands, under its
-  /// viewport and scissor, with [viewBlocks] as the pass's view blocks, in
-  /// the order the set names them, culled by [clip] (a column-major matrix
-  /// into clip space). A command buffer draws a pass index once.
+  /// viewport and scissor, with [viewBlocks] as the pass's view blocks and
+  /// [viewTextures] as its view textures, each in the order the set names
+  /// them, culled by [clip] (a column-major matrix into clip space). A
+  /// command buffer draws a pass index once.
   void draw(
     GpuBackendRenderPass pass,
     int index, {
     required List<ByteData> viewBlocks,
     required Float32List clip,
+    List<GpuBackendTexture> viewTextures = const [],
   });
 
   /// Releases every item.

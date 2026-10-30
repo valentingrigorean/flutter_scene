@@ -625,6 +625,9 @@ final class RetainedDepthDraws extends RetainedDraws {
   void beginSync() => _recording = null;
 
   @override
+  void forgetRecorded() => _recording?._forgetBindings();
+
+  @override
   bool draws(RenderItem item) =>
       depthPrepassDraws(item, layerMask: _pass._layerMask);
 
@@ -699,6 +702,9 @@ final class RetainedDepthDraws extends RetainedDraws {
       viewBlocks: [view, ByteData.sublistView(encoder._depthInfo)],
       clip: encoder._cameraTransform.storage,
     );
+    // The kept items bound their own pipeline and blocks on the pass, so what
+    // the encoder holds of its bindings no longer stands.
+    encoder._forgetBindings();
   }
 }
 
@@ -792,6 +798,11 @@ class _DepthPrepassEncoder {
   /// consecutive objects that share one only bind it once.
   gpu.RenderPipeline? _boundPipeline;
   final List<RenderItem> _records = [];
+
+  void _forgetBindings() {
+    _renderPass.clearBindings();
+    _boundPipeline = null;
+  }
 
   /// Records [item]'s depth, unless it is hidden, rejected by its layer
   /// mask, or outside this encoder's set (prepass-participating items

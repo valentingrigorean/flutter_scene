@@ -319,6 +319,14 @@ class ShadowEncoder {
   /// first draw. `clearBindings` leaves the pipeline in place, so
   /// consecutive casters that share one only bind it once.
   gpu.RenderPipeline? _boundPipeline;
+
+  /// Forgets the bindings the encoder holds on its pass, so the next draw
+  /// binds the full set it reads.
+  void forgetBindings() {
+    _renderPass.clearBindings();
+    _boundPipeline = null;
+  }
+
   final List<RenderItem> _records = [];
 
   /// Records [item]'s depth, unless it is hidden, translucent (no shadow),
