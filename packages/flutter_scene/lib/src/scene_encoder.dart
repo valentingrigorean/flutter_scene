@@ -3505,6 +3505,9 @@ final class RetainedColorDraws extends RetainedDraws {
   }
 
   @override
+  Iterable<HeldBlock> heldBlocksOf(RenderItem item) => [item.heldFragItem];
+
+  @override
   void pinHeld(RenderItem item) {
     // The vertex ItemInfo.
     super.pinHeld(item);
