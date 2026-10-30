@@ -38,7 +38,6 @@ export 'package:scene/physics.dart'
         SimplePoseTarget,
         SphereShape,
         TriMeshShape;
-
 export 'src/physics/character_controller.dart'
     show KinematicCharacterController;
 export 'src/physics/collider.dart' show Collider;

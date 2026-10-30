@@ -10,9 +10,7 @@ library;
 
 export 'package:scene/scene.dart'
     show writeFsceneb, readFsceneb, kFscenebVersion, FscenebFormatException;
-
 export 'src/fscene/fsceneb_async.dart' show readFscenebAsync;
-
 export 'package:scene/scene.dart'
     show
         applyPrefabOverride,
@@ -50,7 +48,6 @@ export 'package:scene/scene.dart'
         Vec2Value,
         Vec3Value,
         Vec4Value;
-
 export 'src/fscene/realize/audio_codecs.dart'
     show
         AudioEngineBackendFactory,
@@ -62,9 +59,7 @@ export 'src/fscene/realize/physics_codecs.dart'
     show PhysicsBackendFactory, physicsBackendFactory, registerPhysicsBackend;
 export 'src/fscene/realize/ui_codecs.dart'
     show WidgetSlotBuilder, registerWidgetSlot, widgetSlotBuilder;
-
 export 'package:scene/scene.dart' show diffScene, SceneDiff, NodeChange;
-
 export 'src/fscene/reload/reload.dart' show reloadScene;
 export 'src/fscene/realize/component_codec.dart'
     show
@@ -138,7 +133,6 @@ export 'src/fscene/realize/realize.dart'
 export 'src/fscene/realize/resource_realizer.dart' show ResourceRealizer;
 export 'src/fscene/realize/stage.dart' show realizeStage, serializeStage;
 export 'src/fscene/realize/views.dart' show realizeViews, serializeViews;
-
 export 'package:scene/scene.dart' show SceneDocument;
 export 'package:scene/scene.dart'
     show
@@ -185,6 +179,5 @@ export 'package:scene/scene.dart'
         TorusGeometrySpec,
         TransformSpec,
         TrsTransform;
-
 export 'src/fscene/stream/stream.dart'
     show loadSubtree, unloadSubtree, isLazySubtree, isSubtreeLoaded;
