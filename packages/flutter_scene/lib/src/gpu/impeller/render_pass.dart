@@ -218,7 +218,7 @@ final class RenderPass {
     } else {
       final records = _records;
       if (records != null &&
-          !records._viewBlockNames.contains(slot.uniformName)) {
+          !records._viewBlocks.containsKey(slot.uniformName)) {
         _note(bufferView.buffer);
       }
       final recording = _recording;
