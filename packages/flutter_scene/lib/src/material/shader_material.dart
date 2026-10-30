@@ -252,6 +252,13 @@ class ShaderMaterial extends Material {
   @override
   int get keptRevision => _revision;
 
+  // Counts a set, and has the nodes that draw a material holding its blocks
+  // record their kept draws again.
+  void _changed() {
+    _revision++;
+    if (holdsBlocks) tellRenderSourceListeners();
+  }
+
   /// The held slots of this material's uniform blocks, both stages, while it
   /// [holdsBlocks].
   @override
@@ -498,7 +505,7 @@ class ShaderMaterial extends Material {
     ShaderStage stage = ShaderStage.fragment,
   }) {
     _packedFor(stage).release(name);
-    _revision++;
+    _changed();
     final blocks = _blocksFor(stage);
     if (bytes == null) {
       blocks.remove(name);
@@ -516,7 +523,7 @@ class ShaderMaterial extends Material {
     List<double> floats, {
     ShaderStage stage = ShaderStage.fragment,
   }) {
-    _revision++;
+    _changed();
     final blocks = _blocksFor(stage);
     blocks[name] = _packedFor(stage).pack(name, blocks[name], floats);
   }
@@ -548,7 +555,7 @@ class ShaderMaterial extends Material {
     gpu.SamplerOptions? sampler,
     ShaderStage stage = ShaderStage.fragment,
   }) {
-    _revision++;
+    _changed();
     final textures = _texturesFor(stage);
     if (texture == null) {
       textures.remove(name);

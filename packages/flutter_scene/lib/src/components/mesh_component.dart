@@ -69,6 +69,10 @@ class MeshComponent extends Component {
       if (!setEquals(item.material.sceneInputs, material.sceneInputs)) {
         markMaterialSceneInputsChanged();
       }
+      if (_sourceListener case final listener?) {
+        item.material.removeRenderSourceListener(listener);
+        material.addRenderSourceListener(listener);
+      }
       item.material = material;
       markSceneDrawChanged();
       // Now, not at the next tick, so a capture before it never reaches a
@@ -128,6 +132,7 @@ class MeshComponent extends Component {
       renderScene.add(item);
       primitive.addRenderSourceListener(listener);
       primitive.geometry.addRenderSourceListener(listener);
+      primitive.material.addRenderSourceListener(listener);
     }
     onRenderItemsRegistered();
   }
@@ -168,6 +173,7 @@ class MeshComponent extends Component {
     for (final item in _renderItems) {
       if (listener == null) break;
       item.geometry.removeRenderSourceListener(listener);
+      item.material.removeRenderSourceListener(listener);
       final source = item.drawSource;
       if (source is MeshPrimitive) source.removeRenderSourceListener(listener);
     }

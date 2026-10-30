@@ -1023,6 +1023,8 @@ class PhysicallyBasedMaterial extends Material {
 
   void _markMaterialDataDirty({bool variant = false}) {
     _materialDataDirty = true;
+    _keptRevision++;
+    tellRenderSourceListeners();
     if (variant) {
       final previousTransmission = _usesTransmissionVariant;
       _variantKey = _computeVariantKey();
@@ -1425,6 +1427,8 @@ class PhysicallyBasedMaterial extends Material {
     _updateStandardShaderNames();
     _requestPhysicalAssetsIfNeeded();
     _materialDataDirty = true;
+    _keptRevision++;
+    tellRenderSourceListeners();
     _noteDrawShape();
   }
 
@@ -1604,6 +1608,13 @@ class PhysicallyBasedMaterial extends Material {
         _normalTextureFlow.x == 0.0 &&
         _normalTextureFlow.y == 0.0;
   }
+
+  /// Counts the sets of this material's parameters, each of which may change
+  /// what a kept draw of it binds.
+  @override
+  int get keptRevision => _keptRevision;
+
+  int _keptRevision = 0;
 
   @override
   Iterable<HeldBlock> get heldFragmentBlocks {

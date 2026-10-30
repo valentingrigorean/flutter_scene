@@ -34,7 +34,7 @@ class UnlitMaterial extends Material {
   /// When [colorTexture] is null a 1×1 white placeholder is used so the
   /// final color reduces to [baseColorFactor].
   UnlitMaterial({TextureSource? colorTexture})
-    : baseColorTexture = colorTexture {
+    : _baseColorTexture = colorTexture {
     setFragmentShaderName('UnlitFragment');
   }
 
@@ -47,13 +47,33 @@ class UnlitMaterial extends Material {
   /// Accepts a [Texture2D] or a `RenderTexture` (sampled live). An empty slot
   /// (or a render texture with no completed frame yet) samples a 1×1 white
   /// placeholder so the final color reduces to [baseColorFactor].
-  TextureSource? baseColorTexture;
+  TextureSource? get baseColorTexture => _baseColorTexture;
+  set baseColorTexture(TextureSource? value) {
+    if (identical(value, _baseColorTexture)) return;
+    _baseColorTexture = value;
+    _changed();
+  }
+
+  TextureSource? _baseColorTexture;
 
   /// UV transform applied to [baseColorTexture].
-  TextureTransform baseColorTextureTransform = TextureTransform();
+  TextureTransform get baseColorTextureTransform => _baseColorTextureTransform;
+  set baseColorTextureTransform(TextureTransform value) {
+    _baseColorTextureTransform = value;
+    _changed();
+  }
+
+  TextureTransform _baseColorTextureTransform = TextureTransform();
 
   /// Texture-coordinate channel used by [baseColorTexture].
-  int baseColorTextureTexCoord = 0;
+  int get baseColorTextureTexCoord => _baseColorTextureTexCoord;
+  set baseColorTextureTexCoord(int value) {
+    if (value == _baseColorTextureTexCoord) return;
+    _baseColorTextureTexCoord = value;
+    _changed();
+  }
+
+  int _baseColorTextureTexCoord = 0;
 
   static final Float32List _unlitInfoScratch = Float32List(8);
   static final Float32List _textureTransformScratch = Float32List(8);
@@ -108,13 +128,43 @@ class UnlitMaterial extends Material {
 
   bool _displayReferred = false;
 
-  /// Linear RGBA tint multiplied with [baseColorTexture].
-  Vector4 baseColorFactor = Colors.white;
+  /// Linear RGBA tint multiplied with [baseColorTexture]. A change made in
+  /// place on the vector is seen once it is set again.
+  Vector4 get baseColorFactor => _baseColorFactor;
+  set baseColorFactor(Vector4 value) {
+    if (!identical(value, _baseColorFactor) && value == _baseColorFactor) {
+      _baseColorFactor = value;
+      return;
+    }
+    _baseColorFactor = value;
+    _changed();
+  }
+
+  Vector4 _baseColorFactor = Colors.white;
 
   /// How strongly per-vertex colors influence the final color. `0`
   /// disables vertex color contribution; `1` (the default) fully
   /// applies it.
-  double vertexColorWeight = 1.0;
+  double get vertexColorWeight => _vertexColorWeight;
+  set vertexColorWeight(double value) {
+    if (value == _vertexColorWeight) return;
+    _vertexColorWeight = value;
+    _changed();
+  }
+
+  double _vertexColorWeight = 1.0;
+
+  /// Counts the sets of the parameters above, each of which changes what a
+  /// kept draw of this material binds.
+  @override
+  int get keptRevision => _keptRevision;
+
+  int _keptRevision = 0;
+
+  void _changed() {
+    _keptRevision++;
+    tellRenderSourceListeners();
+  }
 
   /// Kept when scene-referred, with a still base color texture: its blocks,
   /// the clip volume's among them, are then held and the rest it reads
