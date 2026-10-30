@@ -15,6 +15,8 @@ import 'package:flutter_scene/src/fmat/fmat_ast.dart' show FmatType;
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/custom_render_pass.dart'
     show RenderInput;
+import 'package:flutter_scene/src/render/view_info.dart' show HeldBlock;
+import 'package:flutter_scene/src/render_texture.dart';
 import 'package:flutter_scene/src/texture/texture2d.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/uniform_slots.dart';
@@ -128,6 +130,16 @@ class ShaderInstanceAttribute {
 /// TODO(fmat-codegen): generate this packing from the shader's
 /// reflection at build time so callers don't write it by hand, the
 /// way `PreprocessedMaterial` packs a `.fmat`.
+///
+/// ## Kept draws
+///
+/// A material made with `holdsBlocks` binds each of its uniform blocks from a
+/// held slot written only when the block's bytes change, instead of the
+/// frame's transient buffer, so the color pass may keep a still draw of it as
+/// a backend item ([colorRetainable]). A kept draw holds the blocks and
+/// textures it was recorded with: after a set, call
+/// `Node.markMaterialsChanged` on the nodes that draw the material so their
+/// kept draws are recorded again ([keptRevision]).
 /// {@category Materials}
 class ShaderMaterial extends Material {
   /// Creates a [ShaderMaterial] wrapping [fragmentShader].
@@ -152,6 +164,7 @@ class ShaderMaterial extends Material {
     Set<RenderInput> sceneInputs = const {},
     List<ShaderInstanceAttribute> instanceAttributes = const [],
     this.debugViews = false,
+    this.holdsBlocks = false,
   }) : _sceneInputs = _normalizeSceneInputs(sceneInputs),
        _instanceAttributes = _buildInstanceAttributes(instanceAttributes) {
     // A material constructed with inputs is not in the frame's cached summary
@@ -213,6 +226,38 @@ class ShaderMaterial extends Material {
 
   @override
   bool get participatesInDebugViews => debugViews;
+
+  /// Whether this material binds its uniform blocks from held slots, which a
+  /// kept draw may read from frame to frame, rather than from the frame's
+  /// transient buffer. Defaults to `false`. See "Kept draws" in the class doc.
+  final bool holdsBlocks;
+
+  final Map<(ShaderStage, String), _HeldShaderBlock> _held = {};
+  int _revision = 0;
+
+  /// Whether the color pass may keep a still draw of this material: it
+  /// [holdsBlocks], samples no environment (which the scene may swap under a
+  /// kept draw) and no render texture (which changes what it samples from
+  /// frame to frame). Its `ViewInfo` is the color pass's view block; the
+  /// backend still refuses a draw that binds anything else of the frame's,
+  /// such as a scene input's `SceneInputInfo` or the scene color.
+  @override
+  bool get colorRetainable =>
+      holdsBlocks &&
+      !useEnvironment &&
+      !_textures.values.any((bound) => bound.source is RenderTexture) &&
+      !_vertexTextures.values.any((bound) => bound.source is RenderTexture);
+
+  /// Counts the sets of this material's blocks and textures.
+  @override
+  int get keptRevision => _revision;
+
+  /// The held slots of this material's uniform blocks, both stages, while it
+  /// [holdsBlocks].
+  @override
+  Iterable<HeldBlock> get heldFragmentBlocks => [
+    for (final block in _held.values) block.held,
+  ];
 
   /// Whether this material participates in the opaque pass.
   ///
@@ -453,9 +498,11 @@ class ShaderMaterial extends Material {
     ShaderStage stage = ShaderStage.fragment,
   }) {
     _packedFor(stage).release(name);
+    _revision++;
     final blocks = _blocksFor(stage);
     if (bytes == null) {
       blocks.remove(name);
+      _held.remove((stage, name))?.held.release();
     } else {
       blocks[name] = bytes;
     }
@@ -469,6 +516,7 @@ class ShaderMaterial extends Material {
     List<double> floats, {
     ShaderStage stage = ShaderStage.fragment,
   }) {
+    _revision++;
     final blocks = _blocksFor(stage);
     blocks[name] = _packedFor(stage).pack(name, blocks[name], floats);
   }
@@ -500,6 +548,7 @@ class ShaderMaterial extends Material {
     gpu.SamplerOptions? sampler,
     ShaderStage stage = ShaderStage.fragment,
   }) {
+    _revision++;
     final textures = _texturesFor(stage);
     if (texture == null) {
       textures.remove(name);
@@ -607,7 +656,12 @@ class ShaderMaterial extends Material {
       final bytes = blocks[name]!;
       final slot = shader.cachedUniformSlot(name);
       assert(_checkBlock(slot, name, bytes, stage));
-      pass.bindUniform(slot, transientsBuffer.emplace(bytes));
+      pass.bindUniform(
+        slot,
+        holdsBlocks
+            ? _heldOf(stage, name, bytes).bound()
+            : transientsBuffer.emplace(bytes),
+      );
     }
     final textures = _texturesFor(stage);
     for (final name in textures.keys) {
@@ -624,6 +678,12 @@ class ShaderMaterial extends Material {
             defaultSamplerOptions,
       );
     }
+  }
+
+  _HeldShaderBlock _heldOf(ShaderStage stage, String name, ByteData bytes) {
+    final held = _held[(stage, name)] ??= _HeldShaderBlock();
+    held.take(bytes);
+    return held;
   }
 
   void _bindEnvironmentTextures(
@@ -643,6 +703,31 @@ class ShaderMaterial extends Material {
       sampler: linearClampSamplerOptions,
     );
   }
+}
+
+/// The held slot a uniform block binds from, made again when the block's
+/// size changes.
+class _HeldShaderBlock {
+  ByteData? _bytes;
+  late Float32List _floats;
+  HeldBlock held = HeldBlock(0);
+
+  void take(ByteData bytes) {
+    if (identical(bytes, _bytes)) return;
+    final count = bytes.lengthInBytes ~/ Float32List.bytesPerElement;
+    if (_bytes?.lengthInBytes != bytes.lengthInBytes) {
+      held.release();
+      held = HeldBlock(count);
+    }
+    _bytes = bytes;
+    _floats = Float32List.sublistView(
+      bytes,
+      0,
+      count * Float32List.bytesPerElement,
+    );
+  }
+
+  gpu.BufferView bound() => held.bound(_floats);
 }
 
 class _BoundTexture {
