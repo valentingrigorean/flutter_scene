@@ -177,6 +177,24 @@ abstract base class RetainedDraws {
   @protected
   int get passes;
 
+  /// The passes of [items] the kept draw of [item] draws in; [passes] for
+  /// every item unless a pass splits its draws over several.
+  @protected
+  int passesOf(RenderItem item) => passes;
+
+  /// Whether kept draws that differ only in their instance record may join
+  /// one run of instances, which draws its members in no particular order.
+  @protected
+  bool get joinsRuns => true;
+
+  /// Whether the pass's draw of [item] is kept as a render item, alone or in
+  /// a run.
+  @protected
+  bool keeps(RenderItem item) {
+    final kept = _kept[item];
+    return kept != null && (kept.id != 0 || kept.run != null);
+  }
+
   /// Whether the pass draws [item] at all.
   @protected
   bool draws(RenderItem item);
@@ -361,7 +379,8 @@ abstract base class RetainedDraws {
     heldInstanceBinding = null;
     record(item);
     _leaveRun(item, kept);
-    final key = _runKeyOf(item, kept, pipeline, state);
+    final key = joinsRuns ? _runKeyOf(item, kept, pipeline, state) : null;
+    heldInstanceBinding = null;
     final run = key == null ? null : _runs[key];
     if (run != null && run.members.isNotEmpty) {
       // It joins a run: the run's item is recorded again once this sync ends.
@@ -376,7 +395,7 @@ abstract base class RetainedDraws {
     final id = items.keep(
       recorder,
       id: kept.id,
-      passes: passes,
+      passes: passesOf(item),
       bounds: bounds == null ? null : kept.bounds,
     );
     _unpin(item, kept);
@@ -490,7 +509,7 @@ abstract base class RetainedDraws {
     record(item);
     final id = items.keep(
       recorder,
-      passes: passes,
+      passes: passesOf(item),
       bounds: kept.bounded ? kept.bounds : null,
     );
     if (id == null) {

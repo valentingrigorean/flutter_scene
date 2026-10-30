@@ -41,6 +41,7 @@ import 'package:vector_math/vector_math.dart' as vm;
 
 import '../shared/gpu_capabilities.dart';
 import '../shared/item_instances.dart';
+import '../shared/item_sort.dart';
 
 /// A GPU backend the shim can render through instead of Impeller.
 @experimental
@@ -367,14 +368,15 @@ abstract interface class GpuBackendItemSet {
   /// Draws the items of pass [index] into [pass] where it stands, under its
   /// viewport and scissor, with [viewBlocks] as the pass's view blocks and
   /// [viewTextures] as its view textures, each in the order the set names
-  /// them, culled by [clip] (a column-major matrix into clip space). A
-  /// command buffer draws a pass index once.
+  /// them, culled by [clip] (a column-major matrix into clip space), in the
+  /// order [sort] names. A command buffer draws a pass index once.
   void draw(
     GpuBackendRenderPass pass,
     int index, {
     required List<ByteData> viewBlocks,
     required Float32List clip,
     List<GpuBackendTexture> viewTextures = const [],
+    ItemSort sort = ItemSort.key,
   });
 
   /// Releases every item.

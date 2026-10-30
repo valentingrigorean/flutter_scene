@@ -867,7 +867,8 @@ abstract class Material {
   /// transient buffer or texture is refused by the backend regardless, so this
   /// only has to rule out what that check cannot: a wrong shared view block.
   /// The base is false; a lit engine material that holds its fragment blocks
-  /// overrides it. [RetainedColorDraws] reads it beside its structural checks.
+  /// overrides it. [RetainedColorDraws] reads it beside its structural checks
+  /// for an opaque draw, [RetainedTranslucentDraws] for a blended one.
   /// A downstream material that holds its own extra fragment blocks overrides
   /// this (part of the retention extension surface), so it is public.
   bool get colorRetainable => false;

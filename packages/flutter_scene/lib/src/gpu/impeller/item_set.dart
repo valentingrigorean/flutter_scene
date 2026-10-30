@@ -108,7 +108,7 @@ final class ItemSet {
   /// viewport and scissor and leaving its fixed-function state as it stood,
   /// with [viewBlocks] as the pass's view blocks and [viewTextures] as its
   /// view textures, each in the order [GpuContext.createItemSet] named them,
-  /// culled by [clip].
+  /// culled by [clip] and drawn in the order [sort] names.
   ///
   /// The items bind what they draw with on [pass], so the caller binds its
   /// own pipeline and blocks again for the draws it encodes afterwards.
@@ -118,6 +118,7 @@ final class ItemSet {
     required List<ByteData> viewBlocks,
     required Float32List clip,
     List<Texture> viewTextures = const [],
+    ItemSort sort = ItemSort.key,
   }) {
     final impeller = _impeller;
     if (impeller != null) {
@@ -128,6 +129,7 @@ final class ItemSet {
         viewBlocks: viewBlocks,
         clip: clip,
         viewTextures: [for (final texture in viewTextures) texture._impeller!],
+        sort: sort,
       );
       return;
     }
@@ -137,6 +139,7 @@ final class ItemSet {
       viewBlocks: viewBlocks,
       clip: clip,
       viewTextures: [for (final texture in viewTextures) texture._backend!],
+      sort: sort,
     );
   }
 
