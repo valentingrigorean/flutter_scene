@@ -238,7 +238,7 @@ class DepthPrepass extends RenderGraphPass {
             clip: transform.storage,
           );
         })
-        ..refuseWhere(retained.encoded.isNotEmpty || _cameraTransform != null);
+        ..refuseWhere(!retained.keepsForAnyCamera || _cameraTransform != null);
       for (final item in retained.encoded) {
         encoder.submit(item);
       }

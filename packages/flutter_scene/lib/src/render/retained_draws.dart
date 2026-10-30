@@ -9,9 +9,11 @@ import 'package:meta/meta.dart';
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/geometry/geometry.dart'
-    show UnskinnedGeometry;
+    show Geometry, UnskinnedGeometry;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/material/engine_lighting.dart';
+import 'package:flutter_scene/src/material/material.dart' show Material;
+import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/instance_records.dart';
 import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
@@ -29,6 +31,9 @@ final class _Kept {
   int id = 0;
   int changedAt = -1;
   bool encoded = false;
+
+  // The level of detail the pass draws ([RetainedDraws.levelOf]).
+  int level = RetainedDraws.wholeItem;
 
   Object? material;
   int materialRevision = 0;
@@ -243,16 +248,20 @@ final class SceneItems {
 /// camera encodes none of them.
 ///
 /// A draw is kept when it binds only what its item holds from frame to
-/// frame: an unskinned, unmorphed, non-instanced mesh with no turns, level
-/// of detail or draw selection, through a position-only depth path whose
-/// material has no vertex stage, mask or surface, and whose every block but
-/// the pass's own ([gpu.ItemSet.draw]) is held. Each [sync] reads the items
+/// frame: an unskinned, unmorphed, non-instanced mesh with no turns or draw
+/// selection, at one level of detail a pass selects ([levelOf]), through a
+/// position-only depth path whose material has no vertex stage, mask or
+/// surface, and whose every block but the pass's own ([gpu.ItemSet.draw]) is
+/// held. Each [sync] reads the items
 /// the scene logged as joining, leaving or refreshed since the last
 /// ([RenderScene.changeLog]), and every item once after the pass's key
 /// changed or the log was dropped; it records again only the items whose
 /// draw changed. An item that changes in two syncs in a row is encoded each
 /// frame like every draw that cannot be kept, until it rests for a while.
 /// The pass then draws the kept items natively and encodes [encoded].
+///
+/// An item with levels of detail is checked each [sync] for the level the
+/// pass selects, and recorded again only when that level changed.
 ///
 /// Kept draws that differ only in their instance record and bounds (the
 /// same mesh drawn by several nodes) are kept as one item that draws them as
@@ -278,11 +287,20 @@ abstract base class RetainedDraws {
   final Map<RenderItem, List<void Function()>> _pins = Map.identity();
 
   final Map<_RunKey, _Run> _runs = {};
+
+  // The items with levels of detail the pass draws, checked each sync for a
+  // change of level.
+  final Set<RenderItem> _leveled = LinkedHashSet.identity();
   final Set<_Run> _changedRuns = LinkedHashSet.identity();
 
   /// The items the pass encodes each frame: those it draws that cannot be
   /// kept, and those that changed in two syncs in a row.
   final List<RenderItem> encoded = [];
+
+  /// Whether the pass's draws for another camera are its kept draws as they
+  /// stand ([CameraReplay]): it encodes none, and none draws at a level of
+  /// detail the camera selects.
+  bool get keepsForAnyCamera => encoded.isEmpty && _leveled.isEmpty;
 
   /// The pass's recorder, current after [sync] began.
   @protected
@@ -320,6 +338,37 @@ abstract base class RetainedDraws {
   /// Whether the pass draws [item] at all.
   @protected
   bool draws(RenderItem item);
+
+  /// [levelOf] for an item drawn as itself, with no levels of detail.
+  static const int wholeItem = -1;
+
+  /// [levelOf] for an item whose levels of detail select none to draw.
+  static const int culledLevel = -2;
+
+  /// [levelOf] for an item whose levels of detail the pass does not keep.
+  static const int refusedLevel = -3;
+
+  /// The level of detail the pass draws [item] at this sync: the index of
+  /// one of its levels, [wholeItem], [culledLevel] or [refusedLevel]. The
+  /// default keeps no level of detail.
+  @protected
+  int levelOf(RenderItem item) => item.lod == null ? wholeItem : refusedLevel;
+
+  /// The geometry the pass draws [item] with, at the level of its last
+  /// [levelOf].
+  @protected
+  Geometry geometryOf(RenderItem item) {
+    final level = _kept[item]?.level ?? wholeItem;
+    return level >= 0 ? item.lod!.levels[level].geometry : item.geometry;
+  }
+
+  /// The material the pass draws [item] with, at the level of its last
+  /// [levelOf].
+  @protected
+  Material materialOf(RenderItem item) {
+    final level = _kept[item]?.level ?? wholeItem;
+    return level >= 0 ? item.lod!.levels[level].material : item.material;
+  }
 
   /// Whether the pass's draw of [item] binds only what [item] holds from
   /// frame to frame, beside the structural checks [sync] makes.
@@ -418,6 +467,18 @@ abstract base class RetainedDraws {
       }
     }
     _read = log.length;
+    if (_leveled.isNotEmpty) {
+      List<(RenderItem, int)>? moved;
+      for (final item in _leveled) {
+        final level = levelOf(item);
+        if (level != _kept[item]!.level) (moved ??= []).add((item, level));
+      }
+      if (moved != null) {
+        for (final (item, level) in moved) {
+          _visit(item, level);
+        }
+      }
+    }
     for (var index = encoded.length - 1; index >= 0; index--) {
       final item = encoded[index];
       final kept = _kept[item];
@@ -450,15 +511,32 @@ abstract base class RetainedDraws {
     return true;
   }
 
-  void _visit(RenderItem item) {
+  void _visit(RenderItem item, [int? level]) {
     _keptCountStale = true;
     final kept = _kept[item] ??= _Kept();
     if (!draws(item)) {
+      _leveled.remove(item);
+      kept.level = wholeItem;
       _forget(item, kept);
       _encode(item, kept, false);
       return;
     }
-    if (!_holdsItsBuffers(item) || !keepable(item)) {
+    kept.level = level ??= levelOf(item);
+    if (item.lod == null) {
+      _leveled.remove(item);
+    } else {
+      _leveled.add(item);
+    }
+    if (level == culledLevel) {
+      _forget(item, kept);
+      _encode(item, kept, false);
+      return;
+    }
+    final geometry = geometryOf(item);
+    final material = materialOf(item);
+    if (level == refusedLevel ||
+        !_holdsItsBuffers(item, geometry) ||
+        !keepable(item)) {
       _forget(item, kept);
       _encode(item, kept, true);
       return;
@@ -467,30 +545,30 @@ abstract base class RetainedDraws {
     final state = stateOf(item);
     final bounds = item.frustumCulled ? item.worldBounds : null;
     if ((kept.id != 0 || kept.run != null) &&
-        identical(kept.material, item.material) &&
-        kept.materialRevision == item.material.keptRevision &&
-        identical(kept.geometry, item.geometry) &&
+        identical(kept.material, material) &&
+        kept.materialRevision == material.keptRevision &&
+        identical(kept.geometry, geometry) &&
         identical(kept.pipeline, pipeline) &&
         kept.state == state &&
-        kept.buffers == item.geometry.buffersRevision &&
+        kept.buffers == geometry.buffersRevision &&
         kept.transform == item.worldTransformRevision &&
         kept.flipped == item.windingFlipped &&
-        kept.primitive == item.geometry.primitiveType.index &&
+        kept.primitive == geometry.primitiveType.index &&
         _sameBounds(kept, bounds)) {
       return;
     }
     final hot = kept.changedAt >= 0 && _syncs - kept.changedAt <= 1;
     kept
       ..changedAt = _syncs
-      ..material = item.material
-      ..materialRevision = item.material.keptRevision
-      ..geometry = item.geometry
+      ..material = material
+      ..materialRevision = material.keptRevision
+      ..geometry = geometry
       ..pipeline = pipeline
       ..state = state
-      ..buffers = item.geometry.buffersRevision
+      ..buffers = geometry.buffersRevision
       ..transform = item.worldTransformRevision
       ..flipped = item.windingFlipped
-      ..primitive = item.geometry.primitiveType.index;
+      ..primitive = geometry.primitiveType.index;
     _takeBounds(kept, bounds);
     if (hot || pipeline == null) {
       _forget(item, kept);
@@ -499,7 +577,7 @@ abstract base class RetainedDraws {
     }
     forgetRecorded();
     heldInstanceBinding = null;
-    record(item);
+    recordKeptDraw(() => record(item));
     _leaveRun(item, kept);
     final key = joinsRuns ? _runKeyOf(item, kept, pipeline, state) : null;
     heldInstanceBinding = null;
@@ -566,11 +644,12 @@ abstract base class RetainedDraws {
         values[frame + 12 + axis] = 0.0;
       }
     }
-    return _RunKey(item.material, item.geometry, pipeline, (
+    final geometry = geometryOf(item);
+    return _RunKey(materialOf(item), geometry, pipeline, (
       state: state,
       flipped: item.windingFlipped,
-      primitive: item.geometry.primitiveType.index,
-      buffers: item.geometry.buffersRevision,
+      primitive: geometry.primitiveType.index,
+      buffers: geometry.buffersRevision,
       bounded: kept.bounded,
       slot: stream.slot,
       floats: stream.floats,
@@ -628,7 +707,7 @@ abstract base class RetainedDraws {
   // Keeps the lone member of a run as its own item again.
   void _keepAlone(_Run run, RenderItem item, _Kept kept) {
     forgetRecorded();
-    record(item);
+    recordKeptDraw(() => record(item));
     final id = items.keep(
       recorder,
       passes: passesOf(item),
@@ -702,7 +781,7 @@ abstract base class RetainedDraws {
       at++;
     }
     forgetRecorded();
-    record(ref);
+    recordKeptDraw(() => record(ref!));
     final id = items.keep(
       recorder,
       id: run.id,
@@ -765,10 +844,17 @@ abstract base class RetainedDraws {
     (_pins[item] ??= []).add(unpin);
   }
 
-  // Whether [item] draws one mesh from buffers it holds, with no per-frame
-  // turns, skin, morph, instances, level of detail or draw selection.
-  static bool _holdsItsBuffers(RenderItem item) {
-    final geometry = item.geometry;
+  // Whether [item] draws one mesh, [geometry], from buffers it holds, or one
+  // draw of a geometry that keeps its draw, with no per-frame turns, skin,
+  // morph, instances or draw selection.
+  static bool _holdsItsBuffers(RenderItem item, Geometry geometry) {
+    if (geometry.keepsItsDraw) {
+      return item.instanceTransforms == null &&
+          item.sharedRows == null &&
+          item.instanceSource == null &&
+          item.spin == null &&
+          !hasMeshDrawSelector(item);
+    }
     return geometry is UnskinnedGeometry &&
         geometry.morphTargets == null &&
         item.jointsTexture == null &&
@@ -777,7 +863,6 @@ abstract base class RetainedDraws {
         item.sharedRows == null &&
         item.instanceSource == null &&
         item.spin == null &&
-        item.lod == null &&
         !hasMeshDrawSelector(item) &&
         geometry.instancedVertexLayout != null &&
         geometry.bindsModelTransformInstance;
@@ -811,6 +896,7 @@ abstract base class RetainedDraws {
   }
 
   void _drop(RenderItem item) {
+    _leveled.remove(item);
     final kept = _kept.remove(item);
     if (kept == null) return;
     _keptCountStale = true;
@@ -828,6 +914,7 @@ abstract base class RetainedDraws {
     }
     _runs.clear();
     _changedRuns.clear();
+    _leveled.clear();
     _kept.clear();
     _keptCount = 0;
     _keptCountStale = false;

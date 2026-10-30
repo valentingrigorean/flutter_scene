@@ -465,7 +465,7 @@ class ShadowPass extends RenderGraphPass {
             );
           })
           ..refuseWhere(
-            retained.encoded.isNotEmpty ||
+            !retained.keepsForAnyCamera ||
                 spotCount > 0 ||
                 pointCount > 0 ||
                 _shared != null,

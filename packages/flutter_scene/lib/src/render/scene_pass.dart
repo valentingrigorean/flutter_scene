@@ -523,13 +523,10 @@ class ScenePass extends RenderGraphPass {
           ? RetainedColorDraws.of(_renderScene)
           : null;
       if (retained != null) {
-        // The translucent draws keep too where the backend can order them
-        // back to front by depth, which an orthographic view's clip-space w
-        // does not tell; the encoder draws each render order's kept draws in
-        // its translucent phase.
-        final translucent = projection.orthographic
-            ? null
-            : RetainedTranslucentDraws.of(_renderScene);
+        // The translucent draws keep too, which the backend orders back to
+        // front by depth; the encoder draws each render order's kept draws
+        // in its translucent phase.
+        final translucent = RetainedTranslucentDraws.of(_renderScene);
         retained.syncColor(
           target: target,
           encoder: encoder,
