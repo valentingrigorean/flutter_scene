@@ -129,8 +129,9 @@ final class _RunKey {
 /// the passes in the order they draw, so an index does not order them.
 ///
 /// Each pass states its own view blocks: `ViewInfo` first, then `DepthInfo`
-/// for the prepass, or `FragInfo`, `FogInfo` and the app's blocks
-/// (`Scene.setViewBlock`) for the color pass and its translucent draws;
+/// for the prepass, or `FragInfo`, `FogInfo`, the app's blocks
+/// (`Scene.setViewBlock`) and `SceneInputInfo` for the color pass and its
+/// translucent draws;
 /// `SkyboxFrameInfo` and `SkyboxInfo` for the sky, `ResolveInfo` for the
 /// resolve, `FxaaInfo` for the anti-aliasing, and a custom render pass's
 /// `CustomRenderPass.keptViewBlocks` for its draw.
@@ -197,6 +198,7 @@ final class SceneItems {
         'FragInfo': 1,
         'FogInfo': 2,
         for (final (index, name) in appBlocks.indexed) name: 3 + index,
+        'SceneInputInfo': 3 + appBlocks.length,
         'SkyboxFrameInfo': 0,
         'SkyboxInfo': 1,
         'ResolveInfo': 0,

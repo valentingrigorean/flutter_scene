@@ -850,7 +850,9 @@ class EngineLightingUniforms {
   }
 
   static final Float32List _lightmapInfoScratch = Float32List(12);
-  static final Float32List _sceneInputInfoScratch = Float32List(24);
+  static final Float32List _sceneInputInfoScratch = Float32List(
+    sceneInputInfoFloatCount,
+  );
 
   /// Packs the `LightmapInfo` std140 block (three vec4s) into [target]. See
   /// `shaders/lightmap.glsl` for the field layout.
@@ -965,8 +967,18 @@ class EngineLightingUniforms {
   ) {
     final slot = shader.cachedUniformSlot('SceneInputInfo');
     if (slot.sizeInBytes == null) return;
+    final info = packSceneInputInfo(_sceneInputInfoScratch, lighting);
+    pass.bindUniform(slot, transientsBuffer.emplace(scratchBytesOf(info)));
+  }
 
-    final info = _sceneInputInfoScratch..fillRange(0, 24, 0.0);
+  /// The number of floats of the `SceneInputInfo` block.
+  static const int sceneInputInfoFloatCount = 24;
+
+  /// Packs the `SceneInputInfo` block [bindSceneInputInfo] binds into [info],
+  /// [sceneInputInfoFloatCount] floats, from [lighting]; a kept draw reads it
+  /// as a view block of the color pass.
+  static Float32List packSceneInputInfo(Float32List info, Lighting lighting) {
+    info.fillRange(0, sceneInputInfoFloatCount, 0.0);
     info[0] = lighting.opaqueSceneColor != null ? 1.0 : 0.0;
     info[1] = lighting.sceneDepthLinear != null ? 1.0 : 0.0;
     info[2] = lighting.filteredSceneColor != null ? 1.0 : 0.0;
@@ -998,7 +1010,7 @@ class EngineLightingUniforms {
     info[20] = lighting.projectionOffsetX;
     info[21] = lighting.projectionOffsetY;
     info[22] = lighting.orthographic ? 1.0 : 0.0;
-    pass.bindUniform(slot, transientsBuffer.emplace(scratchBytesOf(info)));
+    return info;
   }
 
   /// Binds the secondary cross-fade environment's prefiltered radiance to the
