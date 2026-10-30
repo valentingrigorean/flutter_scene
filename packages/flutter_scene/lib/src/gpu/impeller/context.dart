@@ -232,34 +232,34 @@ final class GpuContext {
 
   /// A set of render items the backend keeps and draws inside a pass, or
   /// null where it keeps none. A draw's uniform blocks named in
-  /// [viewBlockNames], of at most [viewBlockLength] bytes each, are the view
-  /// blocks each [ItemSet.draw] states, and its textures named in
+  /// [viewBlocks], of at most [viewBlockLength] bytes each, are the view
+  /// blocks each [ItemSet.draw] states, each at the index [viewBlocks] gives
+  /// it; two names may share an index where the passes that read them draw
+  /// different items. Its textures named in
   /// [viewTextureNames] are the view textures it states, so a kept item may
   /// sample a frame-transient target whose handle changes each frame.
   ///
   /// On Impeller the set keeps each draw as a resolved record and re-issues
   /// its pass calls, since Flutter GPU records no render bundles.
   ItemSet? createItemSet({
-    required List<String> viewBlockNames,
+    required Map<String, int> viewBlocks,
     required int viewBlockLength,
     List<String> viewTextureNames = const [],
   }) {
     final impeller = _impeller;
     if (impeller != null) {
       return ItemSet._impeller(
-        _ItemSet(impeller, viewBlockNames, viewBlockLength, viewTextureNames),
-        viewBlockNames,
+        _ItemSet(impeller, viewBlocks, viewBlockLength, viewTextureNames),
+        viewBlocks,
         viewTextureNames,
       );
     }
     final set = _backend!.createItemSet(
-      viewBlockNames: viewBlockNames,
+      viewBlocks: viewBlocks,
       viewBlockLength: viewBlockLength,
       viewTextureNames: viewTextureNames,
     );
-    return set == null
-        ? null
-        : ItemSet._(set, viewBlockNames, viewTextureNames);
+    return set == null ? null : ItemSet._(set, viewBlocks, viewTextureNames);
   }
 
   /// Creates a command buffer that records and submits GPU work. [label]

@@ -11,6 +11,7 @@ import 'package:vector_math/vector_math.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart'
     show UnskinnedGeometry;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/material/engine_lighting.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/instance_records.dart';
 import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
@@ -115,6 +116,90 @@ final class _RunKey {
   }
 }
 
+/// The one item set every kept draw of a [RenderScene] lives in, so the
+/// backend holds the scene's shadow casters, depth prepass and color draws
+/// in one native view and each pass draws its own pass index of it.
+///
+/// Pass [casterPass] and the three after it are the directional shadow
+/// cascades, [depthPass] the primary view's depth prepass, [colorPass] its
+/// color pass and [translucentPass] onwards its translucent draws. Each pass
+/// states its own view blocks: `ViewInfo` first, then `DepthInfo` for the
+/// prepass, or `FragInfo`, `FogInfo` and the app's blocks
+/// (`Scene.setViewBlock`) for the color pass and its translucent draws.
+final class SceneItems {
+  SceneItems._(this.items, this._blocksRevision);
+
+  /// The first of the four shadow cascades' pass indices.
+  static const int casterPass = 0;
+
+  /// The depth prepass's pass index.
+  static const int depthPass = 4;
+
+  /// The color pass's pass index.
+  static const int colorPass = 5;
+
+  /// The first of the color pass's translucent pass indices, one per render
+  /// order whose draws it keeps, [translucentPasses] at most.
+  static const int translucentPass = 6;
+
+  /// The number of translucent pass indices, up to the 32 a set holds.
+  static const int translucentPasses = 32 - translucentPass;
+
+  /// The backend's item set.
+  final gpu.ItemSet items;
+
+  final int _blocksRevision;
+  final int _generation = gpu.gpuContextGeneration;
+
+  static final Expando<SceneItems> _byScene = Expando('scene items');
+
+  /// The item set of [renderScene], made again when the GPU context is
+  /// reopened or the app's view blocks change, or null where the backend
+  /// keeps no items. The kept draws of a set that was replaced are dropped
+  /// with it.
+  static gpu.ItemSet? of(RenderScene renderScene) {
+    final held = _byScene[renderScene];
+    if (held != null &&
+        held._generation == gpu.gpuContextGeneration &&
+        held._blocksRevision == renderScene.viewBlocksRevision) {
+      return held.items;
+    }
+    held?.items.dispose();
+    _byScene[renderScene] = null;
+    final appBlocks = renderScene.viewBlocks.keys;
+    final items = gpu.gpuContext.createItemSet(
+      viewBlocks: {
+        'ViewInfo': 0,
+        'DepthInfo': 1,
+        'FragInfo': 1,
+        'FogInfo': 2,
+        for (final (index, name) in appBlocks.indexed) name: 3 + index,
+      },
+      viewBlockLength:
+          EngineLightingUniforms.fragInfoFloatCount *
+          Float32List.bytesPerElement,
+      viewTextureNames: colorViewTextureNames,
+    );
+    if (items == null) return null;
+    _byScene[renderScene] = SceneItems._(items, renderScene.viewBlocksRevision);
+    return items;
+  }
+
+  /// The frame-transient engine textures a kept lit color draw samples,
+  /// re-supplied each color pass so the backend keeps the draw instead of
+  /// refusing it: the directional shadow atlas, ambient occlusion, the two
+  /// punctual-light data textures, and the opaque linear depth a
+  /// scene-input material samples. Any other transient texture a draw binds
+  /// is still refused by the backend.
+  static const colorViewTextureNames = [
+    'shadow_map',
+    'ssao_texture',
+    'punctual_lights',
+    'punctual_index',
+    'scene_depth',
+  ];
+}
+
 /// The draws one pass makes of a [RenderScene]'s items that the backend
 /// keeps as render items ([gpu.ItemSet]), so a frame that moves only the
 /// camera encodes none of them.
@@ -137,17 +222,15 @@ final class _RunKey {
 /// one draw for the run instead of one per member. The item is recorded
 /// again only when the run's members change.
 abstract base class RetainedDraws {
-  /// Keeps the draws of [renderScene] in [items].
+  /// Keeps the draws of [renderScene] in [items], the scene's
+  /// [SceneItems].
   RetainedDraws(this.renderScene, this.items);
 
   /// The scene whose items are kept.
   final RenderScene renderScene;
 
-  /// The backend's kept items.
+  /// The backend's kept items, which every pass of the scene shares.
   final gpu.ItemSet items;
-
-  /// The context generation [items] were made on.
-  final int generation = gpu.gpuContextGeneration;
 
   final Map<RenderItem, _Kept> _kept = Map.identity();
 
@@ -173,7 +256,8 @@ abstract base class RetainedDraws {
   int _read = 0;
   int _syncs = 0;
 
-  /// The passes of [items] a kept draw draws in, one bit each.
+  /// The passes of [items] a kept draw draws in, one bit each
+  /// ([SceneItems]).
   @protected
   int get passes;
 
@@ -696,7 +780,7 @@ abstract base class RetainedDraws {
     if (kept.encoded) encoded.remove(item);
   }
 
-  /// Releases every kept draw.
+  /// Forgets every kept draw; the items leave with their [SceneItems] set.
   void dispose() {
     for (final MapEntry(key: item, value: kept) in _kept.entries) {
       _unpin(item, kept);
@@ -710,7 +794,6 @@ abstract base class RetainedDraws {
     _keptCount = 0;
     _keptCountStale = false;
     encoded.clear();
-    items.dispose();
   }
 
   static bool _sameBounds(_Kept kept, Aabb3? bounds) {

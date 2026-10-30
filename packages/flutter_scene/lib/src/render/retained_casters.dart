@@ -2,8 +2,6 @@
 /// keeps as render items, drawn by each cascade without encoding them.
 library;
 
-import 'dart:typed_data';
-
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/draw_revision.dart';
@@ -34,15 +32,11 @@ final class RetainedShadowCasters extends RetainedDraws {
   /// The kept casters of [renderScene], or null where the backend keeps no
   /// items.
   static RetainedShadowCasters? of(RenderScene renderScene) {
+    final items = SceneItems.of(renderScene);
     final held = _byScene[renderScene];
-    if (held != null && held.generation == gpu.gpuContextGeneration) {
-      return held;
-    }
+    if (held != null && identical(held.items, items)) return held;
     held?.dispose();
-    final items = gpu.gpuContext.createItemSet(
-      viewBlockNames: const ['ViewInfo'],
-      viewBlockLength: kViewInfoFloats * Float32List.bytesPerElement,
-    );
+    _byScene[renderScene] = null;
     if (items == null) return null;
     return _byScene[renderScene] = RetainedShadowCasters._(renderScene, items);
   }
@@ -58,7 +52,7 @@ final class RetainedShadowCasters extends RetainedDraws {
 
   // Every cascade a frame names, one bit each.
   @override
-  int get passes => 0xF;
+  int get passes => 0xF << SceneItems.casterPass;
 
   /// Brings the kept casters up to date with the scene for a shadow map
   /// drawn into [target] with [casterFaces] and [casterChannelMask].
@@ -139,7 +133,7 @@ final class RetainedShadowCasters extends RetainedDraws {
     clearCurrentDrawDepthOffset();
     items.draw(
       pass,
-      cascade,
+      SceneItems.casterPass + cascade,
       viewBlocks: [viewInfoBytesOf(lightSpaceMatrix, cameraPosition)],
       clip: lightSpaceMatrix.storage,
     );

@@ -136,7 +136,7 @@ abstract base class GpuContext {
   /// Render items kept from frame to frame; the web keeps none and encodes
   /// every draw each frame.
   ItemSet? createItemSet({
-    required List<String> viewBlockNames,
+    required Map<String, int> viewBlocks,
     required int viewBlockLength,
     List<String> viewTextureNames = const [],
   }) => null;
