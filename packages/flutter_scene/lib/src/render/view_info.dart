@@ -456,7 +456,7 @@ final class HeldItemInfo {
     final generation = gpu.gpuContextGeneration;
     final epoch = currentDrawSpin == null
         ? 0.0
-        : (currentAnimationTime / kAnimationTimeFold).floorToDouble();
+        : animationTimeEpoch(currentAnimationTime);
     final frame = rendererSubmissions.latestSubmission;
     for (final entry in _entries) {
       if (entry.slots.generation == generation &&

@@ -24,6 +24,13 @@ const double kAnimationTimeFold = 64.0;
 double foldedAnimationTime(double time) =>
     time - (time / kAnimationTimeFold).floorToDouble() * kAnimationTimeFold;
 
+/// The fold [time] is in: the whole spans before it, which a spin's phases
+/// add up while the shader reads only [foldedAnimationTime]. A draw that turns
+/// holds the same `ItemInfo` values for as long as this holds.
+@internal
+double animationTimeEpoch(double time) =>
+    (time / kAnimationTimeFold).floorToDouble();
+
 /// One turn about a line at a steady rate.
 ///
 /// At a time of `t` seconds the turn is a rotation about [axis] through
