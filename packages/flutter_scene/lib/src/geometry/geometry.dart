@@ -2434,6 +2434,11 @@ final Float32List currentViewInstanceBand = Float32List(10)
   ..[8] = -3.0e38
   ..[9] = 3.0e38;
 
+/// The `RenderView.viewScale` of the view being drawn, which `ViewInfo`
+/// carries. A pass that states no view keeps the value of the last one.
+@internal
+double currentViewScale = 0.0;
+
 /// The view each camera draws, stated by the scene as it builds the passes of
 /// the view, so a pass that holds the camera reads the view's
 /// `instanceDepthFrom` and `instanceDepthTo`.
@@ -2449,6 +2454,7 @@ void setCurrentViewInstanceBandOf(
   vm.Vector3 forward,
 ) {
   final view = instanceBandViews[camera];
+  if (view != null) currentViewScale = view.viewScale;
   setCurrentViewInstanceBand(
     eye,
     forward,

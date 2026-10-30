@@ -171,7 +171,7 @@ void _packViewInfo(Matrix4 cameraTransform, Vector3 cameraPosition) {
     ..[32] = raster.stepScale
     ..[33] = raster.stepClip
     ..[34] = (raster.reversed ? 1.0 : -1.0) * currentDrawPixelSlope
-    ..[35] = 0.0;
+    ..[35] = currentViewScale;
   assert(scratch.length == kViewInfoFloats);
 }
 
