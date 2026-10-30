@@ -8,6 +8,7 @@ import 'package:vector_math/vector_math.dart' show Matrix4, Vector3;
 
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
+import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/fmat/fmat_ast.dart' show DepthSurfaceKind;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/geometry/geometry.dart';
@@ -92,7 +93,7 @@ enum MaskedDepthPass {
 /// The default [bind] enables back-face culling with native counter-clockwise
 /// winding.
 /// {@category Materials}
-abstract class Material {
+abstract class Material with RenderSourceListeners {
   static final gpu.DeviceLocal<gpu.Texture> _whitePlaceholderTexture =
       gpu.DeviceLocal(
         () => gpu.gpuContext.createTexture(gpu.StorageMode.hostVisible, 1, 1)
@@ -304,7 +305,14 @@ abstract class Material {
   /// built-in lit and unlit materials, every physical variant and lit `.fmat`
   /// materials honor it in their color pass and the main pass's coverage
   /// pre-draw.
-  ClipVolume? clipVolume;
+  ClipVolume? get clipVolume => _clipVolume;
+  set clipVolume(ClipVolume? value) {
+    if (identical(value, _clipVolume)) return;
+    _clipVolume = value;
+    tellRenderSourceListeners();
+  }
+
+  ClipVolume? _clipVolume;
 
   /// Which surface wins where this material's geometry and another's lie in
   /// the same plane. A surface with a higher layer draws over coplanar
@@ -835,9 +843,9 @@ abstract class Material {
   @internal
   bool drawsDebugViews(Lighting lighting) =>
       participatesInDebugViews &&
-      fragmentShaderForLighting(
-            lighting,
-          ).cachedUniformSlot('DebugViewInfo').sizeInBytes !=
+      fragmentShaderForLighting(lighting)
+              .cachedUniformSlot('DebugViewInfo')
+              .sizeInBytes !=
           null;
 
   /// Per-frame engine inputs this material samples, produced only when a
@@ -884,9 +892,10 @@ abstract class Material {
   /// material's identity does not show, such as a held block's values or a
   /// texture it binds changed in place. A pass that keeps the draw as a
   /// backend item records it again when this differs from its recording, on
-  /// the next frame that refreshes the node ([Node.markMaterialsChanged]).
-  /// The base is 0; a material that changes its own held blocks in place
-  /// overrides it.
+  /// the next frame that refreshes the node. A material that moves this calls
+  /// [tellRenderSourceListeners], which refreshes each node a `MeshComponent`
+  /// draws it on; another node takes [Node.markMaterialsChanged]. The base is
+  /// 0; a material that changes its own held blocks in place overrides it.
   int get keptRevision => 0;
 
   /// The held fragment uniform blocks a kept color draw of this material
