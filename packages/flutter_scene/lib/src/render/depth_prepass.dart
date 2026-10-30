@@ -628,6 +628,21 @@ final class RetainedDepthDraws extends RetainedDraws {
   @override
   int get passes => 1 << SceneItems.depthPass;
 
+  @override
+  bool get keepsInstances => true;
+
+  // The position-only path binds the position stream alone, so the records
+  // follow it at slot 1.
+  @override
+  int instanceSlotOf(RenderItem item, Geometry geometry) =>
+      depthPrepassDraw(
+        geometry,
+        item.material,
+        writeNormals: false,
+      ).positionOnly
+      ? 1
+      : geometry.vertexStreamCount;
+
   /// Brings the kept draws up to date with the scene for the prepass that
   /// [encoder] encodes into [target].
   void _syncDepth({
@@ -1009,7 +1024,10 @@ class _DepthPrepassEncoder {
 
     final instances = item.instanceTransforms;
     if (instances != null) {
-      final ranges = item.visibleInstanceRanges ?? item.instanceRowRanges;
+      // A kept draw takes every row, and its item set draws the rows it holds.
+      final ranges = currentDrawKept
+          ? item.instanceRowRanges
+          : item.visibleInstanceRanges ?? item.instanceRowRanges;
       final limit = instanceLimit == null || instanceLimit >= instances.length
           ? null
           : instanceLimit;
@@ -1044,7 +1062,7 @@ class _DepthPrepassEncoder {
               ? gpu.WindingOrder.counterClockwise
               : gpu.WindingOrder.clockwise,
         );
-        final sharedRanges = item.instanceRanges;
+        final sharedRanges = currentDrawKept ? null : item.instanceRanges;
         final draws = rows.drawCountOf(sharedRanges);
         for (var draw = 0; draw < draws; draw++) {
           final count = rows.bind(

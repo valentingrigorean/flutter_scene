@@ -1443,10 +1443,6 @@ base class SceneEncoder {
     );
     if (pipeline == null) return;
     if (item.instanceTransforms != null || item.sharedRows != null) {
-      // The kept draw takes every row, and the item set the rows it draws.
-      final visible = item.visibleInstanceRanges;
-      item.visibleInstanceRanges = null;
-      _keepsAllRows = true;
       _encodeInstanced(
         pipeline,
         geometry,
@@ -1455,8 +1451,6 @@ base class SceneEncoder {
         item.windingFor(geometry),
         1.0,
       );
-      _keepsAllRows = false;
-      item.visibleInstanceRanges = visible;
       return;
     }
     _encode(
@@ -1469,10 +1463,6 @@ base class SceneEncoder {
       item: item,
     );
   }
-
-  // Whether the draw being encoded is recorded for an item set, which draws
-  // the rows of shared records its ranges take in place of the recorded ones.
-  bool _keepsAllRows = false;
 
   /// Queues the item at [index] of [view], the view's one cull, as [submit]
   /// does, with the instance ranges that cull kept of it.
@@ -2498,7 +2488,10 @@ base class SceneEncoder {
     _setPrimitiveType(geometry.primitiveType);
 
     final nodeTransform = item.instancePackTransform;
-    final ranges = item.visibleInstanceRanges ?? item.instanceRowRanges;
+    // A kept draw takes every row, and its item set draws the rows it holds.
+    final ranges = currentDrawKept
+        ? item.instanceRowRanges
+        : item.visibleInstanceRanges ?? item.instanceRowRanges;
     final limit = instanceLimit == null || instanceLimit >= instances.length
         ? null
         : instanceLimit;
@@ -2547,7 +2540,7 @@ base class SceneEncoder {
             ? gpu.WindingOrder.counterClockwise
             : gpu.WindingOrder.clockwise,
       );
-      final sharedRanges = _keepsAllRows ? null : item.instanceRanges;
+      final sharedRanges = currentDrawKept ? null : item.instanceRanges;
       final draws = rows.drawCountOf(sharedRanges);
       for (var draw = 0; draw < draws; draw++) {
         final count = rows.bind(_renderPass, sharedRanges, draw, instanceSlot);
