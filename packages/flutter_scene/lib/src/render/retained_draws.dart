@@ -12,6 +12,7 @@ import 'package:flutter_scene/src/geometry/geometry.dart'
     show UnskinnedGeometry;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/material/engine_lighting.dart';
+import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/instance_records.dart';
 import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
@@ -497,7 +498,7 @@ abstract base class RetainedDraws {
     }
     forgetRecorded();
     heldInstanceBinding = null;
-    record(item);
+    recordKeptDraw(() => record(item));
     _leaveRun(item, kept);
     final key = joinsRuns ? _runKeyOf(item, kept, pipeline, state) : null;
     heldInstanceBinding = null;
@@ -626,7 +627,7 @@ abstract base class RetainedDraws {
   // Keeps the lone member of a run as its own item again.
   void _keepAlone(_Run run, RenderItem item, _Kept kept) {
     forgetRecorded();
-    record(item);
+    recordKeptDraw(() => record(item));
     final id = items.keep(
       recorder,
       passes: passesOf(item),
@@ -700,7 +701,7 @@ abstract base class RetainedDraws {
       at++;
     }
     forgetRecorded();
-    record(ref);
+    recordKeptDraw(() => record(ref!));
     final id = items.keep(
       recorder,
       id: run.id,
@@ -763,10 +764,19 @@ abstract base class RetainedDraws {
     (_pins[item] ??= []).add(unpin);
   }
 
-  // Whether [item] draws one mesh from buffers it holds, with no per-frame
-  // turns, skin, morph, instances, level of detail or draw selection.
+  // Whether [item] draws one mesh from buffers it holds, or one draw of a
+  // geometry that keeps its draw, with no per-frame turns, skin, morph,
+  // instances, level of detail or draw selection.
   static bool _holdsItsBuffers(RenderItem item) {
     final geometry = item.geometry;
+    if (geometry.keepsItsDraw) {
+      return item.instanceTransforms == null &&
+          item.sharedRows == null &&
+          item.instanceSource == null &&
+          item.spin == null &&
+          item.lod == null &&
+          !hasMeshDrawSelector(item);
+    }
     return geometry is UnskinnedGeometry &&
         geometry.morphTargets == null &&
         item.jointsTexture == null &&
