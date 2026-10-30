@@ -2442,8 +2442,9 @@ base class SceneEncoder {
           fade,
           sortBackToFrontFrom: sortBackToFrontFrom == null || !nodeSpace
               ? sortBackToFrontFrom
-              : Matrix4.inverted(item.drawTransform)
-                    .transformed3(sortBackToFrontFrom),
+              : Matrix4.inverted(
+                  item.drawTransform,
+                ).transformed3(sortBackToFrontFrom),
           instanceLimit: selection.instanceCount,
           fallback:
               debugFallback ?? _usesDebugFallback(item, material, geometry),
@@ -3640,6 +3641,14 @@ final class RetainedColorDraws extends RetainedDraws {
 /// bias, and it draws one face set: a double-sided draw that culls no face
 /// draws its back faces and then its front faces, two draws an item does not
 /// hold. A draw that reads scene color never reaches this path.
+///
+/// An instanced draw is kept as one item of the rows it draws, as the color
+/// pass keeps it. The backend draws a kept item's instances that carry their
+/// own bounds back to front as it orders the items, so a mesh whose own rows
+/// sort back to front ([RenderItem.sortTransparentInstances]) is kept only
+/// where it culls them ([RenderItem.cullInstances]), which gives each its
+/// bounds; rows the mesh shares or packs itself are drawn in their order, as
+/// [SceneEncoder] draws them.
 final class RetainedTranslucentDraws extends RetainedDraws {
   RetainedTranslucentDraws._(super.renderScene, super.items, this._appBlocks);
 
@@ -3717,6 +3726,9 @@ final class RetainedTranslucentDraws extends RetainedDraws {
   @override
   bool get joinsRuns => false;
 
+  @override
+  bool get keepsInstances => true;
+
   /// Brings the kept draws up to date with the scene for the color pass that
   /// [encoder] encodes into [target], hands [encoder] the draws it encodes
   /// this frame, and leaves the rest for [SceneEncoder.flushTranslucent].
@@ -3780,7 +3792,11 @@ final class RetainedTranslucentDraws extends RetainedDraws {
             material.renderCullMode == gpu.CullMode.none) ||
         !item.frustumCulled ||
         item.worldBounds == null ||
-        item.sortDepthBias != 0.0) {
+        item.sortDepthBias != 0.0 ||
+        (item.sharedRows == null &&
+            item.instanceTransforms != null &&
+            item.sortTransparentInstances &&
+            !item.cullInstances)) {
       return false;
     }
     final order = item.renderOrder;

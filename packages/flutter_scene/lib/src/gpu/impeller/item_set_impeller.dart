@@ -430,6 +430,7 @@ final class _ItemSet {
   // The instances of the kept item being drawn that its pass shows, and the
   // records they are compacted from on the way to the device.
   Int32List _shown = Int32List(64);
+  Float64List _depths = Float64List(64);
   Uint8List _staging = Uint8List(0);
 
   static int _aligned(int size, int alignment) =>
@@ -570,17 +571,18 @@ final class _ItemSet {
   }
 
   // The view of the records of [instances] that pass [index] shows, the
-  // first [length] of [shown]: every record when none is culled, else the
-  // subset compacted into the pass index's next turn, written only when it
-  // differs from the subset the pass index showed last.
+  // first [length] of [shown]: every record when none is culled and none is
+  // [ordered], else the subset compacted into the pass index's next turn,
+  // written only when it differs from the subset the pass index showed last.
   fg.BufferView _shownOf(
     _ItemInstances instances,
     int index,
     Int32List shown,
-    int length,
-  ) {
+    int length, {
+    required bool ordered,
+  }) {
     final count = instances.count;
-    if (length == count) return instances.all;
+    if (length == count && !ordered) return instances.all;
     final stride = instances.stride;
     final held = instances.shown[index] ??= _ShownInstances(
       _context.createDeviceBuffer(
@@ -659,7 +661,17 @@ final class _ItemSet {
           }
         }
         if (length == 0) continue;
-        shownView = _shownOf(instances, index, shown, length);
+        final ordered = each != null && sort != ItemSort.key;
+        if (ordered) {
+          _farthestInstancesFirst(
+            shown,
+            length,
+            each,
+            clip,
+            reversed: sort == ItemSort.farthestFirstReversedDepth,
+          );
+        }
+        shownView = _shownOf(instances, index, shown, length, ordered: ordered);
         instanceCount = length;
       }
       views ??= _viewsOf(index, viewBlocks);
@@ -868,23 +880,61 @@ final class _ItemSet {
     Float32List clip, {
     required bool reversed,
   }) {
-    final row = clip[3] == 0.0 && clip[7] == 0.0 && clip[11] == 0.0 ? 2 : 3;
-    final sign = row == 2 && reversed ? -1.0 : 1.0;
-    double depth(_ItemDraw draw) {
-      final b = draw.bounds;
-      if (b == null) return 0.0;
-      return sign *
-          (clip[row] * (b[0] + b[3]) * 0.5 +
-              clip[4 + row] * (b[1] + b[4]) * 0.5 +
-              clip[8 + row] * (b[2] + b[5]) * 0.5 +
-              clip[12 + row]);
-    }
-
     final draws = [
       for (final draw in _items.values)
-        if (draw.passes & mask != 0) (depth(draw), draw),
+        if (draw.passes & mask != 0)
+          (
+            draw.bounds == null
+                ? 0.0
+                : _depthOf(clip, draw.bounds!, 0, reversed: reversed),
+            draw,
+          ),
     ]..sort((a, b) => b.$1.compareTo(a.$1));
     return [for (final (_, draw) in draws) draw];
+  }
+
+  // Orders the first [length] instances of [shown] the farthest first by
+  // their [bounds], as [_farthestFirst] orders items; instances at one depth
+  // keep their order.
+  void _farthestInstancesFirst(
+    Int32List shown,
+    int length,
+    Float32List bounds,
+    Float32List clip, {
+    required bool reversed,
+  }) {
+    var depths = _depths;
+    final count = bounds.length ~/ 6;
+    if (depths.length < count) depths = _depths = Float64List(count * 2);
+    for (var at = 0; at < length; at++) {
+      final instance = shown[at];
+      depths[instance] = _depthOf(
+        clip,
+        bounds,
+        instance * 6,
+        reversed: reversed,
+      );
+    }
+    Int32List.sublistView(shown, 0, length).sort((a, b) {
+      final order = depths[b].compareTo(depths[a]);
+      return order != 0 ? order : a.compareTo(b);
+    });
+  }
+
+  // The depth [_farthestFirst] orders by of the bounds at [at] of [b].
+  static double _depthOf(
+    Float32List clip,
+    Float32List b,
+    int at, {
+    required bool reversed,
+  }) {
+    final row = clip[3] == 0.0 && clip[7] == 0.0 && clip[11] == 0.0 ? 2 : 3;
+    final sign = row == 2 && reversed ? -1.0 : 1.0;
+    return sign *
+        (clip[row] * (b[at] + b[at + 3]) * 0.5 +
+            clip[4 + row] * (b[at + 1] + b[at + 4]) * 0.5 +
+            clip[8 + row] * (b[at + 2] + b[at + 5]) * 0.5 +
+            clip[12 + row]);
   }
 
   // The six planes of the volume [clip] maps into clip space, each
