@@ -3455,11 +3455,13 @@ final class RetainedColorDraws extends RetainedDraws {
     // keep nothing while one is active.
     if (_pass._debugView != null) return false;
     final material = item.material;
-    // A draw that blends in the opaque phase sets its blend state there, and a
-    // display-referred one draws in a layer of its own.
+    // A draw that blends in the opaque phase sets its blend state there, a
+    // display-referred one draws in a layer of its own, and one that cuts
+    // itself out draws its coverage first.
     return material.isOpaque() &&
         !material.blendsInOpaquePass &&
         !material.displayReferred &&
+        !drawsCoverage(material, 1.0) &&
         material.colorRetainable &&
         !material.drawsDebugViews(_pass._lighting);
   }
@@ -3486,6 +3488,7 @@ final class RetainedColorDraws extends RetainedDraws {
       material.depthLayer,
       material.tieBreakRank,
       material.depthBias,
+      material.clipVolume,
       item.windingFor(item.geometry),
     );
   }
@@ -3763,6 +3766,7 @@ final class RetainedTranslucentDraws extends RetainedDraws {
       material.depthBias,
       material.translucentDepthWrite,
       material.depthCompare,
+      material.clipVolume,
       item.windingFor(item.geometry),
       item.renderOrder,
     );
