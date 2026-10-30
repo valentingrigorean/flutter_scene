@@ -5,8 +5,11 @@ library;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:vector_math/vector_math.dart';
+
 import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/light.dart';
+import 'package:flutter_scene/src/render/viewport_camera.dart';
 
 /// The view a frame that moves only the camera rebuilds its passes' view
 /// blocks for: the camera bound to the frame's viewport and depth raster, the
@@ -36,6 +39,10 @@ final class CameraReplayView {
 
   /// The frame clock in seconds, as the frame's passes read it.
   final double time;
+
+  /// The view-projection that lands geometry on the display image of the
+  /// view, as `RenderPassContext.displayViewTransform` gives it.
+  Matrix4 get displayViewTransform => rasterViewTransformOf(camera, dimensions);
 }
 
 /// The view blocks and clip matrix of one pass of a frame of kept items.
