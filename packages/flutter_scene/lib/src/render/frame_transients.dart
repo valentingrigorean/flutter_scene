@@ -328,10 +328,12 @@ class ImmediatePoolTransients implements FrameTransients {
 
   static gpu.DeviceBuffer _createBuffer(int length) {
     buffersCreated++;
-    return gpu.gpuContext.createDeviceBuffer(
+    final buffer = gpu.gpuContext.createDeviceBuffer(
       gpu.StorageMode.hostVisible,
       length,
     );
+    gpu.markTransientBuffer(buffer);
+    return buffer;
   }
 
   void _onBeforeSubmit(int id) {
@@ -590,6 +592,7 @@ class TransientArena implements FrameTransients {
         gpu.StorageMode.hostVisible,
         blockLengthInBytes,
       );
+      gpu.markTransientBuffer(device);
       block = _TransientBlock(
         device,
         ByteData(blockLengthInBytes),
@@ -721,6 +724,7 @@ class TransientArena implements FrameTransients {
       gpu.StorageMode.hostVisible,
       length,
     );
+    gpu.markTransientBuffer(device);
     return _TransientBlock(device, ByteData(length), length, oversize)
       ..lastUsed = _frame;
   }

@@ -724,6 +724,12 @@ class RenderItem {
   @internal
   final HeldItemInfo heldItemInfo = HeldItemInfo();
 
+  /// The fragment-stage `ItemFragInfo` block this item draws with (model
+  /// scale, light slice, LOD fade, directional reach), kept from frame to
+  /// frame so a still lit draw writes no fragment per-item bytes.
+  @internal
+  final HeldBlock heldFragItem = HeldBlock(kItemFragInfoFloats);
+
   /// Counts the changes of [worldTransform].
   @internal
   int worldTransformRevision = 0;
@@ -1819,12 +1825,36 @@ class RenderScene {
   int _treeOrigin = 0;
   int _unanchoredInTree = 0;
 
+  /// The items that joined, left (their `sceneSlot` is then negative) or
+  /// were refreshed by the pre-pass, oldest first, since [changeLogEpoch]
+  /// last moved. A reader keeps the length it read and reads the entries
+  /// past it on its next visit, so a frame that changes no item costs it
+  /// none. The log is dropped, moving the epoch, once it outgrows twice the
+  /// items, and a reader of an older epoch reads every item again.
+  @internal
+  final List<RenderItem> changeLog = [];
+
+  /// Counts the drops of [changeLog].
+  @internal
+  int changeLogEpoch = 0;
+
+  /// Appends [item] to [changeLog].
+  @internal
+  void logItemChange(RenderItem item) {
+    if (changeLog.length >= 2 * items.length + 1024) {
+      changeLog.clear();
+      changeLogEpoch++;
+    }
+    changeLog.add(item);
+  }
+
   void add(RenderItem item) {
     item.drawOrigin = drawOrigin;
     item.sceneSlot = items.length;
     items.add(item);
     _unplaced.add(item);
     _structureRevision++;
+    logItemChange(item);
   }
 
   void remove(RenderItem item) {
@@ -1836,8 +1866,10 @@ class RenderScene {
       last.sceneSlot = slot;
     }
     item.sceneSlot = -1;
+    logItemChange(item);
     item.heldInstanceRecord.release();
     item.heldItemInfo.release();
+    item.heldFragItem.release();
     _displace(item);
     if (item._countedStaticCaster) {
       item._countedStaticCaster = false;

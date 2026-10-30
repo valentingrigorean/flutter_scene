@@ -6,6 +6,8 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/hot_reload/hot_reloadable_fmat.dart';
 import 'package:flutter_scene/src/light.dart';
 import 'package:flutter_scene/src/material/engine_lighting.dart';
+import 'package:flutter_scene/src/render/view_info.dart'
+    show currentDrawFragItem;
 import 'package:flutter_scene/src/material/environment.dart';
 import 'package:flutter_scene/src/material/instance_attributes.dart';
 import 'package:flutter_scene/src/material/vertex_attributes.dart';
@@ -271,25 +273,63 @@ class PreprocessedMaterial extends Material implements HotReloadableFmat {
   );
   static final ByteData _fragInfoBytes = ByteData.sublistView(_fragInfoScratch);
 
-  /// Packs the engine lighting fields plus this draw's punctual-light slice
-  /// into the shared `FragInfo` scratch, then lets [adjustEngineLighting]
-  /// apply per-material overrides before the caller emplaces it.
+  static final Float32List _matInfoScratch = Float32List(
+    EngineLightingUniforms.matInfoFloatCount,
+  );
+
+  static final Float32List _itemFragScratch = Float32List(
+    EngineLightingUniforms.itemFragFloatCount,
+  );
+  static final ByteData _itemFragBytes = ByteData.sublistView(_itemFragScratch);
+
+  /// Packs the engine lighting fields of the `FragInfo` view block, then lets
+  /// [adjustEngineLighting] apply per-material overrides before the caller
+  /// emplaces it. The per-item punctual-light slice is in `ItemFragInfo` now
+  /// (see [_bindMatAndItemFrag]).
   void _packEngineFragInfo(Lighting lighting, EnvironmentMap env) {
     final fragInfo = _fragInfoScratch..fillRange(0, _fragInfoScratch.length, 0);
-    EngineLightingUniforms.packInto(
-      fragInfo,
-      lighting,
-      env,
-      nodeChannelMask: lightChannelMask,
-      modelScaleX: modelScaleX,
-      modelScaleY: modelScaleY,
-      modelScaleZ: modelScaleZ,
-    );
-    // radiance_blend.zw [162]/[163]: this item's punctual-light slice
-    // (count, offset) into the per-frame light-index buffer.
-    fragInfo[162] = lightListCount.toDouble();
-    fragInfo[163] = lightListOffset.toDouble();
+    EngineLightingUniforms.packInto(fragInfo, lighting, env);
     adjustEngineLighting(fragInfo);
+  }
+
+  /// Binds the held `MatInfo` (the shared material defaults — the standard
+  /// dielectric F0 and antialiasing a generated lit shader reads through
+  /// material_lighting.glsl) and the held `ItemFragInfo` (this draw's model
+  /// scale, light slice, LOD fade and directional reach), each only where the
+  /// shader declares the block. Held so a still draw rewrites neither.
+  void _bindMatAndItemFrag(
+    gpu.RenderPass pass,
+    gpu.Shader shader,
+    TransientWriter transientsBuffer,
+    Lighting lighting,
+  ) {
+    final matSlot = shader.cachedUniformSlot('MatInfo');
+    if (matSlot.sizeInBytes != null) {
+      final matInfo = _matInfoScratch..fillRange(0, _matInfoScratch.length, 0);
+      EngineLightingUniforms.packMatInfoDefaults(matInfo);
+      pass.bindUniform(matSlot, heldMatInfo.bound(matInfo));
+    }
+    final itemSlot = shader.cachedUniformSlot('ItemFragInfo');
+    if (itemSlot.sizeInBytes != null) {
+      final itemFrag = _itemFragScratch
+        ..fillRange(0, _itemFragScratch.length, 0);
+      EngineLightingUniforms.packItemFrag(
+        itemFrag,
+        lighting,
+        nodeChannelMask: lightChannelMask,
+        modelScaleX: modelScaleX,
+        modelScaleY: modelScaleY,
+        modelScaleZ: modelScaleZ,
+        fade: lodFade,
+        lightListCount: lightListCount,
+        lightListOffset: lightListOffset,
+      );
+      pass.bindUniform(
+        itemSlot,
+        currentDrawFragItem?.bound(itemFrag) ??
+            transientsBuffer.emplace(_itemFragBytes),
+      );
+    }
   }
 
   /// Hook for subclasses to override packed `FragInfo` lighting fields for
@@ -305,6 +345,16 @@ class PreprocessedMaterial extends Material implements HotReloadableFmat {
   @override
   @internal
   bool get usesPlanarReflection => _usesPlanarReflection;
+
+  @override
+  bool get colorRetainable =>
+      (shadingModel == FmatShadingModel.lit ||
+          shadingModel == FmatShadingModel.physical) &&
+      environment == null &&
+      clipVolume == null &&
+      !_usesPlanarReflection &&
+      !_sceneInputs.contains(RenderInput.opaqueSceneColor) &&
+      !_sceneInputs.contains(RenderInput.filteredSceneColor);
 
   @override
   double? get sceneColorSampleBoundsExpansion => _sceneColorReach;
@@ -463,6 +513,7 @@ class PreprocessedMaterial extends Material implements HotReloadableFmat {
         shader.cachedUniformSlot('FragInfo'),
         transientsBuffer.emplace(_fragInfoBytes),
       );
+      _bindMatAndItemFrag(pass, shader, transientsBuffer, lighting);
       // The catcher's generated fragment samples only the shadow atlas, the
       // occlusion chain, and (in its shadow variant) the punctual textures.
       // The radiance/BRDF/SH samplers and the fog block are compiled out of
@@ -483,6 +534,7 @@ class PreprocessedMaterial extends Material implements HotReloadableFmat {
           shader.cachedUniformSlot('FragInfo'),
           transientsBuffer.emplace(_fragInfoBytes),
         );
+        _bindMatAndItemFrag(pass, shader, transientsBuffer, lighting);
         if (_sceneInputs.isNotEmpty) {
           EngineLightingUniforms.bindSceneInputTextures(
             pass,

@@ -6,6 +6,8 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart';
 import 'package:flutter_scene/src/material/physical_material_variant.dart';
 import 'package:flutter_scene/src/material/engine_lighting.dart';
+import 'package:flutter_scene/src/render/view_info.dart'
+    show HeldBlock, currentDrawFragItem;
 import 'package:flutter_scene/src/material/environment.dart';
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/material/physical_material.dart';
@@ -1588,6 +1590,31 @@ class PhysicallyBasedMaterial extends Material {
   @override
   bool get translucentDepthWrite => transmission > 0.0;
 
+  @override
+  bool get colorRetainable {
+    if (environment != null || clipVolume != null) return false;
+    _ensurePreparedVariant();
+    final prepared = _preparedVariant;
+    if (prepared != null) return prepared.colorRetainable;
+    // The standard shader's own retainability: opaque (a blend or
+    // transmissive surface draws in the translucent phase or samples the
+    // transient scene color), with static UV flow (animated flow rewrites
+    // TextureTransforms every frame).
+    return transmission == 0.0 &&
+        alphaMode != AlphaMode.blend &&
+        _normalTextureFlow.x == 0.0 &&
+        _normalTextureFlow.y == 0.0;
+  }
+
+  @override
+  Iterable<HeldBlock> get heldFragmentBlocks {
+    // The prepared variant binds its own held blocks (and no
+    // TextureTransforms), so a kept delegated draw pins those.
+    final prepared = _preparedVariant;
+    if (prepared != null) return prepared.heldFragmentBlocks;
+    return [heldMatInfo, _heldTextureTransforms];
+  }
+
   /// Strength of geometric specular antialiasing.
   ///
   /// A normal map or high-curvature surface carries more normal detail than a
@@ -1637,83 +1664,98 @@ class PhysicallyBasedMaterial extends Material {
     final shader = fragmentShaderForLighting(lighting);
     final env = drawEnvironment(lighting);
 
-    // FragInfo std140 layout (624 bytes / 156 floats). EngineLightingUniforms
-    // packs the shared engine lighting, image-based-lighting, and shadow
-    // fields (identical for every lit material); this material fills only its
-    // own, disjoint fields:
-    //   [0..3]    vec4  color
-    //   [4..7]    vec4  emissive_factor
-    //   [120]     float vertex_color_weight
-    //   [121]     float metallic_factor
-    //   [122]     float roughness_factor
-    //   [123]     float has_normal_map
-    //   [124]     float normal_scale
-    //   [125]     float occlusion_strength
-    //   [132]     float alpha_mode (0 opaque, 1 mask, 2 blend)
-    //   [133]     float alpha_cutoff
-    //   [138]     float specular_aa_variance
-    //   [139]     float specular_aa_threshold
-    // A shared scratch (zeroed each bind, matching a fresh allocation's
-    // unwritten slots) instead of a per-draw allocation; emplace below copies
-    // the bytes out immediately.
+    // FragInfo is the pass's view/lighting block now: the shared engine
+    // lighting, image-based-lighting and shadow fields, identical for every
+    // draw of the pass. On the encoded path it is
+    // emplaced per draw; for a kept item the color pass binds it as a view
+    // block (RetainedColorDraws), so a still draw writes none of it.
     final fragInfo = _fragInfoScratch..fillRange(0, _fragInfoScratch.length, 0);
-    EngineLightingUniforms.packInto(
-      fragInfo,
-      lighting,
-      env,
-      nodeChannelMask: lightChannelMask,
-      modelScaleX: modelScaleX,
-      modelScaleY: modelScaleY,
-      modelScaleZ: modelScaleZ,
+    EngineLightingUniforms.packInto(fragInfo, lighting, env);
+    pass.bindUniform(
+      shader.cachedUniformSlot("FragInfo"),
+      transientsBuffer.emplace(_fragInfoBytes),
     );
-    fragInfo[0] = baseColorFactor.r;
-    fragInfo[1] = baseColorFactor.g;
-    fragInfo[2] = baseColorFactor.b;
-    fragInfo[3] = baseColorFactor.a;
-    fragInfo[4] = emissiveFactor.r;
-    fragInfo[5] = emissiveFactor.g;
-    fragInfo[6] = emissiveFactor.b;
-    fragInfo[7] = emissiveStrength;
-    fragInfo[120] = vertexColorWeight;
-    fragInfo[121] = metallicFactor;
-    fragInfo[122] = roughnessFactor;
-    fragInfo[123] = normalTexture != null ? 1.0 : 0.0;
-    fragInfo[124] = normalScale;
+
+    // MatInfo: this material's own constants, held so a still draw rewrites
+    // none of them.
+    final matInfo = _matInfoScratch..fillRange(0, _matInfoScratch.length, 0);
+    EngineLightingUniforms.packMatInfoDefaults(matInfo);
+    matInfo[EngineLightingUniforms.matColorIndex] = baseColorFactor.r;
+    matInfo[EngineLightingUniforms.matColorIndex + 1] = baseColorFactor.g;
+    matInfo[EngineLightingUniforms.matColorIndex + 2] = baseColorFactor.b;
+    matInfo[EngineLightingUniforms.matColorIndex + 3] = baseColorFactor.a;
+    matInfo[EngineLightingUniforms.matEmissiveFactorIndex] = emissiveFactor.r;
+    matInfo[EngineLightingUniforms.matEmissiveFactorIndex + 1] =
+        emissiveFactor.g;
+    matInfo[EngineLightingUniforms.matEmissiveFactorIndex + 2] =
+        emissiveFactor.b;
+    matInfo[EngineLightingUniforms.matEmissiveFactorIndex + 3] =
+        emissiveStrength;
+    matInfo[EngineLightingUniforms.matVertexColorWeightIndex] =
+        vertexColorWeight;
+    matInfo[EngineLightingUniforms.matMetallicFactorIndex] = metallicFactor;
+    matInfo[EngineLightingUniforms.matRoughnessFactorIndex] = roughnessFactor;
+    matInfo[EngineLightingUniforms.matHasNormalMapIndex] = normalTexture != null
+        ? 1.0
+        : 0.0;
+    matInfo[EngineLightingUniforms.matNormalScaleIndex] = normalScale;
     // Without a texture the occlusion is 1 at any strength; 0 lets the shader
     // skip the read.
-    fragInfo[125] = occlusionTexture != null ? occlusionStrength : 0.0;
-    fragInfo[132] = alphaMode.index.toDouble();
-    fragInfo[133] = alphaCutoff;
-    fragInfo[138] = specularAntiAliasingVariance;
-    fragInfo[139] = specularAntiAliasingThreshold;
-    // dielectric_f0 [172..174]: packInto wrote the plain 0.04; a scalar ior,
-    // specular factor, or specular color replaces it with their product so
-    // the draw stays on the standard shader.
+    matInfo[EngineLightingUniforms.matOcclusionStrengthIndex] =
+        occlusionTexture != null ? occlusionStrength : 0.0;
+    matInfo[EngineLightingUniforms.matAlphaModeIndex] = alphaMode.index
+        .toDouble();
+    matInfo[EngineLightingUniforms.matAlphaCutoffIndex] = alphaCutoff;
+    matInfo[EngineLightingUniforms.matSpecularAaVarianceIndex] =
+        specularAntiAliasingVariance;
+    matInfo[EngineLightingUniforms.matSpecularAaThresholdIndex] =
+        specularAntiAliasingThreshold;
+    // A scalar ior, specular factor or specular color replaces the default
+    // 0.04 dielectric F0 with their product so the draw stays on the standard
+    // shader.
     if (_hasScalarSpecularConfiguration) {
       final f0 = dielectricSpecularF0(
         ior: ior,
         specular: specular,
         specularColor: specularColor,
       );
-      fragInfo[EngineLightingUniforms.dielectricF0Index] = f0.x;
-      fragInfo[EngineLightingUniforms.dielectricF0Index + 1] = f0.y;
-      fragInfo[EngineLightingUniforms.dielectricF0Index + 2] = f0.z;
+      matInfo[EngineLightingUniforms.matDielectricF0Index] = f0.x;
+      matInfo[EngineLightingUniforms.matDielectricF0Index + 1] = f0.y;
+      matInfo[EngineLightingUniforms.matDielectricF0Index + 2] = f0.z;
     }
-    fragInfo[EngineLightingUniforms.fadeIndex] = lodFade;
-    // radiance_blend.zw [162]/[163]: this item's punctual-light slice
-    // (count, offset) into the per-frame light-index buffer.
-    fragInfo[162] = lightListCount.toDouble();
-    fragInfo[163] = lightListOffset.toDouble();
     pass.bindUniform(
-      shader.cachedUniformSlot("FragInfo"),
-      transientsBuffer.emplace(_fragInfoBytes),
+      shader.cachedUniformSlot('MatInfo'),
+      heldMatInfo.bound(matInfo),
     );
 
+    // ItemFragInfo: this draw's per-item values, held with the render item.
+    final itemFrag = _itemFragScratch..fillRange(0, _itemFragScratch.length, 0);
+    EngineLightingUniforms.packItemFrag(
+      itemFrag,
+      lighting,
+      nodeChannelMask: lightChannelMask,
+      modelScaleX: modelScaleX,
+      modelScaleY: modelScaleY,
+      modelScaleZ: modelScaleZ,
+      fade: lodFade,
+      lightListCount: lightListCount,
+      lightListOffset: lightListOffset,
+    );
+    pass.bindUniform(
+      shader.cachedUniformSlot('ItemFragInfo'),
+      currentDrawFragItem?.bound(itemFrag) ??
+          transientsBuffer.emplace(_itemFragBytes),
+    );
+
+    // Held per material so a still draw rewrites none of it. Animated UV flow
+    // changes the bytes every frame; such a material is not kept
+    // ([colorRetainable] is false), so the held slot churn stays off the kept
+    // path.
     final textureTransforms = _textureTransformsScratch;
     writeTextureTransforms(textureTransforms, currentAnimationTime);
     pass.bindUniform(
       shader.cachedUniformSlot('TextureTransforms'),
-      transientsBuffer.emplace(scratchBytesOf(textureTransforms)),
+      _heldTextureTransforms.bound(textureTransforms),
     );
 
     _bindSlot(pass, shader, 'base_color_texture', baseColorTexture);
@@ -1775,6 +1817,17 @@ class PhysicallyBasedMaterial extends Material {
     EngineLightingUniforms.fragInfoFloatCount,
   );
   static final ByteData _fragInfoBytes = ByteData.sublistView(_fragInfoScratch);
+
+  static final Float32List _matInfoScratch = Float32List(
+    EngineLightingUniforms.matInfoFloatCount,
+  );
+
+  static final Float32List _itemFragScratch = Float32List(
+    EngineLightingUniforms.itemFragFloatCount,
+  );
+  static final ByteData _itemFragBytes = ByteData.sublistView(_itemFragScratch);
+
+  final HeldBlock _heldTextureTransforms = HeldBlock(44);
 
   static final Float32List _textureTransformsScratch = Float32List(44);
 

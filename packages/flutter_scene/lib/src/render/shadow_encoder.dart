@@ -1,3 +1,4 @@
+import 'package:meta/meta.dart' show internal;
 import 'package:flutter_scene/src/render/view_info.dart';
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
@@ -318,6 +319,14 @@ class ShadowEncoder {
   /// first draw. `clearBindings` leaves the pipeline in place, so
   /// consecutive casters that share one only bind it once.
   gpu.RenderPipeline? _boundPipeline;
+
+  /// Forgets the bindings the encoder holds on its pass, so the next draw
+  /// binds the full set it reads.
+  void forgetBindings() {
+    _renderPass.clearBindings();
+    _boundPipeline = null;
+  }
+
   final List<RenderItem> _records = [];
 
   /// Records [item]'s depth, unless it is hidden, translucent (no shadow),
@@ -374,6 +383,11 @@ class ShadowEncoder {
     }
     _records.clear();
   }
+
+  /// Encodes [item]'s caster draw with no frustum or caster test, for a
+  /// recorder whose draws a backend keeps (`RetainedShadowCasters`).
+  @internal
+  void encodeItem(RenderItem item) => _encode(item);
 
   void _encode(RenderItem item) {
     final geometry = item.geometry;

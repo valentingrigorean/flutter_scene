@@ -91,6 +91,8 @@ part 'context.dart';
 part 'encoded_image.dart';
 part 'host.dart';
 part 'image_surface.dart';
+part 'item_set.dart';
+part 'item_set_impeller.dart';
 part 'present.dart';
 part 'render_pass.dart';
 part 'shader.dart';

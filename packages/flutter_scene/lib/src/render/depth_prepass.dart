@@ -11,6 +11,8 @@ import 'package:flutter_scene/src/render/instance_records.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/shared_instance_rows.dart';
 import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
+import 'package:flutter_scene/src/render/retained_draws.dart';
+import 'package:flutter_scene/src/draw_revision.dart';
 
 import 'dart:ui' as ui;
 
@@ -209,7 +211,16 @@ class DepthPrepass extends RenderGraphPass {
       primaryView: _primaryView,
     );
     final visible = _visibleItems;
-    if (visible != null &&
+    final retained = _primaryView && !_writeNormals
+        ? RetainedDepthDraws.of(_renderScene)
+        : null;
+    if (retained != null) {
+      retained._syncDepth(target: target, encoder: encoder);
+      retained._draw(renderPass, encoder);
+      for (final item in retained.encoded) {
+        encoder.submit(item);
+      }
+    } else if (visible != null &&
         visible.cellsCulled &&
         visible.isCurrentFor(_renderScene)) {
       for (var i = 0; i < visible.items.length; i++) {
@@ -562,6 +573,141 @@ final gpu.Shader _maskedDepthNormalShader =
 /// (so unskinned and skinned geometry are both covered) paired with the
 /// `LinearDepthFragment` shader, and supplies the camera view-projection in
 /// place of the light-space matrix. Translucent objects do not write depth.
+/// The depth prepass draws of a [RenderScene]'s primary view that the
+/// backend keeps as render items ([RetainedDraws]), so a frame that moves
+/// only the camera encodes none of them. The prepass draws them natively,
+/// culled by the camera, with the view's `ViewInfo` and `DepthInfo` as view
+/// blocks, and encodes [encoded]. The normal-writing prepass binds a block
+/// per material and keeps none.
+final class RetainedDepthDraws extends RetainedDraws {
+  RetainedDepthDraws._(super.renderScene, super.items);
+
+  static final Expando<RetainedDepthDraws> _byScene = Expando(
+    'retained depth draws',
+  );
+
+  /// The kept draws of [renderScene], or null where the backend keeps no
+  /// items.
+  static RetainedDepthDraws? of(RenderScene renderScene) {
+    final held = _byScene[renderScene];
+    if (held != null && held.generation == gpu.gpuContextGeneration) {
+      return held;
+    }
+    held?.dispose();
+    final items = gpu.gpuContext.createItemSet(
+      viewBlockNames: const ['ViewInfo', 'DepthInfo'],
+      viewBlockLength: kViewInfoFloats * Float32List.bytesPerElement,
+    );
+    if (items == null) return null;
+    return _byScene[renderScene] = RetainedDepthDraws._(renderScene, items);
+  }
+
+  late _DepthPrepassEncoder _pass;
+  _DepthPrepassEncoder? _recording;
+
+  @override
+  int get passes => 1;
+
+  /// Brings the kept draws up to date with the scene for the prepass that
+  /// [encoder] encodes into [target].
+  void _syncDepth({
+    required gpu.RenderTarget target,
+    required _DepthPrepassEncoder encoder,
+  }) {
+    _pass = encoder;
+    sync(
+      target: target,
+      key: (encoder._layerMask, encoder._raster, sceneDrawRevision),
+    );
+  }
+
+  @override
+  void beginSync() => _recording = null;
+
+  @override
+  void forgetRecorded() => _recording?._forgetBindings();
+
+  @override
+  bool draws(RenderItem item) =>
+      depthPrepassDraws(item, layerMask: _pass._layerMask);
+
+  @override
+  bool keepable(RenderItem item) {
+    final draw = depthPrepassDraw(
+      item.geometry,
+      item.material,
+      writeNormals: false,
+    );
+    return draw.positionOnly &&
+        !draw.masked &&
+        !draw.surface &&
+        draw.materialVertex == null;
+  }
+
+  @override
+  Object? pipelineOf(RenderItem item) {
+    final inputs = depthPrepassPipelineInputs(item, writeNormals: false);
+    return cachedRenderPipeline(
+      inputs.vertexShader,
+      inputs.fragmentShader,
+      inputs.vertexLayout,
+    );
+  }
+
+  @override
+  Object? stateOf(RenderItem item) {
+    final material = item.material;
+    return (
+      material.renderCullMode,
+      material.depthLayer,
+      material.tieBreakRank,
+      material.depthBias,
+    );
+  }
+
+  @override
+  void record(RenderItem item) {
+    final pass = _pass;
+    final encoder = _recording ??= _DepthPrepassEncoder(
+      recorder,
+      pass._transientsBuffer,
+      pass._cameraTransform,
+      pass.frustum,
+      pass._raster,
+      pass._cameraPosition,
+      pass._cameraForward,
+      pass._layerMask,
+      const [],
+      writeNormals: false,
+      cameraRight: Vector3.zero(),
+      cameraUp: Vector3.zero(),
+      primaryView: true,
+    );
+    transientDrawKey = item;
+    encoder._encode(item);
+    transientDrawKey = null;
+  }
+
+  /// Draws the kept draws into [pass], the render pass [encoder] encodes.
+  void _draw(gpu.RenderPass pass, _DepthPrepassEncoder encoder) {
+    currentViewForward = null;
+    setCurrentDrawDepthOffset(encoder._raster, 0, 0);
+    final view = viewInfoBytesOf(
+      encoder._cameraTransform,
+      encoder._cameraPosition,
+    );
+    items.draw(
+      pass,
+      0,
+      viewBlocks: [view, ByteData.sublistView(encoder._depthInfo)],
+      clip: encoder._cameraTransform.storage,
+    );
+    // The kept items bound their own pipeline and blocks on the pass, so what
+    // the encoder holds of its bindings no longer stands.
+    encoder._forgetBindings();
+  }
+}
+
 class _DepthPrepassEncoder {
   _DepthPrepassEncoder(
     this._renderPass,
@@ -652,6 +798,11 @@ class _DepthPrepassEncoder {
   /// consecutive objects that share one only bind it once.
   gpu.RenderPipeline? _boundPipeline;
   final List<RenderItem> _records = [];
+
+  void _forgetBindings() {
+    _renderPass.clearBindings();
+    _boundPipeline = null;
+  }
 
   /// Records [item]'s depth, unless it is hidden, rejected by its layer
   /// mask, or outside this encoder's set (prepass-participating items

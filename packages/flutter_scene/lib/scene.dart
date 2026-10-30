@@ -314,6 +314,8 @@ export 'src/render/render_scene.dart'
         currentDrawAnchor,
         currentDrawOrigin,
         currentDrawWorldTransform;
+export 'src/render/view_info.dart'
+    show HeldBlock, kMatInfoFloats, kItemFragInfoFloats;
 export 'src/render/shared_instance_rows.dart'
     show
         InstanceRecordFrame,

@@ -41,6 +41,14 @@ final class BufferView {
 }
 
 /// A region of GPU memory.
+final Expando<bool> _transientBuffers = Expando('transient buffer');
+
+/// States that [buffer] holds a frame's transient data, rewritten for other
+/// draws in later frames, so a draw that reads it is never kept in an
+/// [ItemSet].
+void markTransientBuffer(DeviceBuffer buffer) =>
+    _transientBuffers[buffer] = true;
+
 final class DeviceBuffer {
   DeviceBuffer._impeller(fg.DeviceBuffer this._impeller) : _backend = null;
   DeviceBuffer._backend(GpuBackendDeviceBuffer this._backend)

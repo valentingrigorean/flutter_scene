@@ -507,25 +507,45 @@ class ScenePass extends RenderGraphPass {
         encoder.submit(item);
       }
     } else {
-      // The view culled once to decide its passes; a pass that changed the
-      // items or their bounds since then leaves that cull stale.
-      final int rejected;
-      if (visibleItems != null && visibleItems.isCurrentFor(_renderScene)) {
-        for (var i = 0; i < visibleItems.items.length; i++) {
-          encoder.submitKept(visibleItems, i);
+      // Keep the still opaque draws as backend items on the plain primary
+      // path, so a camera-only frame encodes none of them; the rest encode.
+      // Only when nothing reshapes the opaque phase (no splits, capture, debug
+      // view or extra culling planes the item set's camera clip cannot apply).
+      final retained =
+          _primaryView &&
+              !splits &&
+              !capture &&
+              _debugView == null &&
+              _cullingPlanes.isEmpty
+          ? RetainedColorDraws.of(_renderScene)
+          : null;
+      if (retained != null) {
+        retained.syncColor(target: target, encoder: encoder);
+        retained.drawKept(renderPass, encoder);
+        for (final item in retained.encoded) {
+          encoder.submit(item);
         }
-        rejected = visibleItems.rejected;
       } else {
-        rejected = _renderScene.cull(
-          encoder.frustum,
-          encoder.submit,
-          additionalPlanes: _cullingPlanes,
-        );
+        // The view culled once to decide its passes; a pass that changed the
+        // items or their bounds since then leaves that cull stale.
+        final int rejected;
+        if (visibleItems != null && visibleItems.isCurrentFor(_renderScene)) {
+          for (var i = 0; i < visibleItems.items.length; i++) {
+            encoder.submitKept(visibleItems, i);
+          }
+          rejected = visibleItems.rejected;
+        } else {
+          rejected = _renderScene.cull(
+            encoder.frustum,
+            encoder.submit,
+            additionalPlanes: _cullingPlanes,
+          );
+        }
+        // A rejected subtree never reaches `encoder.submit`, so nothing else
+        // counts the items in it.
+        activeRenderCounters.submitted += rejected;
+        activeRenderCounters.culled += rejected;
       }
-      // A rejected subtree never reaches `encoder.submit`, so nothing else
-      // counts the items in it.
-      activeRenderCounters.submitted += rejected;
-      activeRenderCounters.culled += rejected;
     }
     cullWatch?.stop();
 

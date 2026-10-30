@@ -68,6 +68,11 @@ class RenderCounters {
   /// Zero on a frame that moves only the camera.
   int itemInfoBytesWritten = 0;
 
+  /// Draws recorded into render items the backend keeps, by the shadow
+  /// cascades and the depth prepass: one per draw that is first kept or
+  /// that changed. Zero on a frame that moves only the camera or the light.
+  int drawsKept = 0;
+
   /// Nodes the scene pre-pass visited: one per node it ticked and one per
   /// node whose render items it refreshed. Zero on a frame that changes no
   /// node while no node ticks.
@@ -102,6 +107,7 @@ class RenderCounters {
     instanceBytesUploaded = 0;
     instanceBytesReplayed = 0;
     itemInfoBytesWritten = 0;
+    drawsKept = 0;
     prePassNodes = 0;
     materialSummaryItems = 0;
     sceneCulls = 0;
@@ -122,6 +128,7 @@ class RenderCounters {
     instanceBytesUploaded = other.instanceBytesUploaded;
     instanceBytesReplayed = other.instanceBytesReplayed;
     itemInfoBytesWritten = other.itemInfoBytesWritten;
+    drawsKept = other.drawsKept;
     prePassNodes = other.prePassNodes;
     materialSummaryItems = other.materialSummaryItems;
     sceneCulls = other.sceneCulls;
@@ -146,6 +153,7 @@ class RenderCounters {
         now.instanceBytesReplayed - start.instanceBytesReplayed;
     itemInfoBytesWritten =
         now.itemInfoBytesWritten - start.itemInfoBytesWritten;
+    drawsKept = now.drawsKept - start.drawsKept;
     prePassNodes = now.prePassNodes - start.prePassNodes;
     materialSummaryItems =
         now.materialSummaryItems - start.materialSummaryItems;
@@ -167,6 +175,7 @@ class RenderCounters {
     'instanceBytesUploaded': instanceBytesUploaded,
     'instanceBytesReplayed': instanceBytesReplayed,
     'itemInfoBytesWritten': itemInfoBytesWritten,
+    'drawsKept': drawsKept,
     'prePassNodes': prePassNodes,
     'materialSummaryItems': materialSummaryItems,
     'sceneCulls': sceneCulls,
