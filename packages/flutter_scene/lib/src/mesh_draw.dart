@@ -34,8 +34,9 @@ final class MeshDrawContext {
   /// camera, so a render texture shows the shadows the screen view sees.
   Vector3 cameraPosition;
 
-  /// Whether the pass renders for a screen view's camera. False for texture
-  /// views, reflection captures, and shadow maps.
+  /// Whether the pass renders for the view a surface shows: a screen view, or
+  /// a texture view whose target presents. False for other texture views,
+  /// reflection captures, and shadow maps.
   bool primaryView;
 }
 
