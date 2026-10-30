@@ -1014,6 +1014,11 @@ base class Node implements SceneGraph, PrePassNode {
     }
   }
 
+  /// Refreshes this node's render items on the next frame, for a material
+  /// that changed what its draws bind in place ([Material.keptRevision]), so
+  /// a pass that keeps those draws as backend items records them again.
+  void markMaterialsChanged() => _markRenderChanged();
+
   /// Tells the pre-pass that this node's components or mesh changed what it
   /// needs on a frame. Called by a component that swaps its mesh.
   @internal

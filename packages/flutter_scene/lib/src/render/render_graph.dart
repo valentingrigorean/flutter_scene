@@ -303,6 +303,10 @@ class TransientTexturePool {
         enableShaderReadUsage: descriptor.enableShaderReadUsage,
       );
       statesExternalBytes(texture, statedRenderTargetBytes(texture));
+      // A ring of more than one entry alternates handles across frames, so a
+      // draw that samples it cannot be kept; a single-entry ring (ordered
+      // attachment reuse) hands out a stable handle a kept draw may sample.
+      if (ring.length > 1) gpu.markTransientTexture(texture);
       ring[slot] = texture;
     }
     return texture;

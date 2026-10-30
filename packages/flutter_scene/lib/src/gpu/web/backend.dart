@@ -133,6 +133,14 @@ GpuContext get flutterGpuContext => gpuContext;
 GpuHost get gpuHost => _backend.host;
 
 abstract base class GpuContext {
+  /// Render items kept from frame to frame; the web keeps none and encodes
+  /// every draw each frame.
+  ItemSet? createItemSet({
+    required Map<String, int> viewBlocks,
+    required int viewBlockLength,
+    List<String> viewTextureNames = const [],
+  }) => null;
+
   PixelFormat get defaultColorFormat;
   PixelFormat get defaultStencilFormat;
   PixelFormat get defaultDepthStencilFormat;
@@ -298,6 +306,37 @@ abstract base class CommandBuffer {
   /// Copies tightly packed texel data from [source] into [destination].
   void copyBufferToTexture(BufferView source, TextureRegion destination);
   void submit({CompletionCallback? completionCallback});
+}
+
+/// States that [buffer] holds a frame's transient data; the web keeps no
+/// items that could read it.
+void markTransientBuffer(DeviceBuffer buffer) {}
+
+/// States that [texture] is reallocated across frames; the web keeps no items
+/// that could sample it.
+void markTransientTexture(Texture texture) {}
+
+/// Render items a backend keeps and draws inside a render pass; the web
+/// makes none ([GpuContext.createItemSet]).
+abstract final class ItemSet {
+  RenderPass recorder(RenderTarget target);
+  int? keep(
+    RenderPass recorder, {
+    int id = 0,
+    required int passes,
+    Float32List? bounds,
+    int? order,
+  });
+  void remove(int id);
+  void draw(
+    RenderPass pass,
+    int index, {
+    required List<ByteData> viewBlocks,
+    required Float32List clip,
+    List<Texture> viewTextures = const [],
+    ItemSort sort = ItemSort.key,
+  });
+  void dispose();
 }
 
 abstract base class RenderPass {

@@ -10,3 +10,4 @@ export 'shared/device_local.dart';
 export 'shared/encoded_image_types.dart';
 export 'shared/glsl_transpile.dart';
 export 'shared/gpu_capabilities.dart';
+export 'shared/item_sort.dart';

@@ -94,7 +94,8 @@ class OpaqueSplit {
 /// [ShadowPass] ran earlier this frame its shadow map is picked up from
 /// the blackboard and threaded into the per-draw [Lighting].
 class ScenePass extends RenderGraphPass {
-  // Whether this renders a screen view's camera, for [MeshDrawSelector]s.
+  // Whether this renders the view a surface shows, for [MeshDrawSelector]s
+  // and the kept color draws.
   final bool _primaryView;
 
   static final RenderProfileAccumulator _profile = RenderProfileAccumulator();
@@ -507,25 +508,57 @@ class ScenePass extends RenderGraphPass {
         encoder.submit(item);
       }
     } else {
-      // The view culled once to decide its passes; a pass that changed the
-      // items or their bounds since then leaves that cull stale.
-      final int rejected;
-      if (visibleItems != null && visibleItems.isCurrentFor(_renderScene)) {
-        for (var i = 0; i < visibleItems.items.length; i++) {
-          encoder.submitKept(visibleItems, i);
-        }
-        rejected = visibleItems.rejected;
-      } else {
-        rejected = _renderScene.cull(
-          encoder.frustum,
-          encoder.submit,
-          additionalPlanes: _cullingPlanes,
+      // Keep the still opaque draws as backend items on the plain primary
+      // path, so a camera-only frame encodes none of them; the rest encode.
+      // Only when nothing reshapes the opaque phase (no splits, capture, debug
+      // view or extra culling planes the item set's camera clip cannot apply).
+      final retained =
+          _primaryView &&
+              !splits &&
+              !capture &&
+              _debugView == null &&
+              _cullingPlanes.isEmpty
+          ? RetainedColorDraws.of(_renderScene)
+          : null;
+      if (retained != null) {
+        // The translucent draws keep too where the backend can order them
+        // back to front by depth, which an orthographic view's clip-space w
+        // does not tell; the encoder draws each render order's kept draws in
+        // its translucent phase.
+        final translucent = projection.orthographic
+            ? null
+            : RetainedTranslucentDraws.of(_renderScene);
+        retained.syncColor(
+          target: target,
+          encoder: encoder,
+          keepsTranslucent: translucent != null,
         );
+        retained.drawKept(renderPass, encoder);
+        for (final item in retained.encoded) {
+          encoder.submit(item);
+        }
+        translucent?.syncTranslucent(target: target, encoder: encoder);
+      } else {
+        // The view culled once to decide its passes; a pass that changed the
+        // items or their bounds since then leaves that cull stale.
+        final int rejected;
+        if (visibleItems != null && visibleItems.isCurrentFor(_renderScene)) {
+          for (var i = 0; i < visibleItems.items.length; i++) {
+            encoder.submitKept(visibleItems, i);
+          }
+          rejected = visibleItems.rejected;
+        } else {
+          rejected = _renderScene.cull(
+            encoder.frustum,
+            encoder.submit,
+            additionalPlanes: _cullingPlanes,
+          );
+        }
+        // A rejected subtree never reaches `encoder.submit`, so nothing else
+        // counts the items in it.
+        activeRenderCounters.submitted += rejected;
+        activeRenderCounters.culled += rejected;
       }
-      // A rejected subtree never reaches `encoder.submit`, so nothing else
-      // counts the items in it.
-      activeRenderCounters.submitted += rejected;
-      activeRenderCounters.culled += rejected;
     }
     cullWatch?.stop();
 

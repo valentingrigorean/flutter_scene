@@ -189,6 +189,7 @@ class MeshComponent extends Component {
   @internal
   void refreshRenderItems({bool uploadSkin = true}) {
     if (_renderItems.isEmpty) return;
+    _logRenderItems();
     // The debug view override is a plain per-frame copy; it never touches the
     // shadow or bounds state below, and the walk is skipped while no node
     // anywhere sets one.
@@ -374,10 +375,19 @@ class MeshComponent extends Component {
     _worldTransformVersion = worldTransformVersion;
   }
 
+  void _logRenderItems() {
+    final renderScene = node.internalRenderScene;
+    if (renderScene == null) return;
+    for (final item in _renderItems) {
+      renderScene.logItemChange(item);
+    }
+  }
+
   /// Keeps this component's render items out of the render passes.
   /// Called by the scene pre-pass while the owning node is hidden.
   @internal
   void hideRenderItems() {
+    _logRenderItems();
     for (final item in _renderItems) {
       if (item.visible && item.shadowStatic && item.castsShadows) {
         node.internalRenderScene?.markStaticShadowDirty(item);
