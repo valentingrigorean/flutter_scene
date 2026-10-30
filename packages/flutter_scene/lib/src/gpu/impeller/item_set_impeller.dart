@@ -225,6 +225,13 @@ final class _ItemDraw {
   int? order;
   Float32List? bounds;
   _ItemInstances? instances;
+
+  // What a pass sorts runs of its items that share an order and blend
+  // nothing by, so items that share a pipeline and then textures draw next
+  // to each other and skip binding them again.
+  int pipelineKey = 0;
+  List<int> textureKeys = const [];
+  bool get blends => state.blends?.contains(true) ?? false;
 }
 
 // A kept item's instances ([ItemInstances]): every record on the device, and
@@ -394,11 +401,27 @@ final class _ItemSet {
   // The items in the order a pass draws them, null after a keep or a remove.
   List<_ItemDraw>? _drawOrder;
 
+  // A key per pipeline and texture an item binds, in the order they were
+  // first kept, which sorts a pass's unordered items.
+  final Expando<int> _keys = Expando();
+  int _lastKey = 0;
+
+  // What a [draw] last bound on its pass since it last cleared the bindings,
+  // which hold on a flutter_gpu pass from draw to draw: a bind of the same
+  // value again is skipped.
+  final List<fg.BufferView?> _boundVertices = List.filled(16, null);
+  final Map<fg.UniformSlot, fg.BufferView> _boundUniforms = {};
+  final Map<fg.UniformSlot, (fg.Texture, SamplerOptions)> _boundTextures = {};
+
   // One buffer per pass index, holding [_itemViewTurns] turns of the pass's
   // view blocks, and the views onto each turn.
   final Map<int, fg.DeviceBuffer> _blocks = {};
   final Map<int, List<List<fg.BufferView>>> _blockViews = {};
   final Map<int, int> _turns = {};
+
+  // The view blocks each pass index last wrote, so a [draw] given the same
+  // ones again reads the turn that holds them and writes nothing.
+  final Map<int, List<Uint8List>> _written = {};
 
   final Float32List _planes = Float32List(24);
 
@@ -430,7 +453,11 @@ final class _ItemSet {
       ..passes = passes
       ..order = order
       ..bounds = bounds == null ? null : Float32List.fromList(bounds)
-      ..instances = instances == null ? null : _instancesOf(instances);
+      ..instances = instances == null ? null : _instancesOf(instances)
+      ..pipelineKey = _keyOf(draw.pipeline)
+      ..textureKeys = [
+        for (final (_, texture, _) in draw.textures) _keyOf(texture),
+      ];
     final at = id != 0 ? id : ++_lastId;
     _items[at] = draw;
     return at;
@@ -440,13 +467,62 @@ final class _ItemSet {
     if (_items.remove(id) != null) _drawOrder = null;
   }
 
-  // Items with an order draw in ascending order, the rest after them in the
-  // order they were kept.
-  List<_ItemDraw> _ordered() => _drawOrder ??= [
-    ...(_items.values.where((draw) => draw.order != null).toList()
-      ..sort((a, b) => a.order!.compareTo(b.order!))),
-    ..._items.values.where((draw) => draw.order == null),
-  ];
+  int _keyOf(Object object) => _keys[object] ??= ++_lastKey;
+
+  // Items with an order draw in ascending order, the rest after them, each
+  // in the order they were kept. Within a run of items that share an order
+  // and blend nothing, the items sort by pipeline and then by the textures
+  // they bind; an item that blends keeps its place, so translucent items
+  // stay in the order they were given.
+  List<_ItemDraw> _ordered() {
+    final cached = _drawOrder;
+    if (cached != null) return cached;
+    final draws = <(_ItemDraw, int)>[];
+    var at = 0;
+    for (final draw in _items.values) {
+      draws.add((draw, at++));
+    }
+    draws.sort((a, b) {
+      final ao = a.$1.order;
+      final bo = b.$1.order;
+      final by = ao == bo
+          ? 0
+          : ao == null
+          ? 1
+          : bo == null
+          ? -1
+          : ao.compareTo(bo);
+      return by != 0 ? by : a.$2.compareTo(b.$2);
+    });
+    var run = 0;
+    for (var end = 0; end <= draws.length; end++) {
+      if (end < draws.length &&
+          !draws[end].$1.blends &&
+          draws[end].$1.order == draws[run].$1.order) {
+        continue;
+      }
+      if (end - run > 1) {
+        draws.setRange(run, end, draws.sublist(run, end)..sort(_byBindings));
+      }
+      run = end < draws.length && draws[end].$1.blends ? end + 1 : end;
+    }
+    return _drawOrder = [for (final (draw, _) in draws) draw];
+  }
+
+  static int _byBindings((_ItemDraw, int) a, (_ItemDraw, int) b) {
+    var by = a.$1.pipelineKey.compareTo(b.$1.pipelineKey);
+    if (by == 0) by = _compareKeys(a.$1.textureKeys, b.$1.textureKeys);
+    return by != 0 ? by : a.$2.compareTo(b.$2);
+  }
+
+  static int _compareKeys(List<int> a, List<int> b) {
+    final length = a.length < b.length ? a.length : b.length;
+    for (var at = 0; at < length; at++) {
+      final by = a[at].compareTo(b[at]);
+      if (by != 0) return by;
+    }
+    return a.length.compareTo(b.length);
+  }
 
   _ItemInstances _instancesOf(ItemInstances instances) {
     final records = Uint8List.fromList(instances.records);
@@ -529,6 +605,8 @@ final class _ItemSet {
     List<fg.BufferView>? views;
     _ItemDrawState? saved;
     fg.RenderPipeline? bound;
+    fg.BufferView? boundIndex;
+    IndexType? boundIndexType;
     for (final draw
         in sort == ItemSort.key
             ? _ordered()
@@ -560,33 +638,43 @@ final class _ItemSet {
       }
       views ??= _viewsOf(index, viewBlocks);
       saved ??= live.copy();
+      // A pass keeps one set of bindings for every shader, so another
+      // pipeline starts from none, lest a slot the last one bound linger.
       if (!identical(bound, draw.pipeline)) {
         pass.clearBindings();
         pass.bindPipeline(draw.pipeline);
         bound = draw.pipeline;
+        _boundVertices.fillRange(0, _boundVertices.length, null);
+        boundIndex = null;
+        _boundUniforms.clear();
+        _boundTextures.clear();
       }
       draw.state.applyOnto(pass, live);
       for (final (slot, view) in draw.vertices) {
         if (shownView != null && slot == instances!.slot) continue;
-        pass.bindVertexBuffer(view, slot: slot);
+        _bindVertices(pass, slot, view);
       }
-      if (shownView != null) {
-        pass.bindVertexBuffer(shownView, slot: instances!.slot);
-      }
+      if (shownView != null) _bindVertices(pass, instances!.slot, shownView);
       final indices = draw.index;
-      if (indices != null) pass.bindIndexBuffer(indices, draw.indexType);
+      if (indices != null &&
+          (draw.indexType != boundIndexType ||
+              !_sameView(boundIndex, indices))) {
+        pass.bindIndexBuffer(indices, draw.indexType);
+        boundIndex = indices;
+        boundIndexType = draw.indexType;
+      }
       for (final (slot, view) in draw.uniforms) {
-        pass.bindUniform(slot, view);
+        _bindUniform(pass, slot, view);
       }
       for (final (slot, at) in draw.viewUniforms) {
-        if (at < views.length) pass.bindUniform(slot, views[at]);
+        if (at < views.length) _bindUniform(pass, slot, views[at]);
       }
       for (final (slot, texture, sampler) in draw.textures) {
-        pass.bindTexture(slot, texture, sampler: sampler);
+        _bindTexture(pass, slot, texture, sampler);
       }
       for (final (slot, at, sampler) in draw.viewTextures) {
         if (at < viewTextures.length) {
-          pass.bindTexture(slot, viewTextures[at], sampler: sampler);
+          _bindTexture(pass, slot, viewTextures[at], sampler);
         }
       }
       if (draw.indexed) {
@@ -600,16 +688,73 @@ final class _ItemSet {
     pass.clearBindings();
   }
 
+  void _bindVertices(fg.RenderPass pass, int slot, fg.BufferView view) {
+    if (slot >= _boundVertices.length) {
+      pass.bindVertexBuffer(view, slot: slot);
+      return;
+    }
+    if (_sameView(_boundVertices[slot], view)) return;
+    pass.bindVertexBuffer(view, slot: slot);
+    _boundVertices[slot] = view;
+  }
+
+  void _bindUniform(
+    fg.RenderPass pass,
+    fg.UniformSlot slot,
+    fg.BufferView view,
+  ) {
+    if (_sameView(_boundUniforms[slot], view)) return;
+    pass.bindUniform(slot, view);
+    _boundUniforms[slot] = view;
+  }
+
+  void _bindTexture(
+    fg.RenderPass pass,
+    fg.UniformSlot slot,
+    fg.Texture texture,
+    SamplerOptions sampler,
+  ) {
+    final bound = _boundTextures[slot];
+    if (bound != null &&
+        identical(bound.$1, texture) &&
+        _sameSampler(bound.$2, sampler)) {
+      return;
+    }
+    pass.bindTexture(slot, texture, sampler: sampler);
+    _boundTextures[slot] = (texture, sampler);
+  }
+
+  static bool _sameView(fg.BufferView? a, fg.BufferView b) =>
+      a != null &&
+      (identical(a, b) ||
+          identical(a.buffer, b.buffer) &&
+              a.offsetInBytes == b.offsetInBytes &&
+              a.lengthInBytes == b.lengthInBytes);
+
+  static bool _sameSampler(SamplerOptions a, SamplerOptions b) =>
+      identical(a, b) ||
+      a.minFilter == b.minFilter &&
+          a.magFilter == b.magFilter &&
+          a.mipFilter == b.mipFilter &&
+          a.widthAddressMode == b.widthAddressMode &&
+          a.heightAddressMode == b.heightAddressMode &&
+          a.maxAnisotropy == b.maxAnisotropy;
+
   void destroy() {
     _items.clear();
     _drawOrder = null;
     _blocks.clear();
     _blockViews.clear();
     _turns.clear();
+    _written.clear();
+    _boundUniforms.clear();
+    _boundTextures.clear();
   }
 
   // Writes [viewBlocks] into this pass index's next turn and returns the
-  // views onto it, built once per turn.
+  // views onto it, built once per turn; the views onto the turn that holds
+  // them already when the pass index last wrote the same blocks, such as a
+  // second draw of the pass in a frame or a frame whose view did not move.
   List<fg.BufferView> _viewsOf(int index, List<ByteData> viewBlocks) {
     final count = _viewBlocks.values.fold(0, (a, b) => a > b ? a : b) + 1;
     var buffer = _blocks[index];
@@ -634,17 +779,58 @@ final class _ItemSet {
     } else {
       turns = _blockViews[index]!;
     }
-    final turn = ((_turns[index] ?? -1) + 1) % _itemViewTurns;
+    final blocks = count < viewBlocks.length ? count : viewBlocks.length;
+    final written = _written[index];
+    final last = _turns[index];
+    if (last != null && _holds(written!, viewBlocks, blocks)) {
+      return turns[last];
+    }
+    final turn = ((last ?? -1) + 1) % _itemViewTurns;
     _turns[index] = turn;
     final views = turns[turn];
-    for (var block = 0; block < count && block < viewBlocks.length; block++) {
+    for (var block = 0; block < blocks; block++) {
       assert(viewBlocks[block].lengthInBytes <= _blockStride);
       buffer.overwrite(
         viewBlocks[block],
         destinationOffsetInBytes: views[block].offsetInBytes,
       );
     }
+    _keepWritten(index, viewBlocks, blocks);
     return views;
+  }
+
+  static bool _holds(
+    List<Uint8List> written,
+    List<ByteData> viewBlocks,
+    int blocks,
+  ) {
+    if (written.length != blocks) return false;
+    for (var block = 0; block < blocks; block++) {
+      final held = written[block];
+      final bytes = Uint8List.sublistView(viewBlocks[block]);
+      if (held.length != bytes.length) return false;
+      for (var at = 0; at < held.length; at++) {
+        if (held[at] != bytes[at]) return false;
+      }
+    }
+    return true;
+  }
+
+  // Copies [viewBlocks] as what pass [index] last wrote, into the copies it
+  // holds where they fit.
+  void _keepWritten(int index, List<ByteData> viewBlocks, int blocks) {
+    final written = _written[index] ??= [];
+    if (written.length > blocks) written.length = blocks;
+    for (var block = 0; block < blocks; block++) {
+      final bytes = Uint8List.sublistView(viewBlocks[block]);
+      if (block < written.length && written[block].length == bytes.length) {
+        written[block].setAll(0, bytes);
+      } else if (block < written.length) {
+        written[block] = Uint8List.fromList(bytes);
+      } else {
+        written.add(Uint8List.fromList(bytes));
+      }
+    }
   }
 
   // The items of the pass [mask] names, the farthest first by the clip-space
