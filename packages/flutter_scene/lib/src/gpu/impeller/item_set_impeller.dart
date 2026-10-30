@@ -530,9 +530,13 @@ final class _ItemSet {
     _ItemDrawState? saved;
     fg.RenderPipeline? bound;
     for (final draw
-        in sort == ItemSort.farthestFirst
-            ? _farthestFirst(mask, clip)
-            : _ordered()) {
+        in sort == ItemSort.key
+            ? _ordered()
+            : _farthestFirst(
+                mask,
+                clip,
+                reversed: sort == ItemSort.farthestFirstReversedDepth,
+              )) {
       if (draw.passes & mask == 0) continue;
       final bounds = draw.bounds;
       if (bounds != null && !_inside(planes, bounds, 0)) continue;
@@ -644,15 +648,24 @@ final class _ItemSet {
   }
 
   // The items of the pass [mask] names, the farthest first by the clip-space
-  // w of their bounds' centre; an item with no bounds at 0.
-  List<_ItemDraw> _farthestFirst(int mask, Float32List clip) {
+  // w of their bounds' centre, or by its z where every point has one w (an
+  // orthographic clip), the lesser z farther with [reversed] depth; an item
+  // with no bounds at 0.
+  List<_ItemDraw> _farthestFirst(
+    int mask,
+    Float32List clip, {
+    required bool reversed,
+  }) {
+    final row = clip[3] == 0.0 && clip[7] == 0.0 && clip[11] == 0.0 ? 2 : 3;
+    final sign = row == 2 && reversed ? -1.0 : 1.0;
     double depth(_ItemDraw draw) {
       final b = draw.bounds;
       if (b == null) return 0.0;
-      return clip[3] * (b[0] + b[3]) * 0.5 +
-          clip[7] * (b[1] + b[4]) * 0.5 +
-          clip[11] * (b[2] + b[5]) * 0.5 +
-          clip[15];
+      return sign *
+          (clip[row] * (b[0] + b[3]) * 0.5 +
+              clip[4 + row] * (b[1] + b[4]) * 0.5 +
+              clip[8 + row] * (b[2] + b[5]) * 0.5 +
+              clip[12 + row]);
     }
 
     final draws = [
