@@ -109,6 +109,47 @@ final class SharedInstanceRows {
     activeRenderCounters.instanceBytesPacked += packed * _sharedRecordBytes;
   }
 
+  /// The number of rows [ranges] takes of the rows the device holds, every
+  /// row for null.
+  int rowsOf(Uint32List? ranges) {
+    if (ranges == null) return _count;
+    var rows = 0;
+    for (var at = 0; at < ranges.length; at += 2) {
+      final first = ranges[at];
+      if (first >= _count) continue;
+      final asked = ranges[at + 1];
+      rows += first + asked > _count ? _count - first : asked;
+    }
+    return rows;
+  }
+
+  /// The records of the rows [ranges] takes, every row for null, in draw
+  /// order, and the bytes of one.
+  ({Uint8List records, int stride}) recordsOf(Uint32List? ranges) {
+    final store = _rows.holdsRecords
+        ? _rows.recordStoreBytes
+        : (_storeBytes ??= ByteData.sublistView(_store));
+    final bytes = Uint8List.sublistView(store);
+    final stride = _recordBytes;
+    if (ranges == null) {
+      return (
+        records: Uint8List.sublistView(bytes, 0, _count * stride),
+        stride: stride,
+      );
+    }
+    final records = Uint8List(rowsOf(ranges) * stride);
+    var at = 0;
+    for (var range = 0; range < ranges.length; range += 2) {
+      final first = ranges[range];
+      if (first >= _count) continue;
+      final asked = ranges[range + 1];
+      final rows = first + asked > _count ? _count - first : asked;
+      records.setRange(at, at + rows * stride, bytes, first * stride);
+      at += rows * stride;
+    }
+    return (records: records, stride: stride);
+  }
+
   /// The count of draws [ranges] asks for: one per pair, or one for null.
   int drawCountOf(Uint32List? ranges) =>
       ranges == null ? 1 : ranges.length >> 1;

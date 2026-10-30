@@ -739,14 +739,22 @@ class RenderItem {
   int instanceDataRevision = 0;
 
   /// Each row's bounds as this item draws it, min x, y, z and max x, y, z,
-  /// six floats per row: its geometry's bounds placed by the record, moved
-  /// by the anchor minus the draw origin. Null where the geometry states no
-  /// bounds or the records are held relative to the node.
+  /// six floats per row: its geometry's bounds under the mesh's local
+  /// transform and turns, placed by the record and moved by the anchor minus
+  /// the draw origin. Null where the geometry states no bounds or the
+  /// records are held relative to the node.
   @internal
   Float32List? instanceRowBounds() {
     final instances = instanceTransforms;
-    final local = geometry.localBounds;
+    var local = geometry.localBounds;
     if (instances == null || local == null || nodeSpaceInstances) return null;
+    final source = instanceSource;
+    final instanceLocal = source?.instanceLocal;
+    if (instanceLocal != null) {
+      local = Aabb3.copy(local)..transform(instanceLocal);
+    }
+    final spin = source?.spin;
+    if (spin != null) local = spin.cover(local);
     final packTransform = instancePackTransform;
     final x = drawShift(0), y = drawShift(1), z = drawShift(2);
     final bounds = Float32List(instances.length * 6);
