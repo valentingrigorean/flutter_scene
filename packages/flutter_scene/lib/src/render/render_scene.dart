@@ -724,6 +724,12 @@ class RenderItem {
   @internal
   final HeldItemInfo heldItemInfo = HeldItemInfo();
 
+  /// The fragment-stage `ItemFragInfo` block this item draws with (model
+  /// scale, light slice, LOD fade, directional reach), kept from frame to
+  /// frame so a still lit draw writes no fragment per-item bytes.
+  @internal
+  final HeldBlock heldFragItem = HeldBlock(kItemFragInfoFloats);
+
   /// Counts the changes of [worldTransform].
   @internal
   int worldTransformRevision = 0;
@@ -1863,6 +1869,7 @@ class RenderScene {
     logItemChange(item);
     item.heldInstanceRecord.release();
     item.heldItemInfo.release();
+    item.heldFragItem.release();
     _displace(item);
     if (item._countedStaticCaster) {
       item._countedStaticCaster = false;

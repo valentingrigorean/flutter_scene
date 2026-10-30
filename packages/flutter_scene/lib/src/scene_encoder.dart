@@ -43,6 +43,7 @@ import 'package:flutter_scene/src/vertex_spin.dart';
 import 'package:flutter_scene/src/render/lod.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
+import 'package:flutter_scene/src/render/retained_draws.dart';
 import 'package:flutter_scene/src/render/render_profile.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
@@ -1416,6 +1417,38 @@ base class SceneEncoder {
   /// instance so each can be depth-sorted independently.
   void submit(RenderItem item) => _submit(item, null, 0);
 
+  /// Encodes [item]'s single opaque color draw immediately onto this encoder's
+  /// render pass, for recording into an item set ([RetainedColorDraws]): no
+  /// sorting, coverage pre-draw or translucent phase. The caller guarantees
+  /// [item] is an opaque, keepable, non-LOD draw.
+  @internal
+  void encodeForKeep(RenderItem item) {
+    final geometry = item.geometry;
+    final material = item.material;
+    final materialVertex = material.vertexShaderForGeometry(geometry);
+    final vertexShader = materialVertex ?? geometry.vertexShader;
+    final fragmentShader = material.fragmentShaderForLighting(_lighting);
+    final vertexLayout = geometry.instancedVertexLayoutFor(
+      material.instanceAttributes,
+      material.vertexAttributesFor(materialVertex),
+    );
+    final pipeline = cachedRenderPipeline(
+      vertexShader,
+      fragmentShader,
+      vertexLayout,
+    );
+    if (pipeline == null) return;
+    _encode(
+      pipeline,
+      item.worldTransform,
+      geometry,
+      material,
+      item.windingFor(geometry),
+      1.0,
+      item: item,
+    );
+  }
+
   /// Queues the item at [index] of [view], the view's one cull, as [submit]
   /// does, with the instance ranges that cull kept of it.
   void submitKept(ViewVisibleItems view, int index) =>
@@ -1943,6 +1976,7 @@ base class SceneEncoder {
     gpu.Shader? materialVertex,
     double fade, {
     bool fallback = false,
+    HeldBlock? fragItemHold,
   }) {
     final lightOffset = material.lightListOffset;
     final lightCount = material.lightListCount;
@@ -1968,7 +2002,12 @@ base class SceneEncoder {
       material.lodFade = fade;
       final drawKey = transientDrawKey;
       transientDrawKey = material;
+      // The draw's held ItemFragInfo block, so the material binds it instead
+      // of emplacing a transient one and a still lit draw can be kept. Null
+      // for a draw of no item (emplaced per draw).
+      currentDrawFragItem = fragItemHold;
       material.bind(_renderPass, _transientsBuffer, _lighting);
+      currentDrawFragItem = null;
       transientDrawKey = drawKey;
     }
     final faceCull = _faceCull;
@@ -2305,7 +2344,13 @@ base class SceneEncoder {
         );
       }
     }
-    _bindMaterial(material, materialVertex, fade, fallback: fallback);
+    _bindMaterial(
+      material,
+      materialVertex,
+      fade,
+      fallback: fallback,
+      fragItemHold: item?.heldFragItem,
+    );
     _bindDebugView(material, item, fallback);
     // A mirrored transform reverses triangle winding. Set both cases because
     // a cached material bind no longer resets it between compatible draws.
@@ -2417,7 +2462,13 @@ base class SceneEncoder {
     _bindPipeline(pipeline);
     final materialVertex = material.vertexShaderForGeometry(geometry);
     _describeDraw(item, geometry, material, materialVertex, pipeline);
-    _bindMaterial(material, materialVertex, fade, fallback: fallback);
+    _bindMaterial(
+      material,
+      materialVertex,
+      fade,
+      fallback: fallback,
+      fragItemHold: item.heldFragItem,
+    );
     _bindDebugView(material, item, fallback);
     _setPrimitiveType(geometry.primitiveType);
 
@@ -2814,7 +2865,12 @@ base class SceneEncoder {
             );
           }
         }
-        _bindMaterial(material, materialVertex, 1.0);
+        _bindMaterial(
+          material,
+          materialVertex,
+          1.0,
+          fragItemHold: item.heldFragItem,
+        );
         _bindDebugView(material, item, false);
         _setWindingOrder(
           record.windingFlipped
@@ -3291,5 +3347,174 @@ base class SceneEncoder {
     final inputs = material.sceneInputs;
     return inputs.contains(RenderInput.opaqueSceneColor) ||
         inputs.contains(RenderInput.filteredSceneColor);
+  }
+}
+
+/// The color pass's draws of a [RenderScene]'s still items that the backend
+/// keeps as render items ([gpu.ItemSet]), so a frame that moves only the
+/// camera encodes none of them. The pass draws the kept items natively, culled
+/// by the camera, with the view's `ViewInfo`, `FragInfo` and `FogInfo` as view
+/// blocks, and encodes [encoded].
+///
+/// A draw is kept when it is an opaque, non-LOD, unskinned, unmorphed,
+/// non-instanced mesh (the structural checks [RetainedDraws] makes) whose
+/// material holds its fragment blocks and binds no per-material lighting of its
+/// own ([Material.colorRetainable]), and whose every bound block and texture is
+/// persistent — a draw binding a frame-transient buffer or texture (a shadow
+/// atlas, the ambient-occlusion or scene-color textures, the punctual-light
+/// data textures) is refused by the backend and encoded instead.
+final class RetainedColorDraws extends RetainedDraws {
+  RetainedColorDraws._(super.renderScene, super.items);
+
+  static final Expando<RetainedColorDraws> _byScene = Expando(
+    'retained color draws',
+  );
+
+  /// The kept color draws of [renderScene], or null where the backend keeps no
+  /// items.
+  static RetainedColorDraws? of(RenderScene renderScene) {
+    final held = _byScene[renderScene];
+    if (held != null && held.generation == gpu.gpuContextGeneration) {
+      return held;
+    }
+    held?.dispose();
+    final items = gpu.gpuContext.createItemSet(
+      viewBlockNames: const ['ViewInfo', 'FragInfo', 'FogInfo'],
+      viewBlockLength:
+          EngineLightingUniforms.fragInfoFloatCount *
+          Float32List.bytesPerElement,
+    );
+    if (items == null) return null;
+    return _byScene[renderScene] = RetainedColorDraws._(renderScene, items);
+  }
+
+  late SceneEncoder _pass;
+  SceneEncoder? _recording;
+
+  final Float32List _fragInfoScratch = Float32List(
+    EngineLightingUniforms.fragInfoFloatCount,
+  );
+  final Float32List _fogScratch = Float32List(24);
+
+  @override
+  int get passes => 1;
+
+  /// Brings the kept draws up to date with the scene for the color pass that
+  /// [encoder] encodes into [target].
+  void syncColor({
+    required gpu.RenderTarget target,
+    required SceneEncoder encoder,
+  }) {
+    _pass = encoder;
+    sync(target: target, key: (encoder._layerMask, encoder._debugView != null));
+  }
+
+  @override
+  void beginSync() => _recording = null;
+
+  @override
+  bool draws(RenderItem item) =>
+      item.drawsColor && (item.layers & _pass._layerMask) != 0;
+
+  @override
+  bool keepable(RenderItem item) {
+    // A debug view redraws every surface through a different fragment shader;
+    // keep nothing while one is active.
+    if (_pass._debugView != null) return false;
+    final material = item.material;
+    return material.colorRetainable &&
+        !material.drawsDebugViews(_pass._lighting);
+  }
+
+  @override
+  Object? pipelineOf(RenderItem item) {
+    final geometry = item.geometry;
+    final material = item.material;
+    final materialVertex = material.vertexShaderForGeometry(geometry);
+    final vertexShader = materialVertex ?? geometry.vertexShader;
+    final fragmentShader = material.fragmentShaderForLighting(_pass._lighting);
+    final vertexLayout = geometry.instancedVertexLayoutFor(
+      material.instanceAttributes,
+      material.vertexAttributesFor(materialVertex),
+    );
+    return cachedRenderPipeline(vertexShader, fragmentShader, vertexLayout);
+  }
+
+  @override
+  Object? stateOf(RenderItem item) {
+    final material = item.material;
+    return (
+      material.renderCullMode,
+      material.depthLayer,
+      material.tieBreakRank,
+      material.depthBias,
+      item.windingFor(item.geometry),
+    );
+  }
+
+  @override
+  void record(RenderItem item) {
+    final encoder = _recording ??= SceneEncoder(
+      recorder,
+      _pass._transientsBuffer,
+      _pass._camera,
+      _pass._dimensions,
+      _pass._lighting,
+      _pass._layerMask,
+      const [],
+      false,
+      cameraTransform: _pass._cameraTransform,
+      primaryView: true,
+    );
+    final key = transientDrawKey;
+    transientDrawKey = item;
+    encoder.encodeForKeep(item);
+    transientDrawKey = key;
+  }
+
+  @override
+  void pinHeld(RenderItem item) {
+    // The vertex ItemInfo.
+    super.pinHeld(item);
+    // The per-item fragment block.
+    final frag = item.heldFragItem.lastBound;
+    if (frag != null && item.heldFragItem.pin(frag)) {
+      recordPin(item, () => item.heldFragItem.unpin(frag));
+    }
+    // The material's own fragment blocks (MatInfo, and the standard shader's
+    // held TextureTransforms).
+    for (final block in item.material.heldFragmentBlocks) {
+      final view = block.lastBound;
+      if (view != null && block.pin(view)) {
+        recordPin(item, () => block.unpin(view));
+      }
+    }
+  }
+
+  /// Draws the kept color items into [pass], the render pass [encoder]
+  /// encodes, supplying the view's `ViewInfo`, `FragInfo` and `FogInfo`.
+  void drawKept(gpu.RenderPass pass, SceneEncoder encoder) {
+    final lighting = encoder._lighting;
+    final view = viewInfoBytesOf(
+      encoder._cameraTransform,
+      encoder._cameraPosition,
+    );
+    _fragInfoScratch.fillRange(0, _fragInfoScratch.length, 0);
+    EngineLightingUniforms.packInto(
+      _fragInfoScratch,
+      lighting,
+      lighting.environmentMap,
+    );
+    EngineLightingUniforms.packFog(_fogScratch, lighting);
+    items.draw(
+      pass,
+      0,
+      viewBlocks: [
+        view,
+        ByteData.sublistView(_fragInfoScratch),
+        ByteData.sublistView(_fogScratch),
+      ],
+      clip: encoder._cameraTransform.storage,
+    );
   }
 }

@@ -413,7 +413,7 @@ highp vec2 PunctualLightSlice() {
     highp vec4 entry = FetchPunctualEntry(int((fz * fny + fy) * fnx + fx + 0.5));
     return vec2(entry.r, entry.g);
   }
-  return vec2(frag_info.radiance_blend.w, frag_info.radiance_blend.z);
+  return vec2(item_frag.params.y, item_frag.params.x);
 }
 #endif  // punctual fetch helpers
 
