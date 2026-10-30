@@ -1,5 +1,9 @@
 ## 0.24.4
 
+* The engine vertex stages read two blocks in place of one `FrameInfo` per draw: `ViewInfo` (`view_info.glsl`), the pass's view, emplaced once per pass (each shadow cascade its own) and shared with the fragment stage's `view_info`; and `ItemInfo` (`item_info.glsl`), each render item's depth offsets, instance frame, band and turns, held at an offset the item keeps from frame to frame and written only when they change. A still mesh writes no uniform bytes while the camera moves; `RenderCounters.itemInfoBytesWritten` counts what is written. A material vertex shader that declares the earlier `FrameInfo` still gets it, emplaced per draw.
+* A custom `Geometry` whose vertex shader declares `ViewInfo` or `ItemInfo` gets them bound after its `bind` in every pass, so its `bind` binds only its buffers and its own blocks.
+* `Geometry.bindRevision` counts the changes to the buffers a geometry binds; a pass binds an unchanged geometry's buffers once for a run of its draws. A subclass with buffers of its own calls `markBindChanged`.
+* The opaque draws that join one instanced draw keep their instance records in a device buffer the batch owns, written only where a member's record changed, in place of a copy of every record each frame.
 * `GpuCapabilities.orderedBufferWrites` states that a host buffer write reaches the GPU after the work already submitted. There a draw keyed by `transientDrawKey` keeps its transient uniforms at the offsets it had the frame before, written only when they change, so a backend that replays recorded draws finds them unchanged while the camera moves.
 * A buffer on the WebGPU web backend keeps no CPU copy of its contents: a write that covers part of a 4-byte word merges its bytes into the word on the GPU.
 * The debug near-plane advisory no longer prints for a scene with reversed float depth, whose precision the near plane leaves alone.

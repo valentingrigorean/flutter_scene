@@ -63,6 +63,11 @@ class RenderCounters {
   /// ring starts with.
   int instanceBytesReplayed = 0;
 
+  /// Bytes of render items' `ItemInfo` blocks written: an item that first
+  /// draws, or whose depth offset, instance frame, band or turns changed.
+  /// Zero on a frame that moves only the camera.
+  int itemInfoBytesWritten = 0;
+
   /// Nodes the scene pre-pass visited: one per node it ticked and one per
   /// node whose render items it refreshed. Zero on a frame that changes no
   /// node while no node ticks.
@@ -96,6 +101,7 @@ class RenderCounters {
     instanceBytesPacked = 0;
     instanceBytesUploaded = 0;
     instanceBytesReplayed = 0;
+    itemInfoBytesWritten = 0;
     prePassNodes = 0;
     materialSummaryItems = 0;
     sceneCulls = 0;
@@ -115,6 +121,7 @@ class RenderCounters {
     instanceBytesPacked = other.instanceBytesPacked;
     instanceBytesUploaded = other.instanceBytesUploaded;
     instanceBytesReplayed = other.instanceBytesReplayed;
+    itemInfoBytesWritten = other.itemInfoBytesWritten;
     prePassNodes = other.prePassNodes;
     materialSummaryItems = other.materialSummaryItems;
     sceneCulls = other.sceneCulls;
@@ -137,6 +144,8 @@ class RenderCounters {
         now.instanceBytesUploaded - start.instanceBytesUploaded;
     instanceBytesReplayed =
         now.instanceBytesReplayed - start.instanceBytesReplayed;
+    itemInfoBytesWritten =
+        now.itemInfoBytesWritten - start.itemInfoBytesWritten;
     prePassNodes = now.prePassNodes - start.prePassNodes;
     materialSummaryItems =
         now.materialSummaryItems - start.materialSummaryItems;
@@ -157,6 +166,7 @@ class RenderCounters {
     'instanceBytesPacked': instanceBytesPacked,
     'instanceBytesUploaded': instanceBytesUploaded,
     'instanceBytesReplayed': instanceBytesReplayed,
+    'itemInfoBytesWritten': itemInfoBytesWritten,
     'prePassNodes': prePassNodes,
     'materialSummaryItems': materialSummaryItems,
     'sceneCulls': sceneCulls,

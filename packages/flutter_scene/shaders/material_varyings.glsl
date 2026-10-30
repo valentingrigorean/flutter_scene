@@ -16,21 +16,14 @@ out vec4 frag_color;
 // A shader that takes only the varyings (the depth and mask passes) defines
 // FLUTTER_SCENE_NO_VIEW_INFO to leave the block out. Declared but unread, it
 // gets no binding and reflects at 0, where it collides with the vertex
-// stage's FrameInfo; Vulkan rejects the pipeline layout and drops the draws.
+// stage's ViewInfo; Vulkan rejects the pipeline layout and drops the draws.
 // TODO(binding-liveness): a custom shader that includes this file and never
 // calls GetViewDirection hits the same collision. The durable fix is for the
 // shader compiler to give unread resources a binding too; until then
 // test/shader_binding_ranges_test.dart guards the engine's own shaders.
 #ifndef FLUTTER_SCENE_NO_VIEW_INFO
-// The camera axis, for the view direction under an orthographic camera, where
-// every view ray is parallel and v_viewvector (which stays the true vector to
-// the eye, for derivatives and depth) does not point along one. Bound by the
-// engine wherever a shader reads it. xyz: the world-space camera forward.
-// w: 1 for an orthographic camera, 0 for perspective.
-uniform ViewInfo {
-  highp vec4 camera_forward;
-}
-view_info;
+// The pass's view; GetViewDirection reads its camera axis.
+#include <view_info.glsl>
 #endif  // FLUTTER_SCENE_NO_VIEW_INFO
 
 // World-space position of the fragment.

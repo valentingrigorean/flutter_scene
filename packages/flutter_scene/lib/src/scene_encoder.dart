@@ -34,6 +34,7 @@ import 'package:flutter_scene/src/render/debug_view.dart';
 import 'package:flutter_scene/src/render/draw_recorder.dart';
 import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
+import 'package:flutter_scene/src/render/instance_batch_records.dart';
 import 'package:flutter_scene/src/render/instance_records.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/shared_instance_rows.dart';
@@ -48,6 +49,7 @@ import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/render/uniform_slots.dart';
+import 'package:flutter_scene/src/render/view_info.dart';
 
 /// A deferred opaque draw. Holds the [RenderItem] (instanced or not), its
 /// resolved pipeline, a per-pipeline grouping key, and the camera
@@ -1387,6 +1389,9 @@ base class SceneEncoder {
   gpu.CullMode? _faceCull;
   gpu.Shader? _boundMaterialVertex;
   gpu.Shader? _boundFrameInfoShader;
+  // The geometry whose buffers are bound, at its bind revision.
+  Geometry? _boundBuffersGeometry;
+  int _boundBuffersRevision = -1;
   Matrix4? _boundFrameInfoFrame;
   Matrix4? _boundFrameInfoLocal;
   InstanceBand? _boundFrameInfoBand;
@@ -1762,6 +1767,7 @@ base class SceneEncoder {
     _debugViewBoundMaterial = null;
     _boundMaterialVertex = null;
     _boundFrameInfoShader = null;
+    _boundBuffersGeometry = null;
     _boundFrameInfoDepthBias = double.nan;
     _boundFrameInfoDepthKey = -1;
     _boundMaterialFade = double.nan;
@@ -2019,8 +2025,9 @@ base class SceneEncoder {
     Geometry geometry,
     Matrix4 worldTransform,
     Material material,
-    gpu.Shader? materialVertex,
-  ) {
+    gpu.Shader? materialVertex, {
+    RenderItem? item,
+  }) {
     final depthBias = material.depthBias;
     final depthKey = _depthOffsetKey(material);
     setCurrentDrawDepthOffset(
@@ -2029,10 +2036,19 @@ base class SceneEncoder {
       material.tieBreakRank,
       pixelSlope: _pixelSlope,
     );
+    // The fragment stage reads the view the vertex stage binds, so a draw
+    // whose vertex stage binds none states it here.
+    currentViewForward = _lighting.cameraForward;
+    currentViewOrthographic = _lighting.orthographic;
     geometry.useVertexAttributes(material.vertexAttributesFor(materialVertex));
     // Morphed geometry takes the full bind, which also binds its morph stage.
     if (geometry is UnskinnedGeometry && geometry.morphTargets == null) {
-      geometry.bindGeometryBuffers(_renderPass);
+      if (!identical(_boundBuffersGeometry, geometry) ||
+          _boundBuffersRevision != geometry.bindRevision) {
+        geometry.bindGeometryBuffers(_renderPass);
+        _boundBuffersGeometry = geometry;
+        _boundBuffersRevision = geometry.bindRevision;
+      }
       final shader = materialVertex ?? geometry.vertexShader;
       final frame = currentDrawInstanceFrame;
       final local = currentDrawInstanceLocal;
@@ -2044,13 +2060,14 @@ base class SceneEncoder {
           !identical(_boundFrameInfoSpin, currentDrawSpin) ||
           _boundFrameInfoDepthBias != depthBias ||
           _boundFrameInfoDepthKey != depthKey) {
-        bindUnskinnedFrameInfo(
+        bindUnskinnedDrawInfo(
           _renderPass,
           _transientsBuffer,
           shader,
           _drawCameraTransform,
           _cameraPosition,
           depthBias: depthBias,
+          held: item?.heldItemInfo,
         );
         _boundFrameInfoShader = shader;
         _boundFrameInfoFrame = frame;
@@ -2061,6 +2078,8 @@ base class SceneEncoder {
         _boundFrameInfoDepthKey = depthKey;
       }
     } else {
+      viewInfoOf(_transientsBuffer, _drawCameraTransform, _cameraPosition);
+      currentDrawItemInfo = item?.heldItemInfo;
       geometry.bind(
         _renderPass,
         _transientsBuffer,
@@ -2070,8 +2089,21 @@ base class SceneEncoder {
         shaderOverride: materialVertex,
         depthBias: depthBias,
       );
-      // The full bind rebinds FrameInfo, possibly on the cached shader.
+      if (geometry is! UnskinnedGeometry) {
+        bindViewAndItemInfo(
+          _renderPass,
+          _transientsBuffer,
+          materialVertex ?? geometry.vertexShader,
+          _drawCameraTransform,
+          _cameraPosition,
+          depthBias: depthBias,
+        );
+      }
+      currentDrawItemInfo = null;
+      // The full bind rebinds the vertex blocks, possibly on the cached
+      // shader.
       _boundFrameInfoShader = null;
+      _boundBuffersGeometry = null;
       _boundFrameInfoDepthBias = double.nan;
       _boundFrameInfoDepthKey = -1;
     }
@@ -2244,7 +2276,13 @@ base class SceneEncoder {
     if (item != null) {
       _describeDraw(item, geometry, material, materialVertex, pipeline);
     }
-    _bindGeometry(geometry, worldTransform, material, materialVertex);
+    _bindGeometry(
+      geometry,
+      worldTransform,
+      material,
+      materialVertex,
+      item: item,
+    );
     if (geometry.bindsModelTransformInstance) {
       // The model matrix arrives through the instance-rate vertex buffer,
       // bound to the slot after the geometry's vertex streams.
@@ -2402,6 +2440,7 @@ base class SceneEncoder {
             item.drawTransform * instanceTransform,
             material,
             materialVertex,
+            item: item,
           );
           // Each instance can itself mirror; combine with the node's parity.
           final flip = windingFlipped != (instanceTransform.determinant() < 0);
@@ -2416,7 +2455,13 @@ base class SceneEncoder {
       return;
     }
 
-    _bindGeometry(geometry, nodeTransform, material, materialVertex);
+    _bindGeometry(
+      geometry,
+      nodeTransform,
+      material,
+      materialVertex,
+      item: item,
+    );
     final instanceSlot = geometry.vertexStreamCount;
     final shared = item.sharedRows;
     if (shared != null) {
@@ -2532,6 +2577,7 @@ base class SceneEncoder {
     _boundMaterial = null;
     _boundMaterialVertex = null;
     _boundFrameInfoShader = null;
+    _boundBuffersGeometry = null;
     _boundFrameInfoDepthBias = double.nan;
     _boundFrameInfoDepthKey = -1;
     _boundMaterialFade = double.nan;
@@ -2743,12 +2789,30 @@ base class SceneEncoder {
         _bindPipeline(pipeline);
         final materialVertex = material.vertexShaderForGeometry(geometry);
         _describeDraw(item, geometry, material, materialVertex, pipeline);
-        _bindGeometry(geometry, item.drawTransform, material, materialVertex);
+        _bindGeometry(
+          geometry,
+          item.drawTransform,
+          material,
+          materialVertex,
+          item: item,
+        );
         if (geometry.bindsModelTransformInstance) {
-          _bindPackedInstances(
-            Float32List.sublistView(records, 0, floats),
-            geometry.vertexStreamCount,
+          final held = instanceBatchRecords(
+            (_camera, record.batchKey),
+            records,
+            count,
           );
+          if (held == null) {
+            _bindPackedInstances(
+              Float32List.sublistView(records, 0, floats),
+              geometry.vertexStreamCount,
+            );
+          } else {
+            _renderPass.bindVertexBuffer(
+              held,
+              slot: geometry.vertexStreamCount,
+            );
+          }
         }
         _bindMaterial(material, materialVertex, 1.0);
         _bindDebugView(material, item, false);
@@ -3184,6 +3248,7 @@ base class SceneEncoder {
     _boundMaterial = null;
     _boundMaterialVertex = null;
     _boundFrameInfoShader = null;
+    _boundBuffersGeometry = null;
     _boundFrameInfoDepthBias = double.nan;
     _boundFrameInfoDepthKey = -1;
     _boundMaterialFade = double.nan;

@@ -538,7 +538,7 @@ vec4 DebugViewOutput(MaterialInputs material, vec4 shaded) {
 #ifndef FLUTTER_SCENE_NO_VIEW_INFO
   // The views read ViewInfo, which kept the block bound in materials that
   // read it nowhere else. Declared but unread, it reflects at binding 0 and
-  // collides with the vertex stage's FrameInfo on Vulkan (see
+  // collides with the vertex stage's ViewInfo on Vulkan (see
   // material_varyings.glsl). camera_forward.w is 0 or 1, so this never fires.
   if (view_info.camera_forward.w < -1.0) {
     return vec4(view_info.camera_forward.xyz, 0.0);

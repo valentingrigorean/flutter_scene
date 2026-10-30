@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_scene/src/geometry/geometry.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
+import 'package:flutter_scene/src/render/view_info.dart';
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/debug_view.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
@@ -178,9 +179,10 @@ class _WireframeEncoder {
       0,
     );
     void bindDraw(Matrix4 worldTransform) {
+      currentViewForward = null;
       if (depthVertex != null) {
         geometry.bindPositionStream(_pass);
-        bindUnskinnedFrameInfo(
+        bindUnskinnedDrawInfo(
           _pass,
           _transients,
           activeVertex,
@@ -198,6 +200,16 @@ class _WireframeEncoder {
           shaderOverride: materialVertex,
           depthBias: material.depthBias + _wireframeDepthBias,
         );
+        if (geometry is! UnskinnedGeometry) {
+          bindViewAndItemInfo(
+            _pass,
+            _transients,
+            materialVertex ?? geometry.vertexShader,
+            _cameraTransform,
+            _cameraPosition,
+            depthBias: material.depthBias + _wireframeDepthBias,
+          );
+        }
       }
       if (materialVertex != null) {
         material.bindVertexStage(_pass, materialVertex, _transients);

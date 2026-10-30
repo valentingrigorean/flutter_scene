@@ -2,13 +2,14 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
+import 'package:flutter_scene/src/render/view_info.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/geometry/geometry.dart'
-    show bindUnskinnedFrameInfo;
+    show UnskinnedGeometry, bindUnskinnedDrawInfo;
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/material/engine_lighting.dart';
@@ -324,17 +325,20 @@ class _ObjectMaskEncoder {
 
     // Binds the vertex/index buffers and the per-frame uniform for one draw.
     void bindDraw(Matrix4 worldTransform) {
+      currentViewForward = null;
       if (depthVertex != null) {
         geometry.bindPositionStream(_renderPass);
-        bindUnskinnedFrameInfo(
+        bindUnskinnedDrawInfo(
           _renderPass,
           _transientsBuffer,
           activeVertex,
           _cameraTransform,
           _cameraPosition,
+          held: item.heldItemInfo,
           depthBias: item.material.depthBias,
         );
       } else {
+        currentDrawItemInfo = item.heldItemInfo;
         geometry.bind(
           _renderPass,
           _transientsBuffer,
@@ -344,6 +348,17 @@ class _ObjectMaskEncoder {
           shaderOverride: materialVertex,
           depthBias: item.material.depthBias,
         );
+        if (geometry is! UnskinnedGeometry) {
+          bindViewAndItemInfo(
+            _renderPass,
+            _transientsBuffer,
+            materialVertex ?? geometry.vertexShader,
+            _cameraTransform,
+            _cameraPosition,
+            depthBias: item.material.depthBias,
+          );
+        }
+        currentDrawItemInfo = null;
       }
       if (materialVertex != null) {
         item.material.bindVertexStage(
