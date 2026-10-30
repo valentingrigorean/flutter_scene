@@ -690,8 +690,10 @@ class _DepthPrepassEncoder {
       return a.geometryIdentity.compareTo(b.geometryIdentity);
     });
     for (final item in _records) {
+      transientDrawKey = item;
       _encode(item);
     }
+    transientDrawKey = null;
     _records.clear();
   }
 

@@ -197,6 +197,16 @@ final class _GpuSubmissionsView implements GpuSubmissions {
   int get completedThrough => _tracker.completedThrough;
 }
 
+/// The draw the transient data emplaced next belongs to, or null.
+///
+/// Where the GPU backend orders buffer writes after earlier submissions
+/// ([gpu.GpuCapabilities.orderedBufferWrites]), the n-th emplacement of a
+/// keyed draw in a frame lands where it did the frame before, so a backend
+/// that replays recorded draws (wgpu render bundles) finds their bindings
+/// unchanged while the camera moves. An encoder sets it around a draw and
+/// clears it after.
+Object? transientDrawKey;
+
 /// Destination for per-frame transient GPU data (uniform blocks, instance
 /// vertex data). Emplaced data is valid for the current frame only.
 ///
@@ -389,7 +399,9 @@ class TransientArena implements FrameTransients {
     this._tracker, {
     int? alignment,
     this.blockLengthInBytes = kDefaultBlockLengthInBytes,
-  }) : _alignmentOverride = alignment {
+    bool? keepsDrawSlots,
+  }) : _alignmentOverride = alignment,
+       _keepsSlotsOverride = keepsDrawSlots {
     _tracker.addBeforeSubmitListener(_onBeforeSubmit);
   }
 
@@ -410,6 +422,29 @@ class TransientArena implements FrameTransients {
       _resolvedAlignment ??
       (_resolvedAlignment =
           _alignmentOverride ?? gpu.gpuContext.minimumUniformByteAlignment);
+
+  final bool? _keepsSlotsOverride;
+  bool? _resolvedKeepsSlots;
+  bool get _keepsSlots =>
+      _resolvedKeepsSlots ??
+      (_resolvedKeepsSlots =
+          _keepsSlotsOverride ?? gpu.gpuHost.capabilities.orderedBufferWrites);
+
+  /// Each keyed draw's slots, in emplacement order.
+  final Map<Object, _DrawSlots> _drawSlots = HashMap.identity();
+
+  /// Blocks the slots live in. They are written in place every frame and
+  /// never sealed.
+  final List<_TransientBlock> _slotBlocks = [];
+
+  /// Released slots by capacity.
+  final Map<int, List<_Slot>> _freeSlots = {};
+
+  /// Slots written since the last submission.
+  final List<_Slot> _written = [];
+
+  /// How many frames a draw's slot outlives its last use.
+  static const int kSlotIdleFrames = 60;
 
   /// Blocks open for writing this frame, in fill order; the last one is the
   /// bump target. All of them seal on the next submission.
@@ -443,8 +478,13 @@ class TransientArena implements FrameTransients {
     if (_generation == gpu.gpuContextGeneration) return;
     _generation = gpu.gpuContextGeneration;
     _resolvedAlignment = null;
+    _resolvedKeepsSlots = null;
     _open.clear();
     _sealed.clear();
+    _drawSlots.clear();
+    _slotBlocks.clear();
+    _freeSlots.clear();
+    _written.clear();
   }
 
   @override
@@ -457,6 +497,110 @@ class TransientArena implements FrameTransients {
     _frame++;
     final completed = _tracker.completedThrough;
     _sealed.removeWhere((block) => block.retireIfIdle(completed, _frame));
+    if (_frame % kSlotIdleFrames == 0) _releaseIdleSlots();
+  }
+
+  void _releaseIdleSlots() {
+    _drawSlots.removeWhere((_, draw) {
+      final slots = draw.slots;
+      for (var i = 0; i < slots.length; i++) {
+        final slot = slots[i];
+        if (slot == null || _frame - slot.lastUsed <= kSlotIdleFrames) continue;
+        (_freeSlots[slot.capacity] ??= []).add(slot);
+        slots[i] = null;
+      }
+      while (slots.isNotEmpty && slots.last == null) {
+        slots.removeLast();
+      }
+      return slots.isEmpty;
+    });
+  }
+
+  /// Number of slots keyed draws hold. For tests.
+  @visibleForTesting
+  int get drawSlotCount => _drawSlots.values.fold(
+    0,
+    (sum, draw) => sum + draw.slots.where((slot) => slot != null).length,
+  );
+
+  /// Writes [bytes] at the slot the [key] draw's next emplacement had the
+  /// frame before, or at a new one; null when that slot was already written
+  /// since the last submission.
+  gpu.BufferView? _emplaceKeyed(Object key, ByteData bytes) {
+    final length = bytes.lengthInBytes;
+    final alignment = _alignment;
+    final capacity = (length + alignment - 1) ~/ alignment * alignment;
+    final draw = _drawSlots[key] ??= _DrawSlots();
+    if (draw.frame != _frame) {
+      draw.frame = _frame;
+      draw.next = 0;
+    }
+    final slots = draw.slots;
+    for (var at = 0; at < draw.next && at < slots.length; at++) {
+      final held = slots[at];
+      if (held == null || !held.holds(bytes)) continue;
+      held.lastUsed = _frame;
+      return gpu.BufferView(
+        held.block.device,
+        offsetInBytes: held.offset,
+        lengthInBytes: length,
+      );
+    }
+    final index = draw.next++;
+    var slot = index < slots.length ? slots[index] : null;
+    if (slot != null && slot.capacity != capacity) {
+      (_freeSlots[slot.capacity] ??= []).add(slot);
+      slot = null;
+    }
+    if (slot == null) {
+      slot = _takeSlot(capacity);
+      if (index < slots.length) {
+        slots[index] = slot;
+      } else {
+        slots.add(slot);
+      }
+    }
+    if (slot.written) return null;
+    slot
+      ..written = true
+      ..lastUsed = _frame;
+    _written.add(slot);
+    final block = slot.block;
+    if (!slot.holds(bytes)) {
+      block.stage(slot.offset, bytes);
+      slot.length = length;
+      if (slot.offset < block.dirtyStart) block.dirtyStart = slot.offset;
+      final end = slot.offset + length;
+      if (end > block.dirtyEnd) block.dirtyEnd = end;
+    }
+    return gpu.BufferView(
+      block.device,
+      offsetInBytes: slot.offset,
+      lengthInBytes: length,
+    );
+  }
+
+  _Slot _takeSlot(int capacity) {
+    final free = _freeSlots[capacity];
+    if (free != null && free.isNotEmpty) return free.removeLast();
+    var block = _slotBlocks.isEmpty ? null : _slotBlocks.last;
+    if (block == null || block.cursor + capacity > block.length) {
+      buffersCreated++;
+      final device = gpu.gpuContext.createDeviceBuffer(
+        gpu.StorageMode.hostVisible,
+        blockLengthInBytes,
+      );
+      block = _TransientBlock(
+        device,
+        ByteData(blockLengthInBytes),
+        blockLengthInBytes,
+        false,
+      );
+      _slotBlocks.add(block);
+    }
+    final slot = _Slot(block, block.cursor, capacity);
+    block.cursor += capacity;
+    return slot;
   }
 
   /// Decides where an emplacement of [length] lands: at the aligned offset
@@ -487,6 +631,11 @@ class TransientArena implements FrameTransients {
     final length = bytes.lengthInBytes;
     if (length > blockLengthInBytes) {
       return _emplaceOversize(bytes);
+    }
+    final key = transientDrawKey;
+    if (key != null && _keepsSlots) {
+      final view = _emplaceKeyed(key, bytes);
+      if (view != null) return view;
     }
 
     // Same math as [planEmplacement], inlined so the per-draw path builds no
@@ -586,6 +735,20 @@ class TransientArena implements FrameTransients {
       _seal(block, id);
     }
     _open.clear();
+    for (final block in _slotBlocks) {
+      if (block.dirtyEnd <= block.dirtyStart) continue;
+      block.device.overwrite(
+        ByteData.sublistView(block.staging, block.dirtyStart, block.dirtyEnd),
+        destinationOffsetInBytes: block.dirtyStart,
+      );
+      block
+        ..dirtyStart = block.length
+        ..dirtyEnd = 0;
+    }
+    for (final slot in _written) {
+      slot.written = false;
+    }
+    _written.clear();
   }
 
   void _seal(_TransientBlock block, int stamp) {
@@ -666,6 +829,48 @@ class _TransientBlock {
 
   /// The owner's frame count when this block was last handed out.
   int lastUsed = 0;
+
+  /// The staged range of a slot block not yet uploaded.
+  late int dirtyStart = length;
+  int dirtyEnd = 0;
+}
+
+class _DrawSlots {
+  final List<_Slot?> slots = [];
+
+  /// The frame [next] counts emplacements in.
+  int frame = -1;
+  int next = 0;
+}
+
+class _Slot {
+  _Slot(this.block, this.offset, this.capacity);
+
+  final _TransientBlock block;
+  final int offset;
+  final int capacity;
+
+  /// Written since the last submission.
+  bool written = false;
+  int lastUsed = 0;
+
+  /// The bytes staged last; 0 before the first write.
+  int length = 0;
+
+  /// Whether the slot already holds [bytes], so a draw whose data does not
+  /// change with the camera writes nothing.
+  bool holds(ByteData bytes) {
+    final count = bytes.lengthInBytes;
+    if (count != length || count & 3 != 0) return false;
+    final staging = block.staging;
+    for (var i = 0; i < count; i += 4) {
+      if (staging.getUint32(offset + i, Endian.host) !=
+          bytes.getUint32(i, Endian.host)) {
+        return false;
+      }
+    }
+    return true;
+  }
 }
 
 /// The renderer's per-frame uniform transients (alignment resolved from the

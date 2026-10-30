@@ -391,6 +391,72 @@ void main() {
       expect(arena.blockCount, 3);
     });
 
+    test('a keyed draw keeps its offsets when the draws before it change', () {
+      final tracker = GpuSubmissionTracker();
+      final arena = TransientArena(
+        tracker,
+        alignment: 256,
+        keepsDrawSlots: true,
+      );
+      final a = Object();
+      final b = Object();
+      List<(Object, int)> frame(List<Object> draws) {
+        arena.beginFrame();
+        final views = <(Object, int)>[];
+        for (final draw in draws) {
+          transientDrawKey = draw;
+          for (var i = 0; i < 2; i++) {
+            final view = arena.emplace(_bytes(100, i));
+            views.add((view.buffer, view.offsetInBytes));
+          }
+        }
+        transientDrawKey = null;
+        tracker.record();
+        return views;
+      }
+
+      final both = frame([a, b]);
+      expect(frame([b]), both.sublist(2), reason: 'a is culled');
+      expect(frame([a, b]), both);
+    });
+
+    test(
+      'a keyed slot written again before a submission takes a new place',
+      () {
+        final tracker = GpuSubmissionTracker();
+        final arena = TransientArena(
+          tracker,
+          alignment: 256,
+          keepsDrawSlots: true,
+        );
+        final draw = Object();
+        arena.beginFrame();
+        transientDrawKey = draw;
+        final first = arena.emplace(_bytes(100));
+        arena.beginFrame();
+        final again = arena.emplace(_bytes(100));
+        transientDrawKey = null;
+        expect((
+          again.buffer,
+          again.offsetInBytes,
+        ), isNot((first.buffer, first.offsetInBytes)));
+      },
+    );
+
+    test('a keyed draw takes the bump arena where writes are not ordered', () {
+      final tracker = GpuSubmissionTracker();
+      final arena = TransientArena(
+        tracker,
+        alignment: 256,
+        keepsDrawSlots: false,
+      );
+      arena.beginFrame();
+      transientDrawKey = Object();
+      arena.emplace(_bytes(100));
+      transientDrawKey = null;
+      expect(arena.drawSlotCount, 0);
+    });
+
     test('paced frames and lighter frames keep the pool', () {
       final tracker = GpuSubmissionTracker();
       final arena = TransientArena(

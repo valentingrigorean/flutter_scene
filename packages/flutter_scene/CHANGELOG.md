@@ -1,5 +1,6 @@
 ## 0.24.4
 
+* `GpuCapabilities.orderedBufferWrites` states that a host buffer write reaches the GPU after the work already submitted. There a draw keyed by `transientDrawKey` keeps its transient uniforms at the offsets it had the frame before, written only when they change, so a backend that replays recorded draws finds them unchanged while the camera moves.
 * A buffer on the WebGPU web backend keeps no CPU copy of its contents: a write that covers part of a 4-byte word merges its bytes into the word on the GPU.
 * The debug near-plane advisory no longer prints for a scene with reversed float depth, whose precision the near plane leaves alone.
 * On the WebGPU web backend, `gpuHost.skipCompilingDraws` skips a draw whose pipeline variant is unbuilt and builds it with `createRenderPipelineAsync`, off the GPU process's main thread, and `gpuHost.pipelinesReady` completes once those builds finish, so a warm-up builds pipelines without stalling the page's frames.

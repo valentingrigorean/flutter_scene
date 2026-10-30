@@ -270,7 +270,7 @@ export 'src/light.dart'
 export 'src/render/custom_render_pass.dart'
     show CustomRenderPass, RenderInput, RenderPassContext, RenderStage;
 export 'src/render/frame_transients.dart'
-    show GpuSubmissions, TransientWriter, gpuSubmissions;
+    show GpuSubmissions, TransientWriter, gpuSubmissions, transientDrawKey;
 export 'src/render/shadow_pass.dart'
     show
         SpotShadowInfo,

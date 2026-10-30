@@ -1960,7 +1960,10 @@ base class SceneEncoder {
       if (_coveragePass) _bindCoverage(material, fade);
     } else {
       material.lodFade = fade;
+      final drawKey = transientDrawKey;
+      transientDrawKey = material;
       material.bind(_renderPass, _transientsBuffer, _lighting);
+      transientDrawKey = drawKey;
     }
     final faceCull = _faceCull;
     if (faceCull != null) _renderPass.setTrackedCullMode(faceCull);
@@ -2589,6 +2592,7 @@ base class SceneEncoder {
         (below == null || _opaqueRecords[index].item.renderOrder < below)) {
       final record = _opaqueRecords[index];
       final item = record.item;
+      transientDrawKey = item;
       record.material.lightListOffset = item.lightListOffset;
       record.material.lightListCount = item.lightListCount;
       record.material.lightChannelMask = item.lightChannelMask;
@@ -2637,6 +2641,7 @@ base class SceneEncoder {
       }
       index = end;
     }
+    transientDrawKey = null;
     _opaqueCursor = index;
     encodeWatch?.stop();
     if (profileRendering) {
@@ -3120,8 +3125,10 @@ base class SceneEncoder {
       record.material.setModelScaleFromTransform(record.item.worldTransform);
       record.item.applyJointsTexture(record.geometry);
       record.item.applyMorphWeights(record.geometry);
+      transientDrawKey = record.item;
       _encodeBlended(record);
     }
+    transientDrawKey = null;
     encodeWatch?.stop();
     _translucentEncodeMicros += encodeWatch?.elapsedMicroseconds ?? 0;
 
@@ -3201,8 +3208,10 @@ base class SceneEncoder {
       record.material.setModelScaleFromTransform(record.item.worldTransform);
       record.item.applyJointsTexture(record.geometry);
       record.item.applyMorphWeights(record.geometry);
+      transientDrawKey = record.item;
       _encodeBlended(record);
     }
+    transientDrawKey = null;
 
     _drawTransformOverride = null;
     for (final record in _displayReferredRecords) {

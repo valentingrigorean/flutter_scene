@@ -44,6 +44,7 @@ class GpuCapabilities {
     this.aheadOfTimePipelines = false,
     this.float32Blending = true,
     this.orderedAttachmentReuse = false,
+    this.orderedBufferWrites = false,
   });
 
   /// A rendered texture can be handed to Flutter as a `ui.Image` without a
@@ -92,6 +93,14 @@ class GpuCapabilities {
   /// no shader samples, in place of one for each frame in flight.
   final bool orderedAttachmentReuse;
 
+  /// A host write to a buffer reaches the GPU after the work already
+  /// submitted, so a frame can write a buffer the GPU still reads for an
+  /// earlier frame.
+  ///
+  /// Where this is true, a keyed draw's transient uniforms keep their buffer
+  /// offsets from frame to frame (see `transientDrawKey`).
+  final bool orderedBufferWrites;
+
   /// The tier these capabilities add up to.
   GpuHostTier get hostTier {
     if (!textureToImage && !presentAsImage) return GpuHostTier.headless;
@@ -107,7 +116,8 @@ class GpuCapabilities {
       'textureArrays: $textureArrays, timestampQueries: $timestampQueries, '
       'aheadOfTimePipelines: $aheadOfTimePipelines, '
       'float32Blending: $float32Blending, '
-      'orderedAttachmentReuse: $orderedAttachmentReuse)';
+      'orderedAttachmentReuse: $orderedAttachmentReuse, '
+      'orderedBufferWrites: $orderedBufferWrites)';
 }
 
 /// A native GPU backend the shim can render through.
