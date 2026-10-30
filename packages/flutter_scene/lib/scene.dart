@@ -271,7 +271,12 @@ export 'src/render/custom_render_pass.dart'
     show CustomRenderPass, RenderInput, RenderPassContext, RenderStage;
 export 'src/render/kept_pass_draw.dart' show KeptItem, KeptPassItems;
 export 'src/render/frame_transients.dart'
-    show GpuSubmissions, TransientWriter, gpuSubmissions, transientDrawKey;
+    show
+        GpuSubmissions,
+        TransientWriter,
+        currentDrawKept,
+        gpuSubmissions,
+        transientDrawKey;
 export 'src/render/shadow_pass.dart'
     show
         SpotShadowInfo,
@@ -316,7 +321,7 @@ export 'src/render/render_scene.dart'
         currentDrawOrigin,
         currentDrawWorldTransform;
 export 'src/render/view_info.dart'
-    show HeldBlock, kMatInfoFloats, kItemFragInfoFloats;
+    show HeldBlock, kMatInfoFloats, kItemFragInfoFloats, viewInfoOf;
 export 'src/render/shared_instance_rows.dart'
     show
         InstanceRecordFrame,

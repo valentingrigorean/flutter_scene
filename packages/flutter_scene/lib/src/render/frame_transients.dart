@@ -207,6 +207,24 @@ final class _GpuSubmissionsView implements GpuSubmissions {
 /// clears it after.
 Object? transientDrawKey;
 
+/// Whether the draw bound next is recorded for a render item a backend keeps
+/// (`RetainedDraws`) rather than encoded for this frame, so a geometry that
+/// keeps its draw (`Geometry.keepsItsDraw`) binds and draws its held form.
+bool get currentDrawKept => _currentDrawKept;
+bool _currentDrawKept = false;
+
+/// Runs [record] with [currentDrawKept] set.
+@internal
+void recordKeptDraw(void Function() record) {
+  final was = _currentDrawKept;
+  _currentDrawKept = true;
+  try {
+    record();
+  } finally {
+    _currentDrawKept = was;
+  }
+}
+
 /// Destination for per-frame transient GPU data (uniform blocks, instance
 /// vertex data). Emplaced data is valid for the current frame only.
 ///
