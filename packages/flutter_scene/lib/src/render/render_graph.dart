@@ -263,7 +263,9 @@ class TransientTexturePool {
 
   final int framesInFlight;
   final Map<TransientTextureDescriptor, List<gpu.Texture?>> _rings = {};
+  final Map<TransientTextureDescriptor, int> _acquiredAt = {};
   int _frame = 0;
+  int _frames = 0;
 
   /// Textures every [TransientTexturePool] has created. For tests that check
   /// steady-state rendering allocates nothing.
@@ -274,6 +276,23 @@ class TransientTexturePool {
   /// any [acquire] calls.
   void beginFrame() {
     _frame = (_frame + 1) % framesInFlight;
+    _frames++;
+  }
+
+  /// Releases the textures of every descriptor no [acquire] asked for in
+  /// the last [frames] frames, which no frame in flight still uses where
+  /// [frames] is at least [framesInFlight].
+  void releaseIdle(int frames) {
+    _rings.removeWhere((descriptor, ring) {
+      if (_frames - (_acquiredAt[descriptor] ?? _frames) <= frames) {
+        return false;
+      }
+      for (final texture in ring) {
+        if (texture != null) gpu.gpuHost.releaseTexture(texture);
+      }
+      _acquiredAt.remove(descriptor);
+      return true;
+    });
   }
 
   /// Returns a texture matching [descriptor] from the pool for the
@@ -286,6 +305,7 @@ class TransientTexturePool {
         null,
       ),
     );
+    _acquiredAt[descriptor] = _frames;
     final slot = _frame % ring.length;
     var texture = ring[slot];
     if (texture == null) {
@@ -322,6 +342,7 @@ class TransientTexturePool {
       }
     }
     _rings.clear();
+    _acquiredAt.clear();
   }
 
   /// Resident bytes of every texture the pool holds, summed across mip chains.
@@ -399,11 +420,17 @@ class RenderGraphContext {
     required this.transientsBuffer,
     required this.texturePool,
     required this.blackboard,
-  });
+    TransientTexturePool? sizelessTexturePool,
+  }) : sizelessTexturePool = sizelessTexturePool ?? texturePool;
 
   final TransientWriter transientsBuffer;
   final TransientTexturePool texturePool;
   final Blackboard blackboard;
+
+  /// The pool for attachments whose size does not follow the output's,
+  /// such as the shadow atlas, which a change of output size keeps; the
+  /// [texturePool] where the view has none of its own.
+  final TransientTexturePool sizelessTexturePool;
 }
 
 /// A single unit of rendering work in a [RenderGraph].
@@ -456,6 +483,7 @@ class RenderGraph {
   void execute({
     required TransientWriter transientsBuffer,
     required TransientTexturePool texturePool,
+    TransientTexturePool? sizelessTexturePool,
     RenderGraphObserver? observer,
     RenderViewStats? stats,
   }) {
@@ -468,6 +496,7 @@ class RenderGraph {
           ? transientsBuffer
           : _RecordingTransientWriter(transientsBuffer, recorder),
       texturePool: texturePool,
+      sizelessTexturePool: sizelessTexturePool,
       blackboard: observer == null
           ? _blackboard
           : _RecordingBlackboard(_blackboard, observer),

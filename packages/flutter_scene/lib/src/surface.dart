@@ -66,6 +66,13 @@ class Surface {
   TransientTexturePool transientTexturePool([int viewIndex = 0]) =>
       _view(viewIndex).pool;
 
+  /// The pool of view [viewIndex] for attachments whose size does not
+  /// follow the output's, such as the shadow atlas: a new output size keeps
+  /// them, and a descriptor no frame asked for a while is released.
+  @internal
+  TransientTexturePool sizelessTexturePool([int viewIndex = 0]) =>
+      _view(viewIndex).sizeless;
+
   /// Returns the next 8-bit swapchain color texture for view [viewIndex] at
   /// [size], advancing that view's frame. A new [size] gets its own ring and
   /// transient pool; the previous size's are kept for a return. A [lent]
@@ -233,6 +240,9 @@ class _ViewSurface {
 
   // Most recently used last.
   final List<_SizedTargets> _sizes = [];
+  final TransientTexturePool sizeless = TransientTexturePool(
+    framesInFlight: Surface._maxFramesInFlight,
+  );
   int _frame = 0;
   gpu.Texture? _lastIssued;
 
@@ -244,7 +254,7 @@ class _ViewSurface {
   TransientTexturePool get pool => _current.pool;
 
   int get residentBytes {
-    var bytes = 0;
+    var bytes = sizeless.residentBytes;
     for (final sized in _sizes) {
       bytes += sized.pool.residentBytes;
     }
@@ -260,6 +270,7 @@ class _ViewSurface {
       _sizes.removeAt(0).release();
     }
     _sizes.lastOrNull?.pool.clear();
+    sizeless.clear();
     return bytes;
   }
 
@@ -289,6 +300,9 @@ class _ViewSurface {
       return true;
     });
     sized.pool.beginFrame();
+    sizeless
+      ..beginFrame()
+      ..releaseIdle(_idleFrames);
     if (lent != null) return _lastIssued = lent;
     final colors = sized.swapchainColors;
     if (sized.cursor == colors.length) {
@@ -312,22 +326,25 @@ class _ViewSurface {
   }
 
   int get heldTextureCount {
-    var count = 0;
+    var count = sizeless.heldTextureCount;
     for (final sized in _sizes) {
       count += sized.swapchainColors.length + sized.pool.heldTextureCount;
     }
     return count;
   }
 
-  Iterable<gpu.Texture> get heldTextures => _sizes.expand(
-    (sized) => sized.swapchainColors.followedBy(sized.pool.heldTextures),
-  );
+  Iterable<gpu.Texture> get heldTextures => _sizes
+      .expand(
+        (sized) => sized.swapchainColors.followedBy(sized.pool.heldTextures),
+      )
+      .followedBy(sizeless.heldTextures);
 
   void dispose() {
     for (final sized in _sizes) {
       sized.release();
     }
     _sizes.clear();
+    sizeless.clear();
     _lastIssued = null;
   }
 }

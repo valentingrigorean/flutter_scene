@@ -3953,6 +3953,7 @@ base class Scene implements SceneGraph {
       pixelSize: pixelSize,
       viewportSize: viewportSize ?? drawArea.size,
       pool: surface.transientTexturePool(viewIndex),
+      sizelessPool: surface.sizelessTexturePool(viewIndex),
       environmentMap: environmentMap,
       transientsBuffer: transientsBuffer,
       lightComponent: lightComponent,
@@ -4239,6 +4240,9 @@ base class Scene implements SceneGraph {
     // [pixelSize] for views with no logical size (render textures, probes).
     ui.Size? viewportSize,
     required TransientTexturePool pool,
+    // The pool for attachments a new output size keeps, such as the shadow
+    // atlas; [pool] where the view has none of its own.
+    TransientTexturePool? sizelessPool,
     required EnvironmentMap environmentMap,
     required TransientWriter transientsBuffer,
     required DirectionalLightComponent? lightComponent,
@@ -4918,6 +4922,7 @@ base class Scene implements SceneGraph {
       graph.execute(
         transientsBuffer: transientsBuffer,
         texturePool: pool,
+        sizelessTexturePool: sizelessPool,
         observer: capturer,
         stats: viewStats,
       );
@@ -5302,6 +5307,7 @@ base class Scene implements SceneGraph {
     graph.execute(
       transientsBuffer: transientsBuffer,
       texturePool: pool,
+      sizelessTexturePool: sizelessPool,
       observer: capturer,
       stats: viewStats,
     );
