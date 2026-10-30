@@ -696,6 +696,7 @@ final class RetainedDepthDraws extends RetainedDraws {
       encoder._cameraTransform,
       encoder._cameraPosition,
     );
+    countKeptDraws();
     items.draw(
       pass,
       0,

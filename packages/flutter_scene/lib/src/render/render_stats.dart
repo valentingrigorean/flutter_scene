@@ -73,6 +73,12 @@ class RenderCounters {
   /// that changed. Zero on a frame that moves only the camera or the light.
   int drawsKept = 0;
 
+  /// Draws the backend made from the render items it keeps, one per kept
+  /// draw each time a pass draws them: the kept side of a frame whose
+  /// encoded side is [draws]. The backend culls them against the pass's
+  /// view, so this counts the draws handed over, culled or not.
+  int itemsKept = 0;
+
   /// Nodes the scene pre-pass visited: one per node it ticked and one per
   /// node whose render items it refreshed. Zero on a frame that changes no
   /// node while no node ticks.
@@ -108,6 +114,7 @@ class RenderCounters {
     instanceBytesReplayed = 0;
     itemInfoBytesWritten = 0;
     drawsKept = 0;
+    itemsKept = 0;
     prePassNodes = 0;
     materialSummaryItems = 0;
     sceneCulls = 0;
@@ -129,6 +136,7 @@ class RenderCounters {
     instanceBytesReplayed = other.instanceBytesReplayed;
     itemInfoBytesWritten = other.itemInfoBytesWritten;
     drawsKept = other.drawsKept;
+    itemsKept = other.itemsKept;
     prePassNodes = other.prePassNodes;
     materialSummaryItems = other.materialSummaryItems;
     sceneCulls = other.sceneCulls;
@@ -154,6 +162,7 @@ class RenderCounters {
     itemInfoBytesWritten =
         now.itemInfoBytesWritten - start.itemInfoBytesWritten;
     drawsKept = now.drawsKept - start.drawsKept;
+    itemsKept = now.itemsKept - start.itemsKept;
     prePassNodes = now.prePassNodes - start.prePassNodes;
     materialSummaryItems =
         now.materialSummaryItems - start.materialSummaryItems;
@@ -176,6 +185,7 @@ class RenderCounters {
     'instanceBytesReplayed': instanceBytesReplayed,
     'itemInfoBytesWritten': itemInfoBytesWritten,
     'drawsKept': drawsKept,
+    'itemsKept': itemsKept,
     'prePassNodes': prePassNodes,
     'materialSummaryItems': materialSummaryItems,
     'sceneCulls': sceneCulls,

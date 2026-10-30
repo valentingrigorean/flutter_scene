@@ -85,6 +85,7 @@ abstract base class RetainedDraws {
   int _epoch = -1;
   int _read = 0;
   int _syncs = 0;
+  int _held = 0;
 
   /// The passes of [items] a kept draw draws in, one bit each.
   @protected
@@ -126,7 +127,12 @@ abstract base class RetainedDraws {
 
   /// The number of draws kept as render items.
   @visibleForTesting
-  int get keptCount => _kept.values.where((kept) => kept.id != 0).length;
+  int get keptCount => _held;
+
+  /// Counts the kept draws as drawn by the backend this frame, in
+  /// [RenderCounters.itemsKept]; a pass calls it at each draw of [items].
+  @protected
+  void countKeptDraws() => activeRenderCounters.itemsKept += _held;
 
   /// Brings the kept draws up to date with the scene for the pass drawing
   /// into [target], whose own settings [key] states.
@@ -252,11 +258,11 @@ abstract base class RetainedDraws {
     );
     _unpin(item, kept);
     if (id == null) {
-      kept.id = 0;
+      _hold(kept, 0);
       _encode(item, kept, true);
       return;
     }
-    kept.id = id;
+    _hold(kept, id);
     pinHeld(item);
     _encode(item, kept, false);
     activeRenderCounters.drawsKept++;
@@ -312,9 +318,15 @@ abstract base class RetainedDraws {
   void _forget(RenderItem item, _Kept kept) {
     if (kept.id != 0) {
       items.remove(kept.id);
-      kept.id = 0;
+      _hold(kept, 0);
     }
     _unpin(item, kept);
+  }
+
+  void _hold(_Kept kept, int id) {
+    if (kept.id != 0) _held--;
+    if (id != 0) _held++;
+    kept.id = id;
   }
 
   void _unpin(RenderItem item, _Kept kept) {
@@ -338,6 +350,7 @@ abstract base class RetainedDraws {
       _unpin(item, kept);
     }
     _kept.clear();
+    _held = 0;
     encoded.clear();
     items.dispose();
   }

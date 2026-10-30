@@ -137,6 +137,7 @@ final class RetainedShadowCasters extends RetainedDraws {
     setCurrentViewInstanceBand(cameraPosition, _noViewDirection);
     currentViewForward = null;
     clearCurrentDrawDepthOffset();
+    countKeptDraws();
     items.draw(
       pass,
       cascade,

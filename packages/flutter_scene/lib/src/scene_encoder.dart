@@ -3527,6 +3527,7 @@ final class RetainedColorDraws extends RetainedDraws {
       lighting.environmentMap,
     );
     EngineLightingUniforms.packFog(_fogScratch, lighting);
+    countKeptDraws();
     items.draw(
       pass,
       0,
