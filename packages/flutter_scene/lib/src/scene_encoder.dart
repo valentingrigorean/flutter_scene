@@ -3514,6 +3514,9 @@ final class RetainedColorDraws extends RetainedDraws {
   }
 
   @override
+  Iterable<HeldBlock> heldBlocksOf(RenderItem item) => [item.heldFragItem];
+
+  @override
   void pinHeld(RenderItem item) {
     // The vertex ItemInfo.
     super.pinHeld(item);
@@ -3663,6 +3666,9 @@ final class RetainedTranslucentDraws extends RetainedDraws {
     return 1 << _passOf[order]!;
   }
 
+  @override
+  bool get joinsRuns => false;
+
   /// Brings the kept draws up to date with the scene for the color pass that
   /// [encoder] encodes into [target], hands [encoder] the draws it encodes
   /// this frame, and leaves the rest for [SceneEncoder.flushTranslucent].
@@ -3798,6 +3804,9 @@ final class RetainedTranslucentDraws extends RetainedDraws {
     encoder.encodeForKeep(item);
     transientDrawKey = key;
   }
+
+  @override
+  Iterable<HeldBlock> heldBlocksOf(RenderItem item) => [item.heldFragItem];
 
   @override
   void pinHeld(RenderItem item) {

@@ -40,6 +40,7 @@ import 'package:meta/meta.dart' show experimental;
 import 'package:vector_math/vector_math.dart' as vm;
 
 import '../shared/gpu_capabilities.dart';
+import '../shared/item_instances.dart';
 import '../shared/item_sort.dart';
 
 /// A GPU backend the shim can render through instead of Impeller.
@@ -351,6 +352,10 @@ abstract interface class GpuBackendItemSet {
   /// recorder recorded no draw or several. The recorder's bindings are
   /// cleared either way.
   ///
+  /// With [instances], the item draws its recorded draw as one instanced
+  /// draw of the instances each [draw] does not cull by their own bounds
+  /// ([ItemInstances]); [bounds] then holds them all.
+  ///
   /// With [order], a pass draws its items in ascending [order], so a set
   /// that states one for every item draws them in that order, such as paint
   /// order. Without it the backend orders a pass's items as it draws them
@@ -360,6 +365,7 @@ abstract interface class GpuBackendItemSet {
     int id = 0,
     required int passes,
     Float32List? bounds,
+    ItemInstances? instances,
     int? order,
   });
 
