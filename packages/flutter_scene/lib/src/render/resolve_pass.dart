@@ -8,7 +8,7 @@ import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/post_process/post_process.dart';
 import 'package:flutter_scene/src/render/auto_exposure_pass.dart';
 import 'package:flutter_scene/src/render/bloom_pass.dart';
-import 'package:flutter_scene/src/render/kept_fullscreen.dart';
+import 'package:flutter_scene/src/render/kept_pass_draw.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/retained_draws.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
@@ -171,7 +171,7 @@ class ResolvePass extends RenderGraphPass {
       drawCompat(pass, 6);
     }
 
-    final kept = KeptFullscreen.of(_renderScene, SceneItems.resolvePass);
+    final kept = KeptPassDraw.of(_renderScene, SceneItems.resolvePass);
     final drawn =
         kept != null &&
         kept.draw(
@@ -180,7 +180,7 @@ class ResolvePass extends RenderGraphPass {
           key: (pipeline, lut),
           record: record,
           viewBlocks: [info],
-          viewTextures: KeptFullscreen.viewTextures(
+          viewTextures: KeptPassDraw.viewTextures(
             sceneColor: hdrColor,
             bloom: bloomTexture,
             exposureFactor: exposureFactor,

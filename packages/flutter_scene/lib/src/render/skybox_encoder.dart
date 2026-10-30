@@ -5,7 +5,7 @@ import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/fullscreen_quad.dart';
-import 'package:flutter_scene/src/render/kept_fullscreen.dart';
+import 'package:flutter_scene/src/render/kept_pass_draw.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/retained_draws.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
@@ -127,7 +127,7 @@ void encodeSkybox(
   // textures, so the scene's item set keeps it; a shader sky binds what its
   // source chooses and is encoded.
   if (source is EnvironmentSkySource && target != null) {
-    final kept = KeptFullscreen.of(renderScene, SceneItems.skyPass);
+    final kept = KeptPassDraw.of(renderScene, SceneItems.skyPass);
     if (kept != null &&
         kept.draw(
           renderPass,
