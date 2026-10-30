@@ -20,6 +20,36 @@
 // never-taken reads where the code that used it is gone, so both tiers keep
 // one binding interface.
 
+// A material's own fragment constants, held per material and rewritten only
+// when they change (split out of the per-draw FragInfo block). Declared here,
+// where the lit framework reads it, rather than beside FragInfo: a shader that
+// declares a block it never reads reflects it at binding 0 (see
+// material_scene_inputs.glsl).
+uniform MatInfo {
+  // Linear base color factor (rgb) and straight alpha (a).
+  vec4 color;
+  // Linear emissive radiance (rgb) scaled by the emissive strength (a).
+  vec4 emissive_factor;
+  // xyz: the standard (non-physical) path's dielectric reflectance at normal
+  // incidence, the plain 0.04 unless a scalar ior / specular / specular color
+  // overrides it. w is unused here (the directional shadow's end depth stays
+  // in frag_info.dielectric_f0.w, a pass value).
+  vec4 dielectric_f0;
+  float vertex_color_weight;
+  float metallic_factor;
+  float roughness_factor;
+  float has_normal_map;
+  float normal_scale;
+  float occlusion_strength;
+  // glTF alpha mode: 0 opaque, 1 mask, 2 blend.
+  float alpha_mode;
+  float alpha_cutoff;
+  // Geometric specular antialiasing (see material_lighting.glsl).
+  float specular_aa_variance;
+  float specular_aa_threshold;
+}
+mat_info;
+
 // Distance fog (the FogInfo block + ApplyFog), applied to the final lit color.
 #include <fog.glsl>
 // The material's clip volume (the ClipInfo block + ApplyClipVolume), tested
