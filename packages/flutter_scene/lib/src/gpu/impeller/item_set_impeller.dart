@@ -209,10 +209,12 @@ final class _ItemDraw {
   });
 
   final fg.RenderPipeline pipeline;
-  final List<(int, fg.BufferView)> vertices;
-  final fg.BufferView? index;
+  // The shim's views, which a replay resolves, so a buffer with ordered
+  // writes binds the copy current at the replay.
+  final List<(int, BufferView)> vertices;
+  final BufferView? index;
   final IndexType indexType;
-  final List<(fg.UniformSlot, fg.BufferView)> uniforms;
+  final List<(fg.UniformSlot, BufferView)> uniforms;
   final List<(fg.UniformSlot, int)> viewUniforms;
   final List<(fg.UniformSlot, fg.Texture, SamplerOptions)> textures;
   final List<(fg.UniformSlot, int, SamplerOptions)> viewTextures;
@@ -327,12 +329,12 @@ final class _ItemRecorder {
     }
     final pipeline = _pipeline?._impeller;
     if (pipeline == null) return;
-    final uniforms = <(fg.UniformSlot, fg.BufferView)>[];
+    final uniforms = <(fg.UniformSlot, BufferView)>[];
     final viewUniforms = <(fg.UniformSlot, int)>[];
     for (final (slot, view) in _uniforms.values) {
       final at = _viewBlocks[slot.uniformName];
       if (at == null) {
-        uniforms.add((slot._impeller!, view._impeller!));
+        uniforms.add((slot._impeller!, view));
       } else {
         viewUniforms.add((slot._impeller!, at));
       }
@@ -351,9 +353,9 @@ final class _ItemRecorder {
       pipeline: pipeline,
       vertices: [
         for (final MapEntry(key: slot, value: view) in _vertices.entries)
-          (slot, view._impeller!),
+          (slot, view),
       ],
-      index: _index?._impeller,
+      index: _index,
       indexType: _indexType,
       uniforms: uniforms,
       viewUniforms: viewUniforms,
@@ -652,10 +654,10 @@ final class _ItemSet {
       draw.state.applyOnto(pass, live);
       for (final (slot, view) in draw.vertices) {
         if (shownView != null && slot == instances!.slot) continue;
-        _bindVertices(pass, slot, view);
+        _bindVertices(pass, slot, view._impeller!);
       }
       if (shownView != null) _bindVertices(pass, instances!.slot, shownView);
-      final indices = draw.index;
+      final indices = draw.index?._impeller;
       if (indices != null &&
           (draw.indexType != boundIndexType ||
               !_sameView(boundIndex, indices))) {
@@ -664,7 +666,7 @@ final class _ItemSet {
         boundIndexType = draw.indexType;
       }
       for (final (slot, view) in draw.uniforms) {
-        _bindUniform(pass, slot, view);
+        _bindUniform(pass, slot, view._impeller!);
       }
       for (final (slot, at) in draw.viewUniforms) {
         if (at < views.length) _bindUniform(pass, slot, views[at]);

@@ -154,6 +154,13 @@ abstract base class GpuContext {
   bool get doesSupportManuallyMippedTextures;
   DeviceBuffer createDeviceBuffer(StorageMode storageMode, int sizeInBytes);
   DeviceBuffer createDeviceBufferWithCopy(ByteData data);
+
+  /// Allocates host-visible GPU memory whose writes reach the GPU in order.
+  /// WebGPU writes through its queue and WebGL through the GL command stream,
+  /// which both order a write after the work before it, so this is a plain
+  /// buffer on the web.
+  DeviceBuffer createOrderedDeviceBuffer(int sizeInBytes) =>
+      createDeviceBuffer(StorageMode.hostVisible, sizeInBytes);
   HostBuffer createHostBuffer({
     int blockLengthInBytes = HostBuffer.kDefaultBlockLengthInBytes,
   });
