@@ -1847,13 +1847,18 @@ class RenderScene {
   @internal
   int viewBlocksRevision = 0;
 
+  /// Drops [changeLog], so each reader reads every item again on its next
+  /// visit.
+  @internal
+  void relogItems() {
+    changeLog.clear();
+    changeLogEpoch++;
+  }
+
   /// Appends [item] to [changeLog].
   @internal
   void logItemChange(RenderItem item) {
-    if (changeLog.length >= 2 * items.length + 1024) {
-      changeLog.clear();
-      changeLogEpoch++;
-    }
+    if (changeLog.length >= 2 * items.length + 1024) relogItems();
     changeLog.add(item);
   }
 

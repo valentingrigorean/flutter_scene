@@ -652,6 +652,14 @@ base class Scene implements SceneGraph {
     if (renderScene.drawOrigin.moveTo(x, y, z)) markSceneDrawChanged();
   }
 
+  /// Has every draw the backend keeps as a render item checked against its
+  /// material on the next frame, and recorded again where what it binds
+  /// changed, for a change no node was told of
+  /// ([Node.markMaterialsChanged]): a material getter that answers from app
+  /// state, such as a [Material.clipVolume] that follows a cut the app moves.
+  /// A frame that calls it reads every item once.
+  void markKeptDrawsChanged() => renderScene.relogItems();
+
   /// Supplies the bytes [bytes] gives, each frame, as the uniform block
   /// [name] to every color-pass draw the backend keeps as a render item, or
   /// stops when [bytes] is null.

@@ -25,6 +25,7 @@ export 'package:scene/schema.dart'
         GizmoWireCylinder,
         GizmoWireRect,
         GizmoWireSphere;
+
 export 'src/fscene/annotations.dart'
     show
         AngleProperty,
