@@ -155,6 +155,20 @@ final class RenderPass {
   // arena hands out, which no kept item may hold.
   bool _readsTransient = false;
 
+  // The prologue the draw being recorded runs once kept; cleared with the
+  // bindings.
+  ItemPrologue? _prologue;
+
+  /// States that the draw this pass, made by [ItemSet.recorder], records
+  /// next runs [prologue] before each draw of its pass once kept. A set
+  /// whose backend runs no prologue keeps no such draw.
+  void keepPrologue(ItemPrologue prologue) {
+    if (_records == null) {
+      throw StateError('Only a pass that records kept draws keeps a prologue.');
+    }
+    _prologue = prologue;
+  }
+
   void bindPipeline(RenderPipeline pipeline) {
     final impeller = _impeller;
     if (impeller != null) {
@@ -274,6 +288,7 @@ final class RenderPass {
   }
 
   void clearBindings() {
+    _prologue = null;
     final impeller = _impeller;
     if (impeller != null) {
       impeller.clearBindings();

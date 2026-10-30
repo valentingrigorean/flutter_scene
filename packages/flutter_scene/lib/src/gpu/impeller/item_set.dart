@@ -64,6 +64,10 @@ final class ItemSet {
   /// order. Among items of one order, or of none, the backend orders those
   /// that blend nothing as it draws them fastest, and keeps an item that
   /// blends where it was kept.
+  ///
+  /// A draw the recorder recorded with a prologue ([RenderPass.keepPrologue])
+  /// draws in the one pass of [passes]; Impeller and a backend that runs no
+  /// prologue keep none.
   int? keep(
     RenderPass recorder, {
     int id = 0,
@@ -73,13 +77,15 @@ final class ItemSet {
     int? order,
   }) {
     assert(identical(recorder._records, this));
-    if (recorder._readsTransient) {
+    final prologue = recorder._prologue;
+    recorder._prologue = null;
+    final impeller = _impeller;
+    if (recorder._readsTransient || (prologue != null && impeller != null)) {
       recorder._readsTransient = false;
       recorder.clearBindings();
       if (id != 0) remove(id);
       return null;
     }
-    final impeller = _impeller;
     if (impeller != null) {
       return impeller.keep(
         recorder._recording!,
@@ -97,6 +103,11 @@ final class ItemSet {
       bounds: bounds,
       instances: instances,
       order: order,
+      prologue: prologue == null
+          ? null
+          : GpuBackendItemPrologue([
+              for (final dispatch in prologue.dispatches) dispatch._backend,
+            ], watchedBytes: prologue.watchedBytes),
     );
   }
 

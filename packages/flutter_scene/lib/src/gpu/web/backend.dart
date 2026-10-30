@@ -323,6 +323,32 @@ void markTransientBuffer(DeviceBuffer buffer) {}
 /// that could sample it.
 void markTransientTexture(Texture texture) {}
 
+/// The compute work a kept draw runs before each draw of its pass; the web
+/// keeps no draws ([GpuContext.createItemSet]).
+final class ItemPrologue {
+  const ItemPrologue(this.dispatches, {required this.watchedBytes});
+
+  final List<ItemDispatch> dispatches;
+  final int watchedBytes;
+}
+
+/// One dispatch of an [ItemPrologue].
+final class ItemDispatch {
+  const ItemDispatch(
+    this.pipeline, {
+    this.buffers = const {},
+    this.viewBlocks = const {},
+    this.workgroups = (1, 1, 1),
+    this.indirect,
+  });
+
+  final ComputePipeline pipeline;
+  final Map<(int, int), BufferView> buffers;
+  final Map<(int, int), String> viewBlocks;
+  final (int, int, int) workgroups;
+  final BufferView? indirect;
+}
+
 /// Render items a backend keeps and draws inside a render pass; the web
 /// makes none ([GpuContext.createItemSet]).
 abstract final class ItemSet {
@@ -359,6 +385,10 @@ abstract base class RenderPass {
     SamplerOptions? sampler,
   });
   void clearBindings();
+
+  /// Keeps no prologue: the web records no kept draws.
+  void keepPrologue(ItemPrologue prologue) =>
+      throw StateError('Only a pass that records kept draws keeps a prologue.');
   void setColorBlendEnable(bool enable, {int colorAttachmentIndex = 0});
   void setColorBlendEquation(
     ColorBlendEquation equation, {

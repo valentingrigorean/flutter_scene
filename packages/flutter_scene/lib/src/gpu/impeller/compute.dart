@@ -63,6 +63,85 @@ final class ComputePass {
   );
 }
 
+/// The compute work the draw a [RenderPass] made by [ItemSet.recorder]
+/// records next runs before each draw of its pass, once kept
+/// ([RenderPass.keepPrologue]): its [dispatches] in order, for the view the
+/// pass draws, ahead of the frame's render passes. They run again only when
+/// the first [watchedBytes] bytes of a view block they bind change, such as
+/// the camera at the start of `ViewInfo`, so a camera move reorders what the
+/// kept draw reads with no Dart; a change to anything else they read records
+/// the draw again.
+final class ItemPrologue {
+  /// Runs [dispatches] again whenever [watchedBytes] of their view blocks
+  /// change.
+  const ItemPrologue(this.dispatches, {required this.watchedBytes});
+
+  /// The dispatches, in the order they run.
+  final List<ItemDispatch> dispatches;
+
+  /// The bytes at the start of each view block the dispatches bind whose
+  /// change runs them again.
+  final int watchedBytes;
+}
+
+/// One dispatch of an [ItemPrologue]: [pipeline] with [buffers] and
+/// [viewBlocks] bound, over [workgroups] or over the three 32-bit unsigned
+/// workgroup counts at the start of [indirect].
+final class ItemDispatch {
+  /// Dispatches [pipeline] over [workgroups], or over [indirect]'s counts.
+  const ItemDispatch(
+    this.pipeline, {
+    this.buffers = const {},
+    this.viewBlocks = const {},
+    this.workgroups = (1, 1, 1),
+    this.indirect,
+  });
+
+  /// The compute pipeline.
+  final ComputePipeline pipeline;
+
+  /// The uniform and storage buffer ranges, by WGSL `@group` and `@binding`.
+  final Map<(int, int), BufferView> buffers;
+
+  /// The pass's view blocks by `@group` and `@binding`, each named as the
+  /// item set names a view block.
+  final Map<(int, int), String> viewBlocks;
+
+  /// The workgroup counts in x, y and z, unless [indirect] holds them.
+  final (int, int, int) workgroups;
+
+  /// The workgroup counts, read when the dispatch runs.
+  final BufferView? indirect;
+
+  GpuBackendItemDispatch get _backend => GpuBackendItemDispatch(
+    pipeline._backend,
+    buffers: [
+      for (final MapEntry(key: (group, binding), value: view)
+          in buffers.entries)
+        (
+          group: group,
+          binding: binding,
+          buffer: view.buffer._backend!,
+          offsetInBytes: view.offsetInBytes,
+          lengthInBytes: view.lengthInBytes,
+        ),
+    ],
+    viewBlocks: [
+      for (final MapEntry(key: (group, binding), value: name)
+          in viewBlocks.entries)
+        (group: group, binding: binding, name: name),
+    ],
+    workgroups: workgroups,
+    indirect: switch (indirect) {
+      final view? => (
+        buffer: view.buffer._backend!,
+        offsetInBytes: view.offsetInBytes,
+      ),
+      null => null,
+    },
+  );
+}
+
 GpuBackendCompute _computeOf(GpuBackendContext? backend) =>
     backend?.compute ??
     (throw UnsupportedError(
