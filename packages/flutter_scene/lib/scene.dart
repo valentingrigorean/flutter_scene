@@ -269,6 +269,7 @@ export 'src/light.dart'
         SpotLight;
 export 'src/render/custom_render_pass.dart'
     show CustomRenderPass, RenderInput, RenderPassContext, RenderStage;
+export 'src/render/kept_pass_draw.dart' show KeptItem, KeptPassItems;
 export 'src/render/frame_transients.dart'
     show
         GpuSubmissions,
@@ -282,6 +283,7 @@ export 'src/render/shadow_pass.dart'
         debugSplitShadowMap,
         shadowMapIsDepth,
         shadowMapIsSplit;
+export 'src/render/camera_replay.dart' show CameraReplayBlocks;
 export 'src/render/draw_recorder.dart' show DrawPhase, DrawSkipReason;
 export 'src/render/depth_raster.dart' show DepthRaster, currentDrawDepthRaster;
 export 'src/render/linear_depth_probe.dart'

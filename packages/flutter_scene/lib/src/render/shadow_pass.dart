@@ -12,6 +12,9 @@ import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/point_shadow.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
+import 'package:flutter_scene/src/render/camera_replay.dart';
+import 'package:flutter_scene/src/render/retained_draws.dart';
+import 'package:flutter_scene/src/render/view_info.dart';
 import 'package:flutter_scene/src/render/shadow_cache.dart';
 import 'package:flutter_scene/src/render/retained_casters.dart';
 import 'package:flutter_scene/src/render/shadow_encoder.dart';
@@ -451,6 +454,30 @@ class ShadowPass extends RenderGraphPass {
           ),
         );
         retained.draw(renderPass, c, matrix, _casterCameraPosition);
+        final cascades = _cascades.length;
+        final viewInfo = ViewInfoState.current();
+        CameraReplay.recording
+          ?..pass(SceneItems.casterPass + c, (view) {
+            if (view.cascades.length != cascades) return null;
+            final matrix = view.cascades[c].lightSpaceMatrix;
+            return (
+              blocks: [
+                viewInfo.bytesFor(
+                  matrix,
+                  view.camera,
+                  view.dimensions,
+                  view.viewScale,
+                ),
+              ],
+              clip: matrix.storage,
+            );
+          })
+          ..refuseWhere(
+            !retained.keepsForAnyCamera ||
+                spotCount > 0 ||
+                pointCount > 0 ||
+                _shared != null,
+          );
         final encoder = ShadowEncoder(
           renderPass,
           context.transientsBuffer,

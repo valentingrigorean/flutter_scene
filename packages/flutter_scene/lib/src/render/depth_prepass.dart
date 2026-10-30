@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:math' as math;
 
 import 'package:flutter_scene/src/render/view_info.dart';
+import 'package:flutter_scene/src/render/camera_replay.dart';
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
@@ -217,6 +218,28 @@ class DepthPrepass extends RenderGraphPass {
     if (retained != null) {
       retained._syncDepth(target: target, encoder: encoder);
       retained._draw(renderPass, encoder);
+      final depthInfo = Float32List.fromList(encoder._depthInfo);
+      final dimensions = _dimensions;
+      final viewInfo = ViewInfoState.current();
+      CameraReplay.recording
+        ?..pass(SceneItems.depthPass, (view) {
+          if (view.dimensions != dimensions) return null;
+          final camera = view.camera;
+          final forward = camera.forward;
+          final info = Float32List.fromList(depthInfo)
+            ..[0] = forward.x
+            ..[1] = forward.y
+            ..[2] = forward.z;
+          final transform = rasterViewTransformOf(camera, dimensions);
+          return (
+            blocks: [
+              viewInfo.bytesFor(transform, camera, dimensions, view.viewScale),
+              ByteData.sublistView(info),
+            ],
+            clip: transform.storage,
+          );
+        })
+        ..refuseWhere(!retained.keepsForAnyCamera || _cameraTransform != null);
       for (final item in retained.encoded) {
         encoder.submit(item);
       }

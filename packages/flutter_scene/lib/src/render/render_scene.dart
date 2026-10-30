@@ -1843,9 +1843,64 @@ class RenderScene {
   @internal
   final Map<String, ByteData Function()> viewBlocks = {};
 
-  /// Counts the changes to [viewBlocks].
+  /// Counts the changes to [viewBlocks] and [passViewBlocks].
   @internal
   int viewBlocksRevision = 0;
+
+  /// The view blocks the kept draws of the scene's custom render passes
+  /// read, by uniform block name, each at its index among the blocks the
+  /// pass supplies (`CustomRenderPass.keptViewBlocks`).
+  @internal
+  final Map<String, int> passViewBlocks = {};
+
+  /// The custom render passes that keep draws, each with its slots past
+  /// `SceneItems.customPass`.
+  @internal
+  final Map<Object, List<int>> keptPassSlots = Map.identity();
+
+  /// Gives [pass] the [count] lowest free kept-draw slots below [slots],
+  /// naming [blocks] among [passViewBlocks]; false, giving none, where fewer
+  /// are free.
+  @internal
+  bool keepPass(
+    Object pass,
+    List<String> blocks, {
+    required int count,
+    required int slots,
+  }) {
+    if (keptPassSlots.containsKey(pass)) return true;
+    final taken = {for (final held in keptPassSlots.values) ...held};
+    final free = [
+      for (var slot = 0; slot < slots; slot++)
+        if (!taken.contains(slot)) slot,
+    ];
+    if (free.length < count) return false;
+    keptPassSlots[pass] = free.sublist(0, count);
+    for (final (index, name) in blocks.indexed) {
+      passViewBlocks[name] = index;
+    }
+    viewBlocksRevision++;
+    return true;
+  }
+
+  /// Frees the kept-draw slots of [pass], and the view block names only it
+  /// read, and returns the slots it held.
+  @internal
+  List<int> releasePass(
+    Object pass,
+    List<String> Function(Object pass) blocksOf,
+  ) {
+    final slots = keptPassSlots.remove(pass);
+    if (slots == null) return const [];
+    passViewBlocks.clear();
+    for (final held in keptPassSlots.keys) {
+      for (final (index, name) in blocksOf(held).indexed) {
+        passViewBlocks[name] = index;
+      }
+    }
+    viewBlocksRevision++;
+    return slots;
+  }
 
   /// Drops [changeLog], so each reader reads every item again on its next
   /// visit.
