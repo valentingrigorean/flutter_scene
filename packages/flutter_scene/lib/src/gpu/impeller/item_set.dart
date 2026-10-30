@@ -58,12 +58,18 @@ final class ItemSet {
   /// With [instances], the item draws as one instanced draw of the instances
   /// a [draw] does not cull, each by its own bounds; [bounds] then holds
   /// them all.
+  ///
+  /// With [order], a pass draws its items in ascending [order], so a set
+  /// that states one for every item draws them in that order, such as paint
+  /// order. Without it the backend orders a pass's items as it draws them
+  /// fastest.
   int? keep(
     RenderPass recorder, {
     int id = 0,
     required int passes,
     Float32List? bounds,
     ItemInstances? instances,
+    int? order,
   }) {
     assert(identical(recorder._records, this));
     if (recorder._readsTransient) {
@@ -80,6 +86,7 @@ final class ItemSet {
         passes: passes,
         bounds: bounds,
         instances: instances,
+        order: order,
       );
     }
     return _backend!.keep(
@@ -88,6 +95,7 @@ final class ItemSet {
       passes: passes,
       bounds: bounds,
       instances: instances,
+      order: order,
     );
   }
 

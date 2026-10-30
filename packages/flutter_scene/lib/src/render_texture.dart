@@ -125,6 +125,7 @@ class RenderTexture extends ChangeNotifier implements TextureSource {
     this.update = RenderTextureUpdate.everyFrame,
     this.sampling = const RenderTextureSampling(),
     this.linearColor = false,
+    this.presents = false,
   }) : assert(width > 0 && height > 0, 'RenderTexture size must be positive'),
        _size = ui.Size(width.toDouble(), height.toDouble());
 
@@ -149,6 +150,12 @@ class RenderTexture extends ChangeNotifier implements TextureSource {
   /// tone mapping, or anti-aliasing, so it suits captures that feed further
   /// lighting (mirrors composited in HDR, probes).
   final bool linearColor;
+
+  /// Whether this target holds the frame a surface shows, such as the texture
+  /// a GPU backend's presenter shows in place of a screen view. Its view keeps
+  /// its still draws across frames as a screen view does; a helper capture,
+  /// which renders only now and then, leaves this false.
+  final bool presents;
 
   /// Sampling options used when a material samples this target.
   RenderTextureSampling sampling;

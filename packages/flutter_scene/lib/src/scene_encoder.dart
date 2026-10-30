@@ -1289,7 +1289,7 @@ base class SceneEncoder {
   // The view's pixelWorldScale, for the depth gap debug view.
   late final double _pixelScale;
 
-  // Whether this encodes a screen view's camera, for [MeshDrawSelector]s.
+  // Whether this encodes the view a surface shows, for [MeshDrawSelector]s.
   final bool _primaryView;
   final ui.Size _dimensions;
   final Lighting _lighting;
