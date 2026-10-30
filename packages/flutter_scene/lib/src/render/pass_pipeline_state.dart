@@ -153,6 +153,17 @@ gpu.RenderPass createTrackedRenderPass(
   return pass;
 }
 
+/// A pass that records draws for [items] in the shape of [target], whose
+/// tracked setters work as on a pass [createTrackedRenderPass] creates.
+gpu.RenderPass createTrackedRecorder(
+  gpu.ItemSet items,
+  gpu.RenderTarget target,
+) {
+  final pass = items.recorder(target);
+  _passStates[pass] = _PassState(target);
+  return pass;
+}
+
 /// Records a draw on [pass] with the state its tracked setters set, and
 /// returns the description of that state when it is the first draw of a
 /// render pipeline drawn before in another state, so the backend builds

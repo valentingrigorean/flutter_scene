@@ -242,11 +242,11 @@ float SpecularAARoughness(vec3 normal, float roughness) {
   vec3 d_normal_x = dFdx(normal);
   vec3 d_normal_y = dFdy(normal);
   float filtered = roughness;
-  if (frag_info.specular_aa_variance > 0.0) {
-    float variance = frag_info.specular_aa_variance *
+  if (mat_info.specular_aa_variance > 0.0) {
+    float variance = mat_info.specular_aa_variance *
                      max(dot(d_normal_x, d_normal_x),
                          dot(d_normal_y, d_normal_y));
-    float kernel = min(2.0 * variance, frag_info.specular_aa_threshold);
+    float kernel = min(2.0 * variance, mat_info.specular_aa_threshold);
     float square_roughness = clamp(roughness * roughness + kernel,
                                    kMinRoughness * kMinRoughness, 1.0);
     filtered = sqrt(square_roughness);
@@ -411,7 +411,7 @@ highp vec3 EvaluateAnalyticLight(MaterialInputs material, vec3 light_vector,
 vec3 SunHorizonShares() {
   vec3 shares = vec3(1.0, 0.0, 1.0);
 #ifndef FLUTTER_SCENE_NO_DIRECTIONAL_LIGHT
-  if (frag_info.has_directional_light > 0.5 &&
+  if (DirectionalReachesItem() &&
       frag_info.sun_horizon.w > 0.0) {
     highp vec3 up = normalize(v_position - frag_info.sun_horizon.xyz);
     highp vec3 toward_sun =
@@ -508,7 +508,7 @@ highp vec4 EvaluateLighting(MaterialInputs material) {
   // FLUTTER_SCENE_NO_DIRECTIONAL_LIGHT (`directional_light: false`) compiles
   // the directional light out: the material shades as if the scene had none.
 #ifndef FLUTTER_SCENE_NO_DIRECTIONAL_LIGHT
-  if (frag_info.has_directional_light > 0.5) {
+  if (DirectionalReachesItem()) {
     light_vector = -normalize(frag_info.directional_light_direction.xyz);
     geometric_n_dot_l = dot(GetWorldNormal(), light_vector);
   }
@@ -529,7 +529,7 @@ highp vec4 EvaluateLighting(MaterialInputs material) {
 #if !defined(FLUTTER_SCENE_SKIP_SHADOWS) && \
     !defined(FLUTTER_SCENE_NO_DIRECTIONAL_LIGHT)
   shadow =
-      (frag_info.has_directional_light > 0.5 && frag_info.casts_shadow > 0.5 &&
+      (DirectionalReachesItem() && frag_info.casts_shadow > 0.5 &&
        facing > 0.0)
           ? SampleShadow(v_position, GetWorldNormal())
           : 1.0;
@@ -583,7 +583,7 @@ highp vec4 EvaluateLighting(MaterialInputs material) {
   // same ior * specular_color * specular_weight product the physical path
   // forms above, precomputed on the CPU. A default material packs 0.04, so
   // a scalar ior or specular tweak no longer needs the physical shader.
-  vec3 dielectric_reflectance = frag_info.dielectric_f0.xyz;
+  vec3 dielectric_reflectance = mat_info.dielectric_f0.xyz;
 #endif
   vec3 reflectance = mix(dielectric_reflectance, albedo, metallic);
 
@@ -1080,7 +1080,8 @@ highp vec4 EvaluateLighting(MaterialInputs material) {
   // occlusion also darkens the IBL ambient: a sky-baked environment already
   // contains the sun's energy, so the ambient alone otherwise reads as fully
   // lit inside shadows.
-  float ambient_shadow = mix(1.0, sun_visibility, frag_info.radiance_blend.y * horizon_shares.z);
+  float ambient_shadow = mix(1.0, sun_visibility,
+      frag_info.radiance_blend.y * horizon_shares.z * item_frag.params.w);
 
   highp vec3 ambient =
       (indirect_diffuse * diffuse_occlusion +
@@ -1128,7 +1129,7 @@ highp vec4 EvaluateLighting(MaterialInputs material) {
   // ambient term). The shadowed first directional light shades here; its shadow
   // visibility multiplies the whole term.
 #ifndef FLUTTER_SCENE_NO_DIRECTIONAL_LIGHT
-  if (frag_info.has_directional_light > 0.5) {
+  if (DirectionalReachesItem()) {
 #ifdef FLUTTER_SCENE_LIGHTING_HOOKS
     light_context.light_vector = light_vector;
     light_context.color = sun_radiance;

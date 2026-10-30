@@ -156,7 +156,15 @@ final class CommandBuffer {
   void submit({CompletionCallback? completionCallback}) {
     final impeller = _impeller;
     if (impeller != null) {
-      impeller.submit(completionCallback: completionCallback);
+      final id = _impellerSubmitted + 1;
+      impeller.submit(
+        completionCallback: (success) {
+          _impellerPending.remove(id);
+          completionCallback?.call(success);
+        },
+      );
+      _impellerSubmitted = id;
+      _impellerPending.add(id);
       return;
     }
     if (_backendSubmitted) {

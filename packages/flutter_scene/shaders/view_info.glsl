@@ -21,10 +21,14 @@ uniform ViewInfo {
   highp vec4 band_eye;
   highp vec4 band_forward;
   // The clip-space offset of one depth-buffer step as DepthRaster.writeOffset
-  // writes it (xy), and the window depth per pixel per unit of DepthSlopes
-  // (z), see item_info.glsl.
+  // writes it (xy), the window depth per pixel per unit of DepthSlopes (z),
+  // see item_info.glsl, and the view's RenderView.viewScale (w).
   highp vec4 depth_unit;
 }
 view_info;
+
+// The scale of the application's own that the view draws at
+// (RenderView.viewScale), such as a map scale.
+#define VIEW_SCALE view_info.depth_unit.w
 
 #endif  // VIEW_INFO_GLSL_

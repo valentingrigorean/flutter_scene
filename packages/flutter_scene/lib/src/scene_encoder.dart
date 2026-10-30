@@ -43,6 +43,7 @@ import 'package:flutter_scene/src/vertex_spin.dart';
 import 'package:flutter_scene/src/render/lod.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
+import 'package:flutter_scene/src/render/retained_draws.dart';
 import 'package:flutter_scene/src/render/render_profile.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
@@ -1288,7 +1289,7 @@ base class SceneEncoder {
   // The view's pixelWorldScale, for the depth gap debug view.
   late final double _pixelScale;
 
-  // Whether this encodes a screen view's camera, for [MeshDrawSelector]s.
+  // Whether this encodes the view a surface shows, for [MeshDrawSelector]s.
   final bool _primaryView;
   final ui.Size _dimensions;
   final Lighting _lighting;
@@ -1415,6 +1416,41 @@ base class SceneEncoder {
   /// emits them. A translucent instanced item is queued as one draw per
   /// instance so each can be depth-sorted independently.
   void submit(RenderItem item) => _submit(item, null, 0);
+
+  /// Encodes [item]'s single color draw immediately onto this encoder's
+  /// render pass, for recording into an item set ([RetainedColorDraws]): no
+  /// sorting, coverage pre-draw or cross-fade. The caller guarantees [item]
+  /// is a keepable draw of [geometry] and [material], its own or those of
+  /// one of its levels of detail.
+  @internal
+  void encodeForKeep(
+    RenderItem item, {
+    required Geometry geometry,
+    required Material material,
+  }) {
+    final materialVertex = material.vertexShaderForGeometry(geometry);
+    final vertexShader = materialVertex ?? geometry.vertexShader;
+    final fragmentShader = material.fragmentShaderForLighting(_lighting);
+    final vertexLayout = geometry.instancedVertexLayoutFor(
+      material.instanceAttributes,
+      material.vertexAttributesFor(materialVertex),
+    );
+    final pipeline = cachedRenderPipeline(
+      vertexShader,
+      fragmentShader,
+      vertexLayout,
+    );
+    if (pipeline == null) return;
+    _encode(
+      pipeline,
+      item.worldTransform,
+      geometry,
+      material,
+      item.windingFor(geometry),
+      1.0,
+      item: item,
+    );
+  }
 
   /// Queues the item at [index] of [view], the view's one cull, as [submit]
   /// does, with the instance ranges that cull kept of it.
@@ -1943,6 +1979,7 @@ base class SceneEncoder {
     gpu.Shader? materialVertex,
     double fade, {
     bool fallback = false,
+    HeldBlock? fragItemHold,
   }) {
     final lightOffset = material.lightListOffset;
     final lightCount = material.lightListCount;
@@ -1968,7 +2005,12 @@ base class SceneEncoder {
       material.lodFade = fade;
       final drawKey = transientDrawKey;
       transientDrawKey = material;
+      // The draw's held ItemFragInfo block, so the material binds it instead
+      // of emplacing a transient one and a still lit draw can be kept. Null
+      // for a draw of no item (emplaced per draw).
+      currentDrawFragItem = fragItemHold;
       material.bind(_renderPass, _transientsBuffer, _lighting);
+      currentDrawFragItem = null;
       transientDrawKey = drawKey;
     }
     final faceCull = _faceCull;
@@ -2305,7 +2347,13 @@ base class SceneEncoder {
         );
       }
     }
-    _bindMaterial(material, materialVertex, fade, fallback: fallback);
+    _bindMaterial(
+      material,
+      materialVertex,
+      fade,
+      fallback: fallback,
+      fragItemHold: item?.heldFragItem,
+    );
     _bindDebugView(material, item, fallback);
     // A mirrored transform reverses triangle winding. Set both cases because
     // a cached material bind no longer resets it between compatible draws.
@@ -2417,7 +2465,13 @@ base class SceneEncoder {
     _bindPipeline(pipeline);
     final materialVertex = material.vertexShaderForGeometry(geometry);
     _describeDraw(item, geometry, material, materialVertex, pipeline);
-    _bindMaterial(material, materialVertex, fade, fallback: fallback);
+    _bindMaterial(
+      material,
+      materialVertex,
+      fade,
+      fallback: fallback,
+      fragItemHold: item.heldFragItem,
+    );
     _bindDebugView(material, item, fallback);
     _setPrimitiveType(geometry.primitiveType);
 
@@ -2814,7 +2868,12 @@ base class SceneEncoder {
             );
           }
         }
-        _bindMaterial(material, materialVertex, 1.0);
+        _bindMaterial(
+          material,
+          materialVertex,
+          1.0,
+          fragItemHold: item.heldFragItem,
+        );
         _bindDebugView(material, item, false);
         _setWindingOrder(
           record.windingFlipped
@@ -3161,6 +3220,18 @@ base class SceneEncoder {
     }
   }
 
+  /// The color pass's kept translucent draws, which [flushTranslucent] draws
+  /// at their render order among the translucent draws this encoder sorts.
+  @internal
+  RetainedTranslucentDraws? keptTranslucent;
+
+  void _drawKeptTranslucentBelow(double order) {
+    final kept = keptTranslucent;
+    if (kept == null || !kept.drawsBelow(order)) return;
+    kept.drawBelow(order, _renderPass, this);
+    _rebind(_renderPass);
+  }
+
   void _flushTranslucentThrough(int end, {gpu.RenderPass? translucentPass}) {
     _prepareTranslucent();
     if (_translucentCursor >= _translucentRecords.length) return;
@@ -3175,6 +3246,7 @@ base class SceneEncoder {
 
     while (_translucentCursor < end) {
       final record = _translucentRecords[_translucentCursor++];
+      _drawKeptTranslucentBelow(record.item.renderOrder);
       _renderPass.setTrackedDepthWriteEnable(
         record.material.translucentDepthWrite,
       );
@@ -3225,6 +3297,9 @@ base class SceneEncoder {
       flushNextTranslucentBatch(translucentPass: pass);
       pass = null;
     }
+    if (pass != null) _rebind(pass);
+    _drawKeptTranslucentBelow(double.infinity);
+    keptTranslucent = null;
   }
 
   /// Whether any recorded draw is display-referred (see
@@ -3291,5 +3366,527 @@ base class SceneEncoder {
     final inputs = material.sceneInputs;
     return inputs.contains(RenderInput.opaqueSceneColor) ||
         inputs.contains(RenderInput.filteredSceneColor);
+  }
+}
+
+/// The color pass's draws of a [RenderScene]'s still items that the backend
+/// keeps as render items ([gpu.ItemSet]), so a frame that moves only the
+/// camera encodes none of them. The pass draws the kept items natively, culled
+/// by the camera, with the view's `ViewInfo`, `FragInfo` and `FogInfo` as view
+/// blocks, and encodes [encoded].
+///
+/// A draw is kept when it is an opaque, unskinned, unmorphed, non-instanced
+/// mesh (the structural checks [RetainedDraws] makes) whose material holds its
+/// fragment blocks and binds no per-material lighting of its own
+/// ([Material.colorRetainable]). An item with levels of detail that does not
+/// cross-fade keeps the draw of the level this view selects, recorded again
+/// when the selection changes ([levelOf]). The frame-transient engine textures a lit
+/// draw samples — the shadow atlas, ambient occlusion, the punctual-light
+/// data textures, and the opaque linear depth a scene-input material reads —
+/// are supplied each [drawKept] as the pass's view textures, so a kept draw
+/// holds only persistent resources beside them. A draw binding any other
+/// frame-transient buffer or texture (the scene-color textures) is refused by
+/// the backend and encoded instead. The app's own view blocks
+/// ([RenderScene.viewBlocks]) are supplied each [drawKept] beside the
+/// engine's, so a kept draw may read a value that changes every frame.
+final class RetainedColorDraws extends RetainedDraws {
+  RetainedColorDraws._(super.renderScene, super.items, this._appBlocks);
+
+  final List<ByteData Function()> _appBlocks;
+
+  static final Expando<RetainedColorDraws> _byScene = Expando(
+    'retained color draws',
+  );
+
+  /// The kept color draws of [renderScene], or null where the backend keeps no
+  /// items.
+  static RetainedColorDraws? of(RenderScene renderScene) {
+    final items = SceneItems.of(renderScene);
+    final held = _byScene[renderScene];
+    if (held != null && identical(held.items, items)) return held;
+    held?.dispose();
+    _byScene[renderScene] = null;
+    if (items == null) return null;
+    return _byScene[renderScene] = RetainedColorDraws._(renderScene, items, [
+      ...renderScene.viewBlocks.values,
+    ]);
+  }
+
+  late SceneEncoder _pass;
+  SceneEncoder? _recording;
+
+  final Float32List _fragInfoScratch = Float32List(
+    EngineLightingUniforms.fragInfoFloatCount,
+  );
+  final Float32List _fogScratch = Float32List(24);
+
+  @override
+  int get passes => 1 << SceneItems.colorPass;
+
+  /// Brings the kept draws up to date with the scene for the color pass that
+  /// [encoder] encodes into [target]. Where [keepsTranslucent], the
+  /// translucent draws are [RetainedTranslucentDraws]'s and these leave
+  /// them out.
+  void syncColor({
+    required gpu.RenderTarget target,
+    required SceneEncoder encoder,
+    bool keepsTranslucent = false,
+  }) {
+    _pass = encoder;
+    _keepsTranslucent = keepsTranslucent;
+    sync(
+      target: target,
+      key: (encoder._layerMask, encoder._debugView != null, keepsTranslucent),
+    );
+  }
+
+  bool _keepsTranslucent = false;
+
+  @override
+  void beginSync() => _recording = null;
+
+  @override
+  void forgetRecorded() => _recording?._clearBindings();
+
+  @override
+  bool draws(RenderItem item) =>
+      item.drawsColor &&
+      (item.layers & _pass._layerMask) != 0 &&
+      !(_keepsTranslucent && RetainedTranslucentDraws.drawsBlended(item));
+
+  @override
+  int levelOf(RenderItem item) {
+    final lod = item.lod;
+    if (lod == null) return RetainedDraws.wholeItem;
+    // A cross-fade draws two levels through their coverage.
+    if (lod.blendRange > 0) return RetainedDraws.refusedLevel;
+    final selected = _pass._resolveLod(lod, item.worldBounds);
+    return selected.isEmpty ? RetainedDraws.culledLevel : selected.first.level;
+  }
+
+  @override
+  bool keepable(RenderItem item) {
+    // A debug view redraws every surface through a different fragment shader;
+    // keep nothing while one is active.
+    if (_pass._debugView != null) return false;
+    final material = materialOf(item);
+    // A draw that blends in the opaque phase sets its blend state there, a
+    // display-referred one draws in a layer of its own, and one that cuts
+    // itself out draws its coverage first.
+    return material.isOpaque() &&
+        !material.blendsInOpaquePass &&
+        !material.displayReferred &&
+        !drawsCoverage(material, 1.0) &&
+        material.colorRetainable &&
+        !material.drawsDebugViews(_pass._lighting);
+  }
+
+  @override
+  Object? pipelineOf(RenderItem item) {
+    final geometry = geometryOf(item);
+    final material = materialOf(item);
+    final materialVertex = material.vertexShaderForGeometry(geometry);
+    final vertexShader = materialVertex ?? geometry.vertexShader;
+    final fragmentShader = material.fragmentShaderForLighting(_pass._lighting);
+    final vertexLayout = geometry.instancedVertexLayoutFor(
+      material.instanceAttributes,
+      material.vertexAttributesFor(materialVertex),
+    );
+    return cachedRenderPipeline(vertexShader, fragmentShader, vertexLayout);
+  }
+
+  @override
+  Object? stateOf(RenderItem item) {
+    final material = materialOf(item);
+    return (
+      material.renderCullMode,
+      material.depthLayer,
+      material.tieBreakRank,
+      material.depthBias,
+      material.clipVolume,
+      item.windingFor(geometryOf(item)),
+    );
+  }
+
+  @override
+  void record(RenderItem item) {
+    final encoder = _recording ??= SceneEncoder(
+      recorder,
+      _pass._transientsBuffer,
+      _pass._camera,
+      _pass._dimensions,
+      _pass._lighting,
+      _pass._layerMask,
+      const [],
+      false,
+      cameraTransform: _pass._cameraTransform,
+      primaryView: true,
+    );
+    final key = transientDrawKey;
+    transientDrawKey = item;
+    encoder.encodeForKeep(
+      item,
+      geometry: geometryOf(item),
+      material: materialOf(item),
+    );
+    transientDrawKey = key;
+  }
+
+  @override
+  void pinHeld(RenderItem item) {
+    // The vertex ItemInfo.
+    super.pinHeld(item);
+    // The per-item fragment block.
+    final frag = item.heldFragItem.lastBound;
+    if (frag != null && item.heldFragItem.pin(frag)) {
+      recordPin(item, () => item.heldFragItem.unpin(frag));
+    }
+    // The material's own fragment blocks (MatInfo, and the standard shader's
+    // held TextureTransforms).
+    for (final block in materialOf(item).heldFragmentBlocks) {
+      final view = block.lastBound;
+      if (view != null && block.pin(view)) {
+        recordPin(item, () => block.unpin(view));
+      }
+    }
+  }
+
+  /// Draws the kept color items into [pass], the render pass [encoder]
+  /// encodes, supplying the view's `ViewInfo`, `FragInfo` and `FogInfo`.
+  void drawKept(gpu.RenderPass pass, SceneEncoder encoder) {
+    final lighting = encoder._lighting;
+    final view = viewInfoBytesOf(
+      encoder._cameraTransform,
+      encoder._cameraPosition,
+    );
+    _fragInfoScratch.fillRange(0, _fragInfoScratch.length, 0);
+    EngineLightingUniforms.packInto(
+      _fragInfoScratch,
+      lighting,
+      lighting.environmentMap,
+    );
+    EngineLightingUniforms.packFog(_fogScratch, lighting);
+    items.draw(
+      pass,
+      SceneItems.colorPass,
+      viewBlocks: [
+        view,
+        ByteData.sublistView(_fragInfoScratch),
+        ByteData.sublistView(_fogScratch),
+        for (final bytes in _appBlocks) bytes(),
+      ],
+      clip: encoder._cameraTransform.storage,
+      viewTextures: [
+        Material.whitePlaceholder(lighting.shadowMap),
+        Material.whitePlaceholder(lighting.ssaoMap),
+        Material.whitePlaceholder(lighting.punctualParamsTexture),
+        Material.whitePlaceholder(lighting.punctualIndexTexture),
+        Material.whitePlaceholder(lighting.sceneDepthLinear),
+      ],
+    );
+    activeRenderCounters
+      ..colorItemsKept += keptCount
+      ..colorItemsEncoded += encoded.length;
+    // The kept items bound their own pipeline and blocks on the pass, so what
+    // the encoder holds of its bindings no longer stands.
+    encoder._clearBindings();
+  }
+}
+
+/// The color pass's translucent draws of a [RenderScene]'s still items that
+/// the backend keeps as render items, so a frame that moves only the camera
+/// encodes none of them. The backend orders them back to front each frame
+/// from their bounds ([gpu.ItemSort.farthestFirst]), as [SceneEncoder] orders
+/// the draws it encodes, so no draw is sorted in Dart.
+///
+/// Each render order ([RenderItem.renderOrder]) keeps its draws in a pass
+/// index of its own, which the encoder draws among its own translucent draws
+/// where that order falls ([SceneEncoder.keptTranslucent]). A render order
+/// with a draw that is encoded this frame encodes its kept draws too, so one
+/// back-to-front order holds across the order's draws.
+///
+/// A translucent draw is kept when the color pass could keep it as an opaque
+/// one ([RetainedColorDraws]), it is culled by its bounds with no sort depth
+/// bias, and it draws one face set: a double-sided draw that culls no face
+/// draws its back faces and then its front faces, two draws an item does not
+/// hold. A draw that reads scene color never reaches this path.
+final class RetainedTranslucentDraws extends RetainedDraws {
+  RetainedTranslucentDraws._(super.renderScene, super.items, this._appBlocks);
+
+  final List<ByteData Function()> _appBlocks;
+
+  static final Expando<RetainedTranslucentDraws> _byScene = Expando(
+    'retained translucent draws',
+  );
+
+  /// The kept translucent draws of [renderScene], or null where the backend
+  /// keeps no items.
+  static RetainedTranslucentDraws? of(RenderScene renderScene) {
+    final items = SceneItems.of(renderScene);
+    final held = _byScene[renderScene];
+    if (held != null && identical(held.items, items)) return held;
+    held?.dispose();
+    _byScene[renderScene] = null;
+    if (items == null) return null;
+    return _byScene[renderScene] = RetainedTranslucentDraws._(
+      renderScene,
+      items,
+      [...renderScene.viewBlocks.values],
+    );
+  }
+
+  /// Whether the color pass draws [item] in its translucent phase, at any of
+  /// its levels of detail.
+  static bool drawsBlended(RenderItem item) {
+    final lod = item.lod;
+    if (lod == null) return _blended(item.material);
+    for (final level in lod.levels) {
+      if (_blended(level.material)) return true;
+    }
+    return false;
+  }
+
+  static bool _blended(Material material) =>
+      !material.displayReferred &&
+      !material.isOpaque() &&
+      !material.blendsInOpaquePass;
+
+  // The pass index each render order keeps its draws in, and the draws kept
+  // under it; a draw that left the order or stopped being kept is dropped
+  // from its set when the order is next encoded.
+  final Map<double, int> _passOf = {};
+  final Map<double, Set<RenderItem>> _members = {};
+
+  // The render orders [drawBelow] draws this frame, ascending, and the next
+  // of them to draw.
+  final List<double> _drawn = [];
+  int _cursor = 0;
+  int _submitted = 0;
+
+  late SceneEncoder _pass;
+  SceneEncoder? _recording;
+
+  final Float32List _fragInfoScratch = Float32List(
+    EngineLightingUniforms.fragInfoFloatCount,
+  );
+  final Float32List _fogScratch = Float32List(24);
+  List<ByteData>? _viewBlocks;
+
+  @override
+  int get passes => 0;
+
+  @override
+  int passesOf(RenderItem item) {
+    final order = item.renderOrder;
+    (_members[order] ??= LinkedHashSet.identity()).add(item);
+    return 1 << _passOf[order]!;
+  }
+
+  /// Brings the kept draws up to date with the scene for the color pass that
+  /// [encoder] encodes into [target], hands [encoder] the draws it encodes
+  /// this frame, and leaves the rest for [SceneEncoder.flushTranslucent].
+  void syncTranslucent({
+    required gpu.RenderTarget target,
+    required SceneEncoder encoder,
+  }) {
+    _pass = encoder;
+    sync(target: target, key: encoder._layerMask);
+    _viewBlocks = null;
+    _drawn.clear();
+    _cursor = 0;
+    _submitted = 0;
+    for (final item in encoded) {
+      encoder.submit(item);
+    }
+    final encodedOrders = {for (final item in encoded) item.renderOrder};
+    for (final MapEntry(key: order, value: members) in _members.entries) {
+      members.removeWhere(
+        (item) =>
+            item.sceneSlot < 0 || item.renderOrder != order || !keeps(item),
+      );
+      if (members.isEmpty) continue;
+      if (!encodedOrders.contains(order)) {
+        _drawn.add(order);
+        continue;
+      }
+      for (final item in members) {
+        encoder.submit(item);
+      }
+      _submitted += members.length;
+    }
+    _drawn.sort();
+    activeRenderCounters
+      ..colorItemsKept += keptCount - _submitted
+      ..colorItemsEncoded += encoded.length + _submitted;
+    encoder.keptTranslucent = _drawn.isEmpty ? null : this;
+  }
+
+  @override
+  void beginSync() => _recording = null;
+
+  @override
+  void forgetRecorded() => _recording?._clearBindings();
+
+  @override
+  bool draws(RenderItem item) =>
+      item.drawsColor &&
+      (item.layers & _pass._layerMask) != 0 &&
+      drawsBlended(item);
+
+  @override
+  bool keepable(RenderItem item) {
+    final material = item.material;
+    if (_pass._debugView != null ||
+        !_blended(material) ||
+        !material.colorRetainable ||
+        material.drawsDebugViews(_pass._lighting) ||
+        SceneEncoder._readsSceneColor(material) ||
+        (material.doubleSided &&
+            material.renderCullMode == gpu.CullMode.none) ||
+        !item.frustumCulled ||
+        item.worldBounds == null ||
+        item.sortDepthBias != 0.0) {
+      return false;
+    }
+    final order = item.renderOrder;
+    if (_passOf.containsKey(order)) return true;
+    if (_passOf.length == SceneItems.translucentPasses) return false;
+    _passOf[order] = SceneItems.translucentPass + _passOf.length;
+    return true;
+  }
+
+  @override
+  Object? pipelineOf(RenderItem item) {
+    final geometry = item.geometry;
+    final material = item.material;
+    final materialVertex = material.vertexShaderForGeometry(geometry);
+    final vertexShader = materialVertex ?? geometry.vertexShader;
+    final fragmentShader = material.fragmentShaderForLighting(_pass._lighting);
+    final vertexLayout = geometry.instancedVertexLayoutFor(
+      material.instanceAttributes,
+      material.vertexAttributesFor(materialVertex),
+    );
+    return cachedRenderPipeline(vertexShader, fragmentShader, vertexLayout);
+  }
+
+  @override
+  Object? stateOf(RenderItem item) {
+    final material = item.material;
+    return (
+      material.renderCullMode,
+      material.depthLayer,
+      material.tieBreakRank,
+      material.depthBias,
+      material.translucentDepthWrite,
+      material.depthCompare,
+      material.clipVolume,
+      item.windingFor(item.geometry),
+      item.renderOrder,
+    );
+  }
+
+  @override
+  void record(RenderItem item) {
+    final encoder = _recording ??= SceneEncoder(
+      recorder,
+      _pass._transientsBuffer,
+      _pass._camera,
+      _pass._dimensions,
+      _pass._lighting,
+      _pass._layerMask,
+      const [],
+      false,
+      cameraTransform: _pass._cameraTransform,
+      primaryView: true,
+    ).._phase = DrawPhase.translucent;
+    final material = item.material;
+    recorder
+      ..setTrackedColorBlendEnable(true)
+      ..setTrackedColorBlendEquation(SceneEncoder._premultipliedOver)
+      ..setTrackedDepthWriteEnable(material.translucentDepthWrite)
+      ..setTrackedDepthCompareOperation(
+        encoder._raster.compare(material.depthCompare),
+      );
+    material
+      ..lightListOffset = item.lightListOffset
+      ..lightListCount = item.lightListCount
+      ..lightChannelMask = item.lightChannelMask
+      ..setModelScaleFromTransform(item.worldTransform);
+    final key = transientDrawKey;
+    transientDrawKey = item;
+    encoder.encodeForKeep(item, geometry: item.geometry, material: material);
+    transientDrawKey = key;
+  }
+
+  @override
+  void pinHeld(RenderItem item) {
+    super.pinHeld(item);
+    final frag = item.heldFragItem.lastBound;
+    if (frag != null && item.heldFragItem.pin(frag)) {
+      recordPin(item, () => item.heldFragItem.unpin(frag));
+    }
+    for (final block in item.material.heldFragmentBlocks) {
+      final view = block.lastBound;
+      if (view != null && block.pin(view)) {
+        recordPin(item, () => block.unpin(view));
+      }
+    }
+  }
+
+  /// Whether a render order below [order] still has kept draws to draw this
+  /// frame.
+  bool drawsBelow(double order) =>
+      _cursor < _drawn.length && _drawn[_cursor] < order;
+
+  /// Draws into [pass], the render pass [encoder] encodes, the kept draws of
+  /// each render order below [order] not drawn yet this frame, each order's
+  /// back to front.
+  void drawBelow(double order, gpu.RenderPass pass, SceneEncoder encoder) {
+    final blocks = _viewBlocks ??= _blocksOf(encoder);
+    final lighting = encoder._lighting;
+    final viewTextures = [
+      Material.whitePlaceholder(lighting.shadowMap),
+      Material.whitePlaceholder(lighting.ssaoMap),
+      Material.whitePlaceholder(lighting.punctualParamsTexture),
+      Material.whitePlaceholder(lighting.punctualIndexTexture),
+      Material.whitePlaceholder(lighting.sceneDepthLinear),
+    ];
+    while (drawsBelow(order)) {
+      items.draw(
+        pass,
+        _passOf[_drawn[_cursor++]]!,
+        viewBlocks: blocks,
+        clip: encoder._cameraTransform.storage,
+        viewTextures: viewTextures,
+        sort: encoder._raster.reversed
+            ? gpu.ItemSort.farthestFirstReversedDepth
+            : gpu.ItemSort.farthestFirst,
+      );
+    }
+  }
+
+  List<ByteData> _blocksOf(SceneEncoder encoder) {
+    final lighting = encoder._lighting;
+    _fragInfoScratch.fillRange(0, _fragInfoScratch.length, 0);
+    EngineLightingUniforms.packInto(
+      _fragInfoScratch,
+      lighting,
+      lighting.environmentMap,
+    );
+    EngineLightingUniforms.packFog(_fogScratch, lighting);
+    return [
+      viewInfoBytesOf(encoder._cameraTransform, encoder._cameraPosition),
+      ByteData.sublistView(_fragInfoScratch),
+      ByteData.sublistView(_fogScratch),
+      for (final bytes in _appBlocks) bytes(),
+    ];
+  }
+
+  @override
+  void dispose() {
+    _passOf.clear();
+    _members.clear();
+    _drawn.clear();
+    super.dispose();
   }
 }

@@ -68,6 +68,21 @@ class RenderCounters {
   /// Zero on a frame that moves only the camera.
   int itemInfoBytesWritten = 0;
 
+  /// Draws recorded into render items the backend keeps, by the shadow
+  /// cascades and the depth prepass: one per draw that is first kept or
+  /// that changed. Zero on a frame that moves only the camera or the light.
+  int drawsKept = 0;
+
+  /// Draws the primary color pass holds as render items the backend keeps,
+  /// counted each time the pass draws them, before the backend culls them to
+  /// the camera. Zero where the backend keeps no items.
+  int colorItemsKept = 0;
+
+  /// Draws the primary color pass encodes beside its kept items ([colorItemsKept]):
+  /// those that cannot be kept and those still changing, before the camera
+  /// culls them. Zero where the backend keeps no items.
+  int colorItemsEncoded = 0;
+
   /// Nodes the scene pre-pass visited: one per node it ticked and one per
   /// node whose render items it refreshed. Zero on a frame that changes no
   /// node while no node ticks.
@@ -102,6 +117,9 @@ class RenderCounters {
     instanceBytesUploaded = 0;
     instanceBytesReplayed = 0;
     itemInfoBytesWritten = 0;
+    drawsKept = 0;
+    colorItemsKept = 0;
+    colorItemsEncoded = 0;
     prePassNodes = 0;
     materialSummaryItems = 0;
     sceneCulls = 0;
@@ -122,6 +140,9 @@ class RenderCounters {
     instanceBytesUploaded = other.instanceBytesUploaded;
     instanceBytesReplayed = other.instanceBytesReplayed;
     itemInfoBytesWritten = other.itemInfoBytesWritten;
+    drawsKept = other.drawsKept;
+    colorItemsKept = other.colorItemsKept;
+    colorItemsEncoded = other.colorItemsEncoded;
     prePassNodes = other.prePassNodes;
     materialSummaryItems = other.materialSummaryItems;
     sceneCulls = other.sceneCulls;
@@ -146,6 +167,9 @@ class RenderCounters {
         now.instanceBytesReplayed - start.instanceBytesReplayed;
     itemInfoBytesWritten =
         now.itemInfoBytesWritten - start.itemInfoBytesWritten;
+    drawsKept = now.drawsKept - start.drawsKept;
+    colorItemsKept = now.colorItemsKept - start.colorItemsKept;
+    colorItemsEncoded = now.colorItemsEncoded - start.colorItemsEncoded;
     prePassNodes = now.prePassNodes - start.prePassNodes;
     materialSummaryItems =
         now.materialSummaryItems - start.materialSummaryItems;
@@ -167,6 +191,9 @@ class RenderCounters {
     'instanceBytesUploaded': instanceBytesUploaded,
     'instanceBytesReplayed': instanceBytesReplayed,
     'itemInfoBytesWritten': itemInfoBytesWritten,
+    'drawsKept': drawsKept,
+    'colorItemsKept': colorItemsKept,
+    'colorItemsEncoded': colorItemsEncoded,
     'prePassNodes': prePassNodes,
     'materialSummaryItems': materialSummaryItems,
     'sceneCulls': sceneCulls,

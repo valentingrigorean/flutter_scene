@@ -1,8 +1,21 @@
-// The per-frame engine data a material reads in screen space: the shared
-// FragInfo uniform block and the accessors over it. The lit lighting framework
+// The per-frame engine data a material reads in screen space: the FragInfo
+// uniform block and the accessors over it. The lit lighting framework
 // includes this, and a generated unlit `.fmat` that declares engine_inputs
 // includes it directly, so both paths share one declaration of the block.
 // Binding it costs no texture unit, which is what makes it safe for unlit.
+//
+// FragInfo now carries only the pass's view and lighting values (camera,
+// lights, shadows, image-based lighting, the irradiance field and froxel
+// clustering). They are identical for every draw of a pass and change with
+// the camera, so the pass binds the block once as a view block: a kept color
+// item reads the current frame's block at draw time rather than one per draw
+// (see RetainedColorDraws). A material's own constants live in MatInfo
+// (`mat_info`), held per material, and a draw's per-item values in
+// ItemFragInfo (`item_frag`), held with the render item, so a still item
+// writes no fragment uniform bytes while the camera moves. FragInfo keeps its
+// old member layout so the engine lighting packing is unchanged; the material
+// and per-item members it still declares are superseded by the two blocks
+// below and are not read from it.
 //
 // The scene-color and scene-depth samplers compile in only when the material
 // declares them (FLUTTER_SCENE_SCENE_COLOR/FLUTTER_SCENE_SCENE_DEPTH, written
@@ -201,6 +214,54 @@ uniform FragInfo {
   vec4 sun_horizon_light;
 }
 frag_info;
+
+// A material's own fragment constants, held per material and rewritten only
+// when they change (split out of the per-draw FragInfo block). Every lit
+// material fills these; a generated unlit material that only reads the scene
+// inputs never references the block, so it is compiled out there.
+uniform MatInfo {
+  // Linear base color factor (rgb) and straight alpha (a).
+  vec4 color;
+  // Linear emissive radiance (rgb) scaled by the emissive strength (a).
+  vec4 emissive_factor;
+  // xyz: the standard (non-physical) path's dielectric reflectance at normal
+  // incidence, the plain 0.04 unless a scalar ior / specular / specular color
+  // overrides it. w is unused here (the directional shadow's end depth stays
+  // in frag_info.dielectric_f0.w, a pass value).
+  vec4 dielectric_f0;
+  float vertex_color_weight;
+  float metallic_factor;
+  float roughness_factor;
+  float has_normal_map;
+  float normal_scale;
+  float occlusion_strength;
+  // glTF alpha mode: 0 opaque, 1 mask, 2 blend.
+  float alpha_mode;
+  float alpha_cutoff;
+  // Geometric specular antialiasing (see material_lighting.glsl).
+  float specular_aa_variance;
+  float specular_aa_threshold;
+}
+mat_info;
+
+// The per-item fragment values, held with the render item and rewritten only
+// when they change, so a still item writes no fragment uniform bytes while the
+// camera moves (the camera lives in frag_info).
+uniform ItemFragInfo {
+  // xyz: the draw's model scale (world-space lengths of the model transform's
+  // basis vectors), for scaling local-space lengths into world units. An
+  // instanced draw carries its node's scale, a skinned draw its node's. w
+  // unused.
+  highp vec4 model_scale;
+  // x: the item's punctual-light slice count, y its offset into the per-frame
+  // light-index buffer; z: the LOD cross-fade coverage, 1 drawing every
+  // fragment; w: 1 when the primary directional light reaches this item's
+  // light channels and 0 when it does not, which suppresses the direct sun and
+  // its cast shadow for the item (the per-node channel gate, read here because
+  // the light itself rides the shared view block).
+  highp vec4 params;
+}
+item_frag;
 
 #include <view_projection.glsl>
 #include <linear_depth.glsl>

@@ -29,6 +29,7 @@ class RenderView {
     this.cullingPlanes = const [],
     this.instanceDepthFrom = double.negativeInfinity,
     this.instanceDepthTo = double.infinity,
+    this.viewScale = 0.0,
   }) : assert(
          renderScale == null || (renderScale.isFinite && renderScale > 0.0),
          'renderScale must be a positive, finite number.',
@@ -109,4 +110,11 @@ class RenderView {
   /// The nearest depth at which this view stops drawing a banded instance
   /// row, see [instanceDepthFrom].
   double instanceDepthTo;
+
+  /// A scale of the application's own that this view draws at, such as a map
+  /// scale, which every vertex stage reads from the view's `ViewInfo` block
+  /// (`VIEW_SCALE` in `view_info.glsl`). A size that follows it changes from
+  /// frame to frame with no draw recorded again. A shadow pass reads the
+  /// value of the view drawn last.
+  double viewScale;
 }

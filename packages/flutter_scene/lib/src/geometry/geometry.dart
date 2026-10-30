@@ -254,7 +254,7 @@ abstract class Geometry with RenderSourceListeners {
   /// turn-key path that allocates and uploads in one step, see
   /// [uploadVertexData].
   void setVertices(gpu.BufferView vertices, int vertexCount) {
-    _bindRevision++;
+    _buffersChanged();
     _clearResolvedOnLayoutChange(1);
     _vertexStreams = [vertices];
     _vertexCount = vertexCount;
@@ -268,7 +268,7 @@ abstract class Geometry with RenderSourceListeners {
   /// uses [setVertices].
   @internal
   void setVertexStreams(List<gpu.BufferView> streams, int vertexCount) {
-    _bindRevision++;
+    _buffersChanged();
     _clearResolvedOnLayoutChange(streams.length);
     _vertexStreams = streams;
     _vertexCount = vertexCount;
@@ -513,7 +513,7 @@ abstract class Geometry with RenderSourceListeners {
   /// The element count is computed automatically from the buffer view's
   /// byte length.
   void setIndices(gpu.BufferView indices, gpu.IndexType indexType) {
-    _bindRevision++;
+    _buffersChanged();
     _indices = indices;
     _indexType = indexType;
     _debugEdges = null;
@@ -1415,6 +1415,35 @@ abstract class Geometry with RenderSourceListeners {
   /// Moves [bindRevision].
   @protected
   void markBindChanged() => _bindRevision++;
+
+  /// Counts the changes to the vertex streams and the index buffer this
+  /// geometry draws from, which a render item a backend keeps holds; a
+  /// change also tells the nodes that draw it ([tellRenderSourceListeners]).
+  @internal
+  int get buffersRevision => _buffersRevision;
+  int _buffersRevision = 0;
+
+  void _buffersChanged() {
+    _bindRevision++;
+    _buffersRevision++;
+    tellRenderSourceListeners();
+  }
+
+  /// Whether a pass may keep a draw of this geometry as a render item a
+  /// backend draws, though it is no [UnskinnedGeometry]: its [bind] binds
+  /// only buffers and blocks it holds from frame to frame beside the pass's
+  /// `ViewInfo`, no model-transform instance, and [draw] issues one draw
+  /// while [currentDrawKept]. False by default.
+  ///
+  /// Such a geometry calls [markKeptDrawChanged] whenever a value its kept
+  /// draw binds changes, so the passes that keep it record it again.
+  /// {@category Geometry}
+  bool get keepsItsDraw => false;
+
+  /// Tells the passes that keep a draw of this geometry ([keepsItsDraw])
+  /// that what its [bind] binds changed, so they record the draw again.
+  @protected
+  void markKeptDrawChanged() => _buffersChanged();
 
   /// Binds all of this geometry's vertex streams (to slots 0, 1, ...) and
   /// its index buffer onto [pass] without binding any uniforms.
@@ -2405,6 +2434,11 @@ final Float32List currentViewInstanceBand = Float32List(10)
   ..[8] = -3.0e38
   ..[9] = 3.0e38;
 
+/// The `RenderView.viewScale` of the view being drawn, which `ViewInfo`
+/// carries. A pass that states no view keeps the value of the last one.
+@internal
+double currentViewScale = 0.0;
+
 /// The view each camera draws, stated by the scene as it builds the passes of
 /// the view, so a pass that holds the camera reads the view's
 /// `instanceDepthFrom` and `instanceDepthTo`.
@@ -2420,6 +2454,7 @@ void setCurrentViewInstanceBandOf(
   vm.Vector3 forward,
 ) {
   final view = instanceBandViews[camera];
+  if (view != null) currentViewScale = view.viewScale;
   setCurrentViewInstanceBand(
     eye,
     forward,

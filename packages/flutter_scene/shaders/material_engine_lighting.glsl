@@ -8,8 +8,17 @@
 
 #include <material_scene_inputs.glsl>
 
-// The per-draw model scale (see FragInfo.model_scale).
-highp vec3 GetModelScale() { return frag_info.model_scale.xyz; }
+// The per-draw model scale (see ItemFragInfo.model_scale).
+highp vec3 GetModelScale() { return item_frag.model_scale.xyz; }
+
+// Whether the primary directional light reaches this item's light channels
+// (frag_info says a directional light exists this pass; item_frag.params.w
+// says whether it reaches this item). It gates the direct sun and its cast
+// shadow per item, now that the light rides the shared view block instead of
+// being cleared per draw by the packing.
+bool DirectionalReachesItem() {
+  return frag_info.has_directional_light > 0.5 && item_frag.params.w > 0.5;
+}
 
 // FLUTTER_SCENE_SHADOW_CATCHER compiles out the image-based-lighting
 // samplers: a shadow catcher never evaluates the lighting, and a declared
@@ -65,8 +74,8 @@ uniform sampler2D ssao_texture;
 // The additional analytic lights (point, spot, and directional lights past the
 // first) as an RGBA32F data texture: one light per row, eight texels wide. Read
 // by computed UV (not a dynamically-indexed uniform array, which older GLSL
-// forbids in a fragment shader). frag_info.radiance_blend.z is the row count; a
-// white placeholder is bound and never read when it is zero. Column layout:
+// forbids in a fragment shader). item_frag.params.x is the item's light count;
+// a white placeholder is bound and never read when it is zero. Column layout:
 //   0: position.xyz, type (0 directional, 1 point, 2 spot, 3 area)
 //   1: color.rgb * intensity, inverse range (0 = infinite)
 //   2: direction.xyz, spot angular scale
@@ -76,9 +85,9 @@ uniform sampler2D ssao_texture;
 uniform highp sampler2D punctual_lights;
 // The per-object light-index buffer: a 2D RGBA32F texture whose texels (row
 // major, index in .r) are light rows into punctual_lights. Each object shades
-// the slice [radiance_blend.w, radiance_blend.w + radiance_blend.z). Read by
-// computed UV (punctual_dims.yz give its width/height). A white placeholder is
-// bound and never read when the per-object count is 0.
+// the slice [item_frag.params.y, item_frag.params.y + item_frag.params.x).
+// Read by computed UV (punctual_dims.yz give its width/height). A white
+// placeholder is bound and never read when the per-object count is 0.
 uniform highp sampler2D punctual_index;
 #endif
 

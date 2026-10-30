@@ -8,6 +8,7 @@ import 'package:vector_math/vector_math.dart' show Matrix4, Vector3;
 
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
+import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/fmat/fmat_ast.dart' show DepthSurfaceKind;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/geometry/geometry.dart';
@@ -28,6 +29,7 @@ import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/texture/texture2d.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/uniform_slots.dart';
+import 'package:flutter_scene/src/render/view_info.dart';
 
 int _sceneInputsRevision = 0;
 
@@ -91,7 +93,7 @@ enum MaskedDepthPass {
 /// The default [bind] enables back-face culling with native counter-clockwise
 /// winding.
 /// {@category Materials}
-abstract class Material {
+abstract class Material with RenderSourceListeners {
   static final gpu.DeviceLocal<gpu.Texture> _whitePlaceholderTexture =
       gpu.DeviceLocal(
         () => gpu.gpuContext.createTexture(gpu.StorageMode.hostVisible, 1, 1)
@@ -303,7 +305,14 @@ abstract class Material {
   /// built-in lit and unlit materials, every physical variant and lit `.fmat`
   /// materials honor it in their color pass and the main pass's coverage
   /// pre-draw.
-  ClipVolume? clipVolume;
+  ClipVolume? get clipVolume => _clipVolume;
+  set clipVolume(ClipVolume? value) {
+    if (identical(value, _clipVolume)) return;
+    _clipVolume = value;
+    tellRenderSourceListeners();
+  }
+
+  ClipVolume? _clipVolume;
 
   /// Which surface wins where this material's geometry and another's lie in
   /// the same plane. A surface with a higher layer draws over coplanar
@@ -395,6 +404,20 @@ abstract class Material {
     modelScaleY = math.sqrt(s[4] * s[4] + s[5] * s[5] + s[6] * s[6]);
     modelScaleZ = math.sqrt(s[8] * s[8] + s[9] * s[9] + s[10] * s[10]);
   }
+
+  /// This material's own fragment constants (`MatInfo`: color, factors, alpha,
+  /// specular antialiasing, the standard dielectric F0), held from frame to
+  /// frame and rewritten only when they change, so a still lit draw of this
+  /// material writes no fragment material bytes while the camera moves and a
+  /// backend can keep the draw. A subclass that binds `MatInfo` fills a
+  /// scratch and binds it through this.
+  @internal
+  final HeldBlock heldMatInfo = HeldBlock(kMatInfoFloats);
+
+  /// The material's `ClipInfo` block, held so a still clipped draw writes no
+  /// clip bytes while the camera moves and a backend can keep the draw.
+  @internal
+  final HeldBlock heldClipInfo = HeldBlock(ClipVolume.uniformByteSize ~/ 4);
 
   gpu.Shader? _fragmentShader;
   String? _fragmentShaderName;
@@ -847,6 +870,44 @@ abstract class Material {
   // displaced slot first. The `.fmat` engine input is the supported seam.
   @internal
   bool get usesPlanarReflection => false;
+
+  /// Whether the color pass may keep a still draw of this material as a
+  /// backend item: its fragment binds only the pass's view blocks
+  /// (`ViewInfo`, `FragInfo`, `FogInfo`) and blocks held from frame to frame
+  /// (`MatInfo`, `ItemFragInfo`, a held `TextureTransforms`, the clip volume's
+  /// `ClipInfo`), with no per-material lighting of its own (an environment
+  /// override) and no frame-varying block (animated UV flow). A kept draw
+  /// takes a new [clipVolume] when its node is refreshed, or when the scene
+  /// rechecks its kept draws (`Scene.markKeptDrawsChanged`). A draw that still binds a
+  /// transient buffer or texture is refused by the backend regardless, so this
+  /// only has to rule out what that check cannot: a wrong shared view block.
+  /// The base is false; a lit engine material that holds its fragment blocks
+  /// overrides it. [RetainedColorDraws] reads it beside its structural checks
+  /// for an opaque draw, [RetainedTranslucentDraws] for a blended one.
+  /// A downstream material that holds its own extra fragment blocks overrides
+  /// this (part of the retention extension surface), so it is public.
+  bool get colorRetainable => false;
+
+  /// Counts the changes to what a draw of this material binds that the
+  /// material's identity does not show, such as a held block's values or a
+  /// texture it binds changed in place. A pass that keeps the draw as a
+  /// backend item records it again when this differs from its recording, on
+  /// the next frame that refreshes the node. A material that moves this calls
+  /// [tellRenderSourceListeners], which refreshes each node a `MeshComponent`
+  /// draws it on; another node takes [Node.markMaterialsChanged]. The base is
+  /// 0; a material that changes its own held blocks in place overrides it.
+  int get keptRevision => 0;
+
+  /// The held fragment uniform blocks a kept color draw of this material
+  /// reads, for [RetainedColorDraws] to pin so their slots are not reused for
+  /// other values while the backend still draws from them. The base is the
+  /// shared `MatInfo`, with the `ClipInfo` while a [clipVolume] cuts the
+  /// draw; a material that holds more fragment blocks adds them (typically
+  /// `[...super.heldFragmentBlocks, ...]`), so it is public.
+  Iterable<HeldBlock> get heldFragmentBlocks => [
+    heldMatInfo,
+    if (clipVolume != null) heldClipInfo,
+  ];
 
   /// The planar reflection capture this material samples, or null when none
   /// is active. Refreshed each frame by the governing reflector; only read

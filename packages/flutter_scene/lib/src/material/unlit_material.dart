@@ -12,6 +12,8 @@ import 'package:flutter_scene/src/material/physically_based_material.dart'
 
 import 'package:vector_math/vector_math.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
+import 'package:flutter_scene/src/render_texture.dart';
+import 'package:flutter_scene/src/render/view_info.dart' show HeldBlock;
 import 'package:flutter_scene/src/render/uniform_slots.dart';
 
 /// A material that draws geometry with a flat color or texture, ignoring
@@ -32,7 +34,7 @@ class UnlitMaterial extends Material {
   /// When [colorTexture] is null a 1×1 white placeholder is used so the
   /// final color reduces to [baseColorFactor].
   UnlitMaterial({TextureSource? colorTexture})
-    : baseColorTexture = colorTexture {
+    : _baseColorTexture = colorTexture {
     setFragmentShaderName('UnlitFragment');
   }
 
@@ -45,15 +47,40 @@ class UnlitMaterial extends Material {
   /// Accepts a [Texture2D] or a `RenderTexture` (sampled live). An empty slot
   /// (or a render texture with no completed frame yet) samples a 1×1 white
   /// placeholder so the final color reduces to [baseColorFactor].
-  TextureSource? baseColorTexture;
+  TextureSource? get baseColorTexture => _baseColorTexture;
+  set baseColorTexture(TextureSource? value) {
+    if (identical(value, _baseColorTexture)) return;
+    _baseColorTexture = value;
+    _changed();
+  }
+
+  TextureSource? _baseColorTexture;
 
   /// UV transform applied to [baseColorTexture].
-  TextureTransform baseColorTextureTransform = TextureTransform();
+  TextureTransform get baseColorTextureTransform => _baseColorTextureTransform;
+  set baseColorTextureTransform(TextureTransform value) {
+    _baseColorTextureTransform = value;
+    _changed();
+  }
+
+  TextureTransform _baseColorTextureTransform = TextureTransform();
 
   /// Texture-coordinate channel used by [baseColorTexture].
-  int baseColorTextureTexCoord = 0;
+  int get baseColorTextureTexCoord => _baseColorTextureTexCoord;
+  set baseColorTextureTexCoord(int value) {
+    if (value == _baseColorTextureTexCoord) return;
+    _baseColorTextureTexCoord = value;
+    _changed();
+  }
 
+  int _baseColorTextureTexCoord = 0;
+
+  static final Float32List _unlitInfoScratch = Float32List(8);
   static final Float32List _textureTransformScratch = Float32List(8);
+
+  // The material's own blocks, held so a still draw rewrites none of them.
+  final HeldBlock _heldUnlitInfo = HeldBlock(8);
+  final HeldBlock _heldTextureTransform = HeldBlock(8);
 
   /// How the material's alpha is interpreted. [AlphaMode.opaque] ignores
   /// alpha; [AlphaMode.blend] routes the material through the depth-sorted
@@ -101,13 +128,62 @@ class UnlitMaterial extends Material {
 
   bool _displayReferred = false;
 
-  /// Linear RGBA tint multiplied with [baseColorTexture].
-  Vector4 baseColorFactor = Colors.white;
+  /// Linear RGBA tint multiplied with [baseColorTexture]. A change made in
+  /// place on the vector is seen once it is set again.
+  Vector4 get baseColorFactor => _baseColorFactor;
+  set baseColorFactor(Vector4 value) {
+    if (!identical(value, _baseColorFactor) && value == _baseColorFactor) {
+      _baseColorFactor = value;
+      return;
+    }
+    _baseColorFactor = value;
+    _changed();
+  }
+
+  Vector4 _baseColorFactor = Colors.white;
 
   /// How strongly per-vertex colors influence the final color. `0`
   /// disables vertex color contribution; `1` (the default) fully
   /// applies it.
-  double vertexColorWeight = 1.0;
+  double get vertexColorWeight => _vertexColorWeight;
+  set vertexColorWeight(double value) {
+    if (value == _vertexColorWeight) return;
+    _vertexColorWeight = value;
+    _changed();
+  }
+
+  double _vertexColorWeight = 1.0;
+
+  /// Counts the sets of the parameters above, each of which changes what a
+  /// kept draw of this material binds.
+  @override
+  int get keptRevision => _keptRevision;
+
+  int _keptRevision = 0;
+
+  void _changed() {
+    _keptRevision++;
+    tellRenderSourceListeners();
+  }
+
+  /// Kept when scene-referred, with a still base color texture: its blocks,
+  /// the clip volume's among them, are then held and the rest it reads
+  /// (`ViewInfo`, `FogInfo`) are the color pass's view blocks. A blended
+  /// surface is kept in the translucent phase's back-to-front order, under
+  /// its render order and with its own [depthCompare], so an overlay drawn
+  /// regardless of depth keeps its place after the scene. A display-referred
+  /// surface draws in its own layer, and a render texture changes what it
+  /// samples from frame to frame.
+  @override
+  bool get colorRetainable =>
+      !displayReferred && baseColorTexture is! RenderTexture;
+
+  @override
+  Iterable<HeldBlock> get heldFragmentBlocks => [
+    _heldUnlitInfo,
+    _heldTextureTransform,
+    if (clipVolume != null) heldClipInfo,
+  ];
 
   @override
   void bind(
@@ -117,16 +193,17 @@ class UnlitMaterial extends Material {
   ) {
     super.bind(pass, transientsBuffer, lighting);
 
-    var fragInfo = Float32List.fromList([
-      baseColorFactor.r, baseColorFactor.g,
-      baseColorFactor.b, baseColorFactor.a, // color
-      vertexColorWeight, // vertex_color_weight
-      lodFade, // fade
-      displayReferred ? 1.0 : 0.0, // display_referred
-    ]);
+    final unlitInfo = _unlitInfoScratch
+      ..[0] = baseColorFactor.r
+      ..[1] = baseColorFactor.g
+      ..[2] = baseColorFactor.b
+      ..[3] = baseColorFactor.a
+      ..[4] = vertexColorWeight
+      ..[5] = lodFade
+      ..[6] = displayReferred ? 1.0 : 0.0;
     pass.bindUniform(
-      fragmentShader.cachedUniformSlot("FragInfo"),
-      transientsBuffer.emplace(ByteData.sublistView(fragInfo)),
+      fragmentShader.cachedUniformSlot('UnlitInfo'),
+      _heldUnlitInfo.bound(unlitInfo),
     );
     final transform = _textureTransformScratch
       ..[0] = baseColorTextureTransform.offset.x
@@ -138,7 +215,7 @@ class UnlitMaterial extends Material {
       ..[6] = baseColorTextureTexCoord.clamp(0, 1).toDouble();
     pass.bindUniform(
       fragmentShader.cachedUniformSlot('TextureTransform'),
-      transientsBuffer.emplace(ByteData.sublistView(transform)),
+      _heldTextureTransform.bound(transform),
     );
     pass.bindTexture(
       fragmentShader.cachedUniformSlot('base_color_texture'),
@@ -163,10 +240,10 @@ class UnlitMaterial extends Material {
       transientsBuffer,
       lighting,
     );
-    EngineLightingUniforms.bindClipVolume(
+    EngineLightingUniforms.bindHeldClipVolume(
       pass,
       fragmentShader,
-      transientsBuffer,
+      heldClipInfo,
       clipVolume,
     );
   }

@@ -1,5 +1,13 @@
 part of '_gpu.dart';
 
+final Expando<bool> _transientTextures = Expando('transient texture');
+
+/// States that [texture] is one a frame draws into and later frames reallocate
+/// (a [TransientTexturePool] ring entry), so its handle is not stable from
+/// frame to frame and a draw that samples it is never kept in an [ItemSet].
+void markTransientTexture(Texture texture) =>
+    _transientTextures[texture] = true;
+
 /// A texture in GPU memory.
 final class Texture {
   Texture._impeller(fg.Texture this._impeller) : _backend = null;

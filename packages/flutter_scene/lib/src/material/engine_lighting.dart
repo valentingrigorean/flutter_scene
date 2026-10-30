@@ -39,57 +39,114 @@ class EngineLightingUniforms {
   /// implementation.
   static const fragInfoFloatCount = 216;
 
-  /// Index of the `dielectric_f0` vec4 in `FragInfo`. [packInto] writes the
-  /// standard 0.04 dielectric reflectance; a material with a non-default
-  /// ior, specular factor, or specular color overwrites it afterward.
+  /// Index of the `dielectric_f0.w` field still packed into the `FragInfo`
+  /// view block (the view depth where directional shadows end). The xyz
+  /// reflectance moved to `MatInfo`.
   static const dielectricF0Index = 172;
 
   /// The dielectric F0 of a default material (ior 1.5, specular 1, white
-  /// specular color), the value the standard shader used to hard-code.
+  /// specular color), the value the standard shader used to hard-code. Now a
+  /// `MatInfo.dielectric_f0.xyz` default.
   static const defaultDielectricF0 = 0.04;
 
   /// Index of the first irradiance-field vec4 (`gi_grid`).
   static const irradianceFieldIndex = 176;
 
-  /// Index of the LOD cross-fade `fade` field in `FragInfo`, occupying std140
-  /// padding before `environment_transform` (so the block size is unchanged).
-  static const fadeIndex = 137;
-
   /// Default geometric-specular-antialiasing strength and threshold, matching
-  /// [PhysicallyBasedMaterial]'s defaults. Packed at [138]/[139] (the remaining
-  /// std140 padding after `fade`) so every lit material gets antialiasing by
-  /// default; a material that exposes the knobs overwrites these afterward.
+  /// [PhysicallyBasedMaterial]'s defaults. Now a `MatInfo` value so every lit
+  /// material gets antialiasing by default; a material that exposes the knobs
+  /// overwrites it.
   static const defaultSpecularAaVariance = 0.15;
   static const defaultSpecularAaThreshold = 1.0;
 
-  /// Writes the engine lighting / IBL / shadow fields of `FragInfo` into
-  /// [fragInfo] from [lighting] and [env]. Leaves the material-specific fields
-  /// (color, factors, alpha mode) untouched for the caller to fill.
-  ///
-  /// [nodeChannelMask] is the drawing item's `Node.lightChannelMask`. When it
-  /// misses the directional light's own channels the light is packed away for
-  /// this draw, which is what suppresses the primary directional per object
-  /// (the punctual lights are already filtered by the culler).
+  // --- MatInfo: a material's own fragment constants, held per material. ---
+  // std140: three vec4s then ten floats, padded to 24 floats (96 bytes).
+
+  /// Floats of the `MatInfo` block.
+  static const matInfoFloatCount = kMatInfoFloats;
+  static const matColorIndex = 0; // vec4
+  static const matEmissiveFactorIndex = 4; // vec4
+  static const matDielectricF0Index = 8; // vec4 (.xyz used)
+  static const matVertexColorWeightIndex = 12;
+  static const matMetallicFactorIndex = 13;
+  static const matRoughnessFactorIndex = 14;
+  static const matHasNormalMapIndex = 15;
+  static const matNormalScaleIndex = 16;
+  static const matOcclusionStrengthIndex = 17;
+  static const matAlphaModeIndex = 18;
+  static const matAlphaCutoffIndex = 19;
+  static const matSpecularAaVarianceIndex = 20;
+  static const matSpecularAaThresholdIndex = 21;
+
+  // --- ItemFragInfo: a draw's per-item fragment values, held per item. ---
+  // std140: two vec4s (8 floats, 32 bytes).
+
+  /// Floats of the `ItemFragInfo` block.
+  static const itemFragFloatCount = kItemFragInfoFloats;
+  static const itemModelScaleIndex = 0; // vec4 (.xyz used)
+  static const itemParamsIndex = 4; // vec4: count, offset, fade, dir-reaches
+
+  /// Writes the defaults every lit material shares into a fresh [matInfo]
+  /// scratch (already zeroed): the standard 0.04 dielectric reflectance and
+  /// the antialiasing knobs. The material overwrites its own fields (color,
+  /// factors, alpha, and a non-default dielectric F0) around this.
+  static void packMatInfoDefaults(Float32List matInfo) {
+    matInfo[matDielectricF0Index] = defaultDielectricF0;
+    matInfo[matDielectricF0Index + 1] = defaultDielectricF0;
+    matInfo[matDielectricF0Index + 2] = defaultDielectricF0;
+    matInfo[matSpecularAaVarianceIndex] = defaultSpecularAaVariance;
+    matInfo[matSpecularAaThresholdIndex] = defaultSpecularAaThreshold;
+  }
+
+  /// Writes a draw's per-item fragment values into [itemFrag] (zeroed first):
+  /// the model scale, the punctual-light slice (count, offset), the LOD
+  /// cross-fade coverage, and whether the primary directional light reaches
+  /// this item's light channels (1 applies, 0 does not — the per-node gate the
+  /// packing used to fold into the light, now that the light rides the shared
+  /// view block). [lighting] supplies the scene directional light whose own
+  /// channels are tested against [nodeChannelMask].
+  static void packItemFrag(
+    Float32List itemFrag,
+    Lighting lighting, {
+    required int nodeChannelMask,
+    required double modelScaleX,
+    required double modelScaleY,
+    required double modelScaleZ,
+    required double fade,
+    required int lightListCount,
+    required int lightListOffset,
+  }) {
+    itemFrag[itemModelScaleIndex] = modelScaleX;
+    itemFrag[itemModelScaleIndex + 1] = modelScaleY;
+    itemFrag[itemModelScaleIndex + 2] = modelScaleZ;
+    itemFrag[itemModelScaleIndex + 3] = 0.0;
+    itemFrag[itemParamsIndex] = lightListCount.toDouble();
+    itemFrag[itemParamsIndex + 1] = lightListOffset.toDouble();
+    itemFrag[itemParamsIndex + 2] = fade;
+    final directional = lighting.directionalLight;
+    itemFrag[itemParamsIndex + 3] =
+        directional != null && (directional.channelMask & nodeChannelMask) != 0
+        ? 1.0
+        : 0.0;
+  }
+
+  /// Writes the engine lighting / IBL / shadow fields of the `FragInfo` view
+  /// block into [fragInfo] from [lighting] and [env]. These are identical for
+  /// every draw of a pass, so the pass binds the block once (per draw on the
+  /// encoded path, once at draw time for a kept item). The material's own
+  /// values go in `MatInfo` and the per-item values in `ItemFragInfo`, both
+  /// written by the material, not here.
   static void packInto(
     Float32List fragInfo,
     Lighting lighting,
-    EnvironmentMap env, {
-    int nodeChannelMask = 0xFF,
-    double modelScaleX = 1.0,
-    double modelScaleY = 1.0,
-    double modelScaleZ = 1.0,
-  }) {
-    // Default to fully drawn; a material with an active LOD cross-fade
-    // overwrites this. Without it the zero-initialized slot would discard
-    // every fragment.
-    fragInfo[fadeIndex] = 1.0;
-    // A node outside the light's channels gets no direct sun and no cast
-    // shadow; the image-based ambient is untouched, so the shadow-ambient
-    // control is cleared with it below.
-    final scene = lighting.directionalLight;
-    final light = scene != null && (scene.channelMask & nodeChannelMask) != 0
-        ? scene
-        : null;
+    EnvironmentMap env,
+  ) {
+    // The scene's primary directional light, packed unconditionally into this
+    // shared view block (it is identical for every draw of the pass). Whether
+    // the light reaches a given item is a per-item decision now
+    // (`ItemFragInfo.params.w`, gated in the shader), not folded into the
+    // light here as it was when every draw packed its own block.
+    final light = lighting.directionalLight;
     final cascades = lighting.shadowMap == null
         ? const <ShadowCascade>[]
         : lighting.cascades;
@@ -157,11 +214,8 @@ class EngineLightingUniforms {
     fragInfo[134] = light?.shadowFadeRange ?? 0.0;
     fragInfo[135] = light?.shadowSoftness ?? 0.0;
     fragInfo[136] = cascades.length.toDouble();
-    // Geometric specular antialiasing at [138]/[139] (specular_aa_variance and
-    // specular_aa_threshold). Defaults for every lit material; a material with
-    // its own knobs overwrites these after packInto.
-    fragInfo[138] = defaultSpecularAaVariance;
-    fragInfo[139] = defaultSpecularAaThreshold;
+    // Geometric specular antialiasing ([138]/[139] here) is a material value
+    // now, written into MatInfo by the material, not this view block.
     // environment_transform: a mat4 carrying the 3x3 rotation; std140 mat4
     // columns are 16 bytes each, at [140], [144], [148], [152].
     final envTransform = lighting.environmentTransform.storage;
@@ -199,17 +253,11 @@ class EngineLightingUniforms {
     fragInfo[165] = lighting.ssaoMultiBounce.clamp(0.0, 1.0);
     fragInfo[166] = lighting.ssaoBentNormals ? 1.0 : 0.0;
     fragInfo[167] = lighting.ssaoContactShadows ? 1.0 : 0.0;
-    // model_scale at [168..170]: the draw's model scale, set by the encoder
-    // on the material before bind (replaces the old v_model_scale varying).
-    fragInfo[168] = modelScaleX;
-    fragInfo[169] = modelScaleY;
-    fragInfo[170] = modelScaleZ;
-    // dielectric_f0 at [172..174]: the standard shader path's dielectric
-    // reflectance, the plain 0.04 unless the material overwrites it.
-    fragInfo[dielectricF0Index] = defaultDielectricF0;
-    fragInfo[dielectricF0Index + 1] = defaultDielectricF0;
-    fragInfo[dielectricF0Index + 2] = defaultDielectricF0;
-    // dielectric_f0.w: the view depth where directional shadows end.
+    // model_scale ([168..170] here) and the dielectric reflectance
+    // (dielectric_f0.xyz, [172..174]) are per-item and material values now,
+    // written into ItemFragInfo and MatInfo; this view block leaves them zero.
+    // dielectric_f0.w stays a pass value: the view depth where directional
+    // shadows end, which they fade out toward.
     fragInfo[dielectricF0Index + 3] = cascades.isEmpty
         ? 0.0
         : cascades.last.splitDistance;
@@ -407,8 +455,20 @@ class EngineLightingUniforms {
       return;
     }
     _fogMemo[shader] = lighting;
-    final fog = lighting.fog;
     final buffer = Float32List(24);
+    packFog(buffer, lighting);
+    pass.bindUniform(
+      shader.cachedUniformSlot('FogInfo'),
+      transientsBuffer.emplace(ByteData.sublistView(buffer)),
+    );
+  }
+
+  /// Packs the `FogInfo` block from [lighting] into [buffer] (zeroed first),
+  /// the same bytes [bindFog] binds. The color pass binds it as a view block
+  /// for a kept draw, so this is public to it.
+  static void packFog(Float32List buffer, Lighting lighting) {
+    buffer.fillRange(0, buffer.length, 0);
+    final fog = lighting.fog;
     if (fog != null && fog.enabled && fog.mode != FogMode.none) {
       // params0: mode, enabled, maxOpacity, sky-color influence.
       buffer[0] = fog.mode.index.toDouble();
@@ -444,10 +504,6 @@ class EngineLightingUniforms {
       }
     }
     // buffer[1] left 0 (disabled) when there is no active fog.
-    pass.bindUniform(
-      shader.cachedUniformSlot('FogInfo'),
-      transientsBuffer.emplace(ByteData.sublistView(buffer)),
-    );
   }
 
   /// Binds the `ClipInfo` block (see `shaders/clip_volume.glsl`) on [shader]:
@@ -469,6 +525,23 @@ class EngineLightingUniforms {
       volume == null
           ? _noClipVolume.value
           : transientsBuffer.emplace(volume.uniformBytes),
+    );
+  }
+
+  /// Binds [volume] as the `ClipInfo` block from [held], the material's own
+  /// held block, so a still color draw binds no per-frame buffer and can be
+  /// kept as a backend item.
+  static void bindHeldClipVolume(
+    gpu.RenderPass pass,
+    gpu.Shader shader,
+    HeldBlock held,
+    ClipVolume? volume,
+  ) {
+    final slot = shader.getUniformSlot('ClipInfo');
+    if (slot.sizeInBytes == null) return;
+    pass.bindUniform(
+      slot,
+      volume == null ? _noClipVolume.value : held.bound(volume.uniformFloats),
     );
   }
 

@@ -652,6 +652,35 @@ base class Scene implements SceneGraph {
     if (renderScene.drawOrigin.moveTo(x, y, z)) markSceneDrawChanged();
   }
 
+  /// Has every draw the backend keeps as a render item checked against its
+  /// material on the next frame, and recorded again where what it binds
+  /// changed, for a change no node was told of
+  /// ([Node.markMaterialsChanged]): a material getter that answers from app
+  /// state, such as a [Material.clipVolume] that follows a cut the app moves.
+  /// A frame that calls it reads every item once.
+  void markKeptDrawsChanged() => renderScene.relogItems();
+
+  /// Supplies the bytes [bytes] gives, each frame, as the uniform block
+  /// [name] to every color-pass draw the backend keeps as a render item, or
+  /// stops when [bytes] is null.
+  ///
+  /// For a block an app shader reads whose bytes follow the frame rather than
+  /// the draw, such as an animation clock. The material binds the same bytes
+  /// itself on a draw the pass encodes; a kept draw reads them like the
+  /// engine's `ViewInfo`, so it stays kept while the value changes. A block is
+  /// at most as long as the engine's `FragInfo`.
+  void setViewBlock(String name, ByteData Function()? bytes) {
+    final blocks = renderScene.viewBlocks;
+    if (bytes == null) {
+      if (blocks.remove(name) == null) return;
+    } else {
+      final had = blocks.containsKey(name);
+      blocks[name] = bytes;
+      if (had) return;
+    }
+    renderScene.viewBlocksRevision++;
+  }
+
   // Builds the per-frame data texture carrying the scene's point, spot, and
   // extra directional lights. Rebuilt once per frame in [render].
   final PunctualLightBuffer _punctualLightBuffer = PunctualLightBuffer();
@@ -3249,6 +3278,7 @@ base class Scene implements SceneGraph {
         pointShadowFrame: pointShadowFrame,
         capturer: capturer,
         captureLinearColor: target.linearColor,
+        primaryView: target.presents,
         capturePlanarReflections:
             !target.linearColor && identical(view, planarCaptureView),
       );
@@ -4008,6 +4038,10 @@ base class Scene implements SceneGraph {
     // The screen view index for stats attribution, or -1 for an offscreen
     // render (a render texture, a probe, a warm-up frame).
     int viewIndex = -1,
+    // Whether the view is the frame a surface shows, which keeps its still
+    // draws across frames: every screen view, and a texture view that
+    // presents.
+    bool? primaryView,
     // A linear-HDR capture (environment probes): the graph stops after the
     // scene pass and blits the lit scene color into [outputColor], with no
     // reflections, indirect-light history, post-processing, anti-aliasing,
@@ -4019,6 +4053,7 @@ base class Scene implements SceneGraph {
     bool capturePlanarReflections = false,
   }) {
     currentAnimationTime = animationTime;
+    final primary = primaryView ?? viewIndex >= 0;
     // The entry points check first with their own names; this catches a bake
     // stepper taken before dispose.
     if (_disposed) {
@@ -4470,7 +4505,7 @@ base class Scene implements SceneGraph {
             cameraUp: cameraUp,
             cullingPlanes: view.cullingPlanes,
             cameraTransform: currentJitteredViewProjection,
-            primaryView: viewIndex >= 0,
+            primaryView: primary,
             visibleItems: visibleItems,
           ),
         );
@@ -4602,7 +4637,7 @@ base class Scene implements SceneGraph {
     graph.addPass(
       ScenePass(
         camera: camera,
-        primaryView: viewIndex >= 0,
+        primaryView: primary,
         renderScene: renderScene,
         dimensions: pixelSize,
         environmentMap: environmentMap,
@@ -4743,7 +4778,7 @@ base class Scene implements SceneGraph {
           cameraForward: camera.forward,
           layerMask: view.layerMask,
           cullingPlanes: view.cullingPlanes,
-          primaryView: viewIndex >= 0,
+          primaryView: primary,
           visibleItems: visibleItems,
         ),
       );

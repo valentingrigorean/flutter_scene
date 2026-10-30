@@ -7,7 +7,7 @@ final class BufferView {
     this.buffer, {
     required this.offsetInBytes,
     required this.lengthInBytes,
-  }) : _impeller = switch (buffer._impeller) {
+  }) : _fixed = switch (buffer._fixed) {
          final impeller? => fg.BufferView(
            impeller,
            offsetInBytes: offsetInBytes,
@@ -19,7 +19,7 @@ final class BufferView {
   BufferView._fromImpeller(this.buffer, fg.BufferView view)
     : offsetInBytes = view.offsetInBytes,
       lengthInBytes = view.lengthInBytes,
-      _impeller = view;
+      _fixed = view;
 
   /// The buffer this views.
   final DeviceBuffer buffer;
@@ -31,7 +31,30 @@ final class BufferView {
   final int lengthInBytes;
 
   // Built once with the view, so binding it on Impeller allocates nothing.
-  final fg.BufferView? _impeller;
+  final fg.BufferView? _fixed;
+
+  // The view onto the copy of an ordered buffer it was last bound with.
+  fg.DeviceBuffer? _copy;
+  fg.BufferView? _copyView;
+
+  // The flutter_gpu view a pass binds. On a buffer with ordered writes it
+  // views the copy current at the bind, which a later write leaves alone
+  // while the GPU may still read it.
+  fg.BufferView? get _impeller {
+    final fixed = _fixed;
+    if (fixed != null) return fixed;
+    final copy = buffer._ordered?.current;
+    if (copy == null) return null;
+    if (!identical(copy, _copy)) {
+      _copy = copy;
+      _copyView = fg.BufferView(
+        copy,
+        offsetInBytes: offsetInBytes,
+        lengthInBytes: lengthInBytes,
+      );
+    }
+    return _copyView;
+  }
 
   GpuBackendBufferRange get _backend => (
     buffer: buffer._backend!,
@@ -41,13 +64,30 @@ final class BufferView {
 }
 
 /// A region of GPU memory.
-final class DeviceBuffer {
-  DeviceBuffer._impeller(fg.DeviceBuffer this._impeller) : _backend = null;
-  DeviceBuffer._backend(GpuBackendDeviceBuffer this._backend)
-    : _impeller = null;
+final Expando<bool> _transientBuffers = Expando('transient buffer');
 
-  final fg.DeviceBuffer? _impeller;
+/// States that [buffer] holds a frame's transient data, rewritten for other
+/// draws in later frames, so a draw that reads it is never kept in an
+/// [ItemSet].
+void markTransientBuffer(DeviceBuffer buffer) =>
+    _transientBuffers[buffer] = true;
+
+final class DeviceBuffer {
+  DeviceBuffer._impeller(fg.DeviceBuffer this._fixed)
+    : _ordered = null,
+      _backend = null;
+  DeviceBuffer._ordered(_OrderedCopies this._ordered)
+    : _fixed = null,
+      _backend = null;
+  DeviceBuffer._backend(GpuBackendDeviceBuffer this._backend)
+    : _fixed = null,
+      _ordered = null;
+
+  final fg.DeviceBuffer? _fixed;
+  final _OrderedCopies? _ordered;
   final GpuBackendDeviceBuffer? _backend;
+
+  fg.DeviceBuffer? get _impeller => _fixed ?? _ordered?.current;
 
   /// How the memory is reachable from the host.
   StorageMode get storageMode =>
@@ -62,6 +102,7 @@ final class DeviceBuffer {
   /// Copies [sourceBytes] into the buffer from [destinationOffsetInBytes].
   /// Returns false when the copy did not happen.
   bool overwrite(ByteData sourceBytes, {int destinationOffsetInBytes = 0}) =>
+      _ordered?.overwrite(sourceBytes, destinationOffsetInBytes) ??
       _impeller?.overwrite(
         sourceBytes,
         destinationOffsetInBytes: destinationOffsetInBytes,
@@ -85,6 +126,108 @@ final class DeviceBuffer {
         lengthInBytes: lengthInBytes,
       );
     }
+  }
+}
+
+// The submissions made through [CommandBuffer.submit] on Impeller, and those
+// the GPU has not finished, oldest first.
+int _impellerSubmitted = 0;
+final List<int> _impellerPending = [];
+
+int get _impellerCompletedThrough =>
+    _impellerPending.isEmpty ? _impellerSubmitted : _impellerPending.first - 1;
+
+// A buffer with ordered writes on Impeller ([GpuContext.createOrderedDeviceBuffer]).
+// Flutter GPU copies no buffer into another on the GPU, so a write the GPU
+// may still be reading the current copy for moves to another copy, which the
+// next bind and every kept draw read from then on. A copy waits until the
+// submissions that may read it complete, then catches up on the bytes written
+// since from a host mirror.
+final class _OrderedCopies {
+  _OrderedCopies(this._context, int sizeInBytes)
+    : _contents = Uint8List(sizeInBytes),
+      current = _context.createDeviceBuffer(
+        StorageMode.hostVisible,
+        sizeInBytes,
+      );
+
+  final fg.GpuContext _context;
+  final Uint8List _contents;
+  fg.DeviceBuffer current;
+  int _currentSince = _impellerSubmitted;
+  final List<_SpareCopy> _spares = [];
+
+  bool overwrite(ByteData bytes, int offset) {
+    final length = bytes.lengthInBytes;
+    final end = offset + length;
+    if (offset < 0 || end > _contents.length) return false;
+    if (length == 0) return true;
+    if (_impellerSubmitted > _currentSince &&
+        _impellerCompletedThrough < _impellerSubmitted) {
+      _turn();
+    }
+    _contents.setRange(
+      offset,
+      end,
+      bytes.buffer.asUint8List(bytes.offsetInBytes, length),
+    );
+    for (final spare in _spares) {
+      spare.stale(offset, end);
+    }
+    return current.overwrite(bytes, destinationOffsetInBytes: offset);
+  }
+
+  void _turn() {
+    final done = _impellerCompletedThrough;
+    final retired = _SpareCopy(current, _impellerSubmitted);
+    _SpareCopy? free;
+    for (final spare in _spares) {
+      if (spare.readThrough <= done) {
+        free = spare;
+        break;
+      }
+    }
+    if (free == null) {
+      current = _context.createDeviceBufferWithCopy(
+        ByteData.sublistView(_contents),
+      );
+    } else {
+      _spares.remove(free);
+      final low = free.low;
+      final high = free.high;
+      if (high > low) {
+        free.buffer
+          ..overwrite(
+            ByteData.sublistView(_contents, low, high),
+            destinationOffsetInBytes: low,
+          )
+          ..flush(offsetInBytes: low, lengthInBytes: high - low);
+      }
+      current = free.buffer;
+    }
+    _spares.add(retired);
+    _currentSince = _impellerSubmitted;
+  }
+}
+
+// A copy of an ordered buffer the GPU may read through [readThrough], and the
+// span of bytes written since it stopped being current.
+final class _SpareCopy {
+  _SpareCopy(this.buffer, this.readThrough);
+
+  final fg.DeviceBuffer buffer;
+  final int readThrough;
+  int low = 0;
+  int high = 0;
+
+  void stale(int start, int end) {
+    if (high == low) {
+      low = start;
+      high = end;
+      return;
+    }
+    if (start < low) low = start;
+    if (end > high) high = end;
   }
 }
 

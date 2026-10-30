@@ -49,16 +49,16 @@ void main() {
     }
   });
 
-  test('a light outside the item channels packs no horizon', () {
+  test('a light outside the item channels does not reach the item', () {
     late EnvironmentMap environment;
     try {
       environment = EnvironmentMap.empty();
     } catch (_) {
       return;
     }
-    final fragInfo = Float32List(EngineLightingUniforms.fragInfoFloatCount);
-    EngineLightingUniforms.packInto(
-      fragInfo,
+    final itemFrag = Float32List(EngineLightingUniforms.itemFragFloatCount);
+    EngineLightingUniforms.packItemFrag(
+      itemFrag,
       Lighting(
         environmentMap: environment,
         directionalLight: DirectionalLight(
@@ -66,9 +66,14 @@ void main() {
           horizon: SunHorizon(center: Vector3.zero()),
         ),
       ),
-      environment,
       nodeChannelMask: 0x02,
+      modelScaleX: 1,
+      modelScaleY: 1,
+      modelScaleZ: 1,
+      fade: 1,
+      lightListCount: 0,
+      lightListOffset: 0,
     );
-    expect(fragInfo[211], 0);
+    expect(itemFrag[EngineLightingUniforms.itemParamsIndex + 3], 0);
   });
 }
