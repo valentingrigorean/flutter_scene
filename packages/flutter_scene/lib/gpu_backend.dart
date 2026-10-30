@@ -29,4 +29,5 @@ export 'src/gpu/impeller/_gpu.dart'
         useGpuBackend;
 export 'src/gpu/shared/gpu_capabilities.dart'
     show GpuBackendKind, GpuCapabilities;
+export 'src/gpu/shared/item_instances.dart';
 export 'src/gpu/shared/item_sort.dart';

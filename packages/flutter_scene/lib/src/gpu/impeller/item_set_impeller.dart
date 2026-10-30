@@ -226,12 +226,50 @@ final class _ItemDraw {
   int passes = 0;
   int? order;
   Float32List? bounds;
+  _ItemInstances? instances;
+
   // What a pass sorts runs of its items that share an order and blend
   // nothing by, so items that share a pipeline and then textures draw next
   // to each other and skip binding them again.
   int pipelineKey = 0;
   List<int> textureKeys = const [];
   bool get blends => state.blends?.contains(true) ?? false;
+}
+
+// A kept item's instances ([ItemInstances]): every record on the device, and
+// for each pass index the instances its draw last showed.
+final class _ItemInstances {
+  _ItemInstances(this.slot, this.stride, this.records, this.bounds, this.all);
+
+  final int slot;
+  final int stride;
+  final Uint8List records;
+  final Float32List? bounds;
+  final fg.BufferView all;
+  final Map<int, _ShownInstances> shown = {};
+
+  int get count => records.lengthInBytes ~/ stride;
+}
+
+// The instances one pass index last showed of a kept item, compacted into a
+// buffer of [_itemViewTurns] turns, so a draw still on the GPU keeps reading
+// the turn it drew with while a later frame shows another subset.
+final class _ShownInstances {
+  _ShownInstances(this.buffer, int count) : at = Int32List(count);
+
+  final fg.DeviceBuffer buffer;
+  final Int32List at;
+  int length = -1;
+  int turn = -1;
+  fg.BufferView? view;
+
+  bool holds(Int32List shown, int length) {
+    if (length != this.length) return false;
+    for (var index = 0; index < length; index++) {
+      if (at[index] != shown[index]) return false;
+    }
+    return true;
+  }
 }
 
 // The pass an [ItemSet] hands out to record draws on Impeller: it binds
@@ -389,6 +427,11 @@ final class _ItemSet {
 
   final Float32List _planes = Float32List(24);
 
+  // The instances of the kept item being drawn that its pass shows, and the
+  // records they are compacted from on the way to the device.
+  Int32List _shown = Int32List(64);
+  Uint8List _staging = Uint8List(0);
+
   static int _aligned(int size, int alignment) =>
       (size + alignment - 1) ~/ alignment * alignment;
 
@@ -399,6 +442,7 @@ final class _ItemSet {
     required int id,
     required int passes,
     Float32List? bounds,
+    ItemInstances? instances,
     int? order,
   }) {
     final draw = recorder.take();
@@ -411,6 +455,7 @@ final class _ItemSet {
       ..passes = passes
       ..order = order
       ..bounds = bounds == null ? null : Float32List.fromList(bounds)
+      ..instances = instances == null ? null : _instancesOf(instances)
       ..pipelineKey = _keyOf(draw.pipeline)
       ..textureKeys = [
         for (final (_, texture, _) in draw.textures) _keyOf(texture),
@@ -418,6 +463,30 @@ final class _ItemSet {
     final at = id != 0 ? id : ++_lastId;
     _items[at] = draw;
     return at;
+  }
+
+  bool place(int id, {Float32List? bounds, required ItemInstances instances}) {
+    final draw = _items[id];
+    final held = draw?.instances;
+    if (draw == null ||
+        held == null ||
+        held.slot != instances.slot ||
+        held.stride != instances.stride ||
+        held.count != instances.count ||
+        (held.bounds == null) != (instances.bounds == null)) {
+      return false;
+    }
+    // The shown turns carry over, written again on the next draw.
+    final placed = _instancesOf(instances);
+    for (final MapEntry(key: index, value: shown) in held.shown.entries) {
+      placed.shown[index] = shown
+        ..length = -1
+        ..view = null;
+    }
+    draw
+      ..bounds = bounds == null ? null : Float32List.fromList(bounds)
+      ..instances = placed;
+    return true;
   }
 
   void remove(int id) {
@@ -481,6 +550,72 @@ final class _ItemSet {
     return a.length.compareTo(b.length);
   }
 
+  _ItemInstances _instancesOf(ItemInstances instances) {
+    final records = Uint8List.fromList(instances.records);
+    final buffer = _context.createDeviceBufferWithCopy(
+      ByteData.sublistView(records),
+    );
+    final bounds = instances.bounds;
+    return _ItemInstances(
+      instances.slot,
+      instances.stride,
+      records,
+      bounds == null ? null : Float32List.fromList(bounds),
+      fg.BufferView(
+        buffer,
+        offsetInBytes: 0,
+        lengthInBytes: records.lengthInBytes,
+      ),
+    );
+  }
+
+  // The view of the records of [instances] that pass [index] shows, the
+  // first [length] of [shown]: every record when none is culled, else the
+  // subset compacted into the pass index's next turn, written only when it
+  // differs from the subset the pass index showed last.
+  fg.BufferView _shownOf(
+    _ItemInstances instances,
+    int index,
+    Int32List shown,
+    int length,
+  ) {
+    final count = instances.count;
+    if (length == count) return instances.all;
+    final stride = instances.stride;
+    final held = instances.shown[index] ??= _ShownInstances(
+      _context.createDeviceBuffer(
+        StorageMode.hostVisible,
+        stride * count * _itemViewTurns,
+      ),
+      count,
+    );
+    final view = held.view;
+    if (view != null && held.holds(shown, length)) return view;
+    var staging = _staging;
+    if (staging.length < length * stride) {
+      staging = _staging = Uint8List(length * stride * 2);
+    }
+    final records = instances.records;
+    for (var at = 0; at < length; at++) {
+      final from = shown[at] * stride;
+      staging.setRange(at * stride, (at + 1) * stride, records, from);
+    }
+    held
+      ..turn = (held.turn + 1) % _itemViewTurns
+      ..length = length;
+    held.at.setRange(0, length, shown);
+    final offset = held.turn * count * stride;
+    held.buffer.overwrite(
+      ByteData.sublistView(staging, 0, length * stride),
+      destinationOffsetInBytes: offset,
+    );
+    return held.view = fg.BufferView(
+      held.buffer,
+      offsetInBytes: offset,
+      lengthInBytes: length * stride,
+    );
+  }
+
   void draw(
     fg.RenderPass pass,
     _ItemDrawState live,
@@ -508,7 +643,25 @@ final class _ItemSet {
               )) {
       if (draw.passes & mask == 0) continue;
       final bounds = draw.bounds;
-      if (bounds != null && !_inside(planes, bounds)) continue;
+      if (bounds != null && !_inside(planes, bounds, 0)) continue;
+      final instances = draw.instances;
+      fg.BufferView? shownView;
+      var instanceCount = draw.instanceCount;
+      if (instances != null) {
+        final count = instances.count;
+        final each = instances.bounds;
+        var shown = _shown;
+        if (shown.length < count) shown = _shown = Int32List(count * 2);
+        var length = 0;
+        for (var at = 0; at < count; at++) {
+          if (each == null || _inside(planes, each, at * 6)) {
+            shown[length++] = at;
+          }
+        }
+        if (length == 0) continue;
+        shownView = _shownOf(instances, index, shown, length);
+        instanceCount = length;
+      }
       views ??= _viewsOf(index, viewBlocks);
       saved ??= live.copy();
       // A pass keeps one set of bindings for every shader, so another
@@ -524,8 +677,10 @@ final class _ItemSet {
       }
       draw.state.applyOnto(pass, live);
       for (final (slot, view) in draw.vertices) {
+        if (shownView != null && slot == instances!.slot) continue;
         _bindVertices(pass, slot, view._impeller!);
       }
+      if (shownView != null) _bindVertices(pass, instances!.slot, shownView);
       final indices = draw.index?._impeller;
       if (indices != null &&
           (draw.indexType != boundIndexType ||
@@ -549,9 +704,9 @@ final class _ItemSet {
         }
       }
       if (draw.indexed) {
-        pass.drawIndexed(draw.count, instanceCount: draw.instanceCount);
+        pass.drawIndexed(draw.count, instanceCount: instanceCount);
       } else {
-        pass.draw(draw.count, instanceCount: draw.instanceCount);
+        pass.draw(draw.count, instanceCount: instanceCount);
       }
     }
     if (saved == null) return;
@@ -751,15 +906,16 @@ final class _ItemSet {
     return planes;
   }
 
-  static bool _inside(Float32List planes, Float32List bounds) {
+  // Whether the bounds at [at] of [bounds] reach inside [planes].
+  static bool _inside(Float32List planes, Float32List bounds, int at) {
     for (var plane = 0; plane < 6; plane++) {
       final a = planes[plane * 4];
       final b = planes[plane * 4 + 1];
       final c = planes[plane * 4 + 2];
       final d = planes[plane * 4 + 3];
-      final x = bounds[a >= 0 ? 3 : 0];
-      final y = bounds[b >= 0 ? 4 : 1];
-      final z = bounds[c >= 0 ? 5 : 2];
+      final x = bounds[at + (a >= 0 ? 3 : 0)];
+      final y = bounds[at + (b >= 0 ? 4 : 1)];
+      final z = bounds[at + (c >= 0 ? 5 : 2)];
       if (a * x + b * y + c * z + d < 0) return false;
     }
     return true;

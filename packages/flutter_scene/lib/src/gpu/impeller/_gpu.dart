@@ -44,6 +44,7 @@ import 'package:vector_math/vector_math.dart' as vm;
 
 import '../shared/gpu_capabilities.dart';
 import '../shared/gpu_labels.dart';
+import '../shared/item_instances.dart';
 import '../shared/item_sort.dart';
 import '../backend/gpu_backend.dart';
 
