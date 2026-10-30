@@ -577,8 +577,9 @@ final gpu.Shader _maskedDepthNormalShader =
 /// backend keeps as render items ([RetainedDraws]), so a frame that moves
 /// only the camera encodes none of them. The prepass draws them natively,
 /// culled by the camera, with the view's `ViewInfo` and `DepthInfo` as view
-/// blocks, and encodes [encoded]. The normal-writing prepass binds a block
-/// per material and keeps none.
+/// blocks, and encodes [encoded]. A geometry that keeps its draw
+/// (`Geometry.keepsItsDraw`) keeps it here through its own vertex stage. The
+/// normal-writing prepass binds a block per material and keeps none.
 final class RetainedDepthDraws extends RetainedDraws {
   RetainedDepthDraws._(super.renderScene, super.items);
 
@@ -634,7 +635,7 @@ final class RetainedDepthDraws extends RetainedDraws {
       item.material,
       writeNormals: false,
     );
-    return draw.positionOnly &&
+    return (draw.positionOnly || item.geometry.keepsItsDraw) &&
         !draw.masked &&
         !draw.surface &&
         draw.materialVertex == null;
