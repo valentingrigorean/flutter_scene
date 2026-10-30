@@ -116,20 +116,17 @@ class UnlitMaterial extends Material {
   /// applies it.
   double vertexColorWeight = 1.0;
 
-  /// Kept when scene-referred and depth-tested as usual, with a still base
-  /// color texture: its blocks, the clip volume's among them, are then held
-  /// and the rest it reads (`ViewInfo`, `FogInfo`) are the color pass's view
-  /// blocks. A blended surface is kept in the translucent phase's
-  /// back-to-front order.
-  /// A display-referred surface draws in its own layer, a surface drawn
-  /// regardless of depth relies on its place in the draw order, which a kept
-  /// draw does not keep, and a render texture changes what it samples from
-  /// frame to frame.
+  /// Kept when scene-referred, with a still base color texture: its blocks,
+  /// the clip volume's among them, are then held and the rest it reads
+  /// (`ViewInfo`, `FogInfo`) are the color pass's view blocks. A blended
+  /// surface is kept in the translucent phase's back-to-front order, under
+  /// its render order and with its own [depthCompare], so an overlay drawn
+  /// regardless of depth keeps its place after the scene. A display-referred
+  /// surface draws in its own layer, and a render texture changes what it
+  /// samples from frame to frame.
   @override
   bool get colorRetainable =>
-      !displayReferred &&
-      depthCompare == gpu.CompareFunction.lessEqual &&
-      baseColorTexture is! RenderTexture;
+      !displayReferred && baseColorTexture is! RenderTexture;
 
   @override
   Iterable<HeldBlock> get heldFragmentBlocks => [
