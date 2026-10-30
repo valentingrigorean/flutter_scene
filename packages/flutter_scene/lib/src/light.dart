@@ -1226,6 +1226,70 @@ class Lighting {
 
   bool _queryShadowed = false;
 
+  /// This lighting as another camera of the same frame sees it: the camera
+  /// basis, projection terms, [cascades] and [time] replaced and everything
+  /// else kept.
+  @internal
+  Lighting withView({
+    required Vector3 cameraPosition,
+    required Vector3 cameraForward,
+    required Vector3 cameraRight,
+    required Vector3 cameraUp,
+    required ProjectionParams projection,
+    required List<ShadowCascade> cascades,
+    required double time,
+  }) =>
+      Lighting(
+          environmentMap: environmentMap,
+          environmentMapB: environmentMapB,
+          environmentBlend: environmentBlend,
+          environmentIntensity: environmentIntensity,
+          environmentTransform: environmentTransform,
+          diffuseShTexture: diffuseShTexture,
+          irradianceField: irradianceField,
+          directionalLight: directionalLight,
+          directionalLightDirection: directionalLightDirection,
+          punctualParamsTexture: punctualParamsTexture,
+          punctualIndexTexture: punctualIndexTexture,
+          punctualParamsCount: punctualParamsCount,
+          punctualIndexWidth: punctualIndexWidth,
+          punctualIndexHeight: punctualIndexHeight,
+          froxels: froxels,
+          spotShadowCount: spotShadowCount,
+          pointShadowTileCount: pointShadowTileCount,
+          rectAreaLightCount: rectAreaLightCount,
+          spotShadowDepthBias: spotShadowDepthBias,
+          spotShadowNormalBias: spotShadowNormalBias,
+          spotShadowSoftness: spotShadowSoftness,
+          shadowMap: shadowMap,
+          cascades: shadowMap == null ? const [] : cascades,
+          ssaoMap: ssaoMap,
+          specularOcclusionMode: specularOcclusionMode,
+          ssaoDirectLightAffect: ssaoDirectLightAffect,
+          ssaoMultiBounce: ssaoMultiBounce,
+          ssaoBentNormals: ssaoBentNormals,
+          ssaoContactShadows: ssaoContactShadows,
+          ssaoIndirectLight: ssaoIndirectLight,
+          viewportSize: viewportSize,
+          fog: fog,
+          sceneDepthLinear: sceneDepthLinear,
+          filteredSceneColor: filteredSceneColor,
+          transmissionFilterBandCount: transmissionFilterBandCount,
+          cameraPosition: cameraPosition,
+          cameraForward: cameraForward,
+          cameraRight: cameraRight,
+          cameraUp: cameraUp,
+          projectionScaleX: projection.scaleX,
+          projectionScaleY: projection.scaleY,
+          projectionOffsetX: projection.offsetX,
+          projectionOffsetY: projection.offsetY,
+          orthographic: projection.orthographic,
+          time: time,
+          planarReflectionsSuppressed: planarReflectionsSuppressed,
+        )
+        .._queryShadowed = _queryShadowed
+        ..opaqueSceneColor = opaqueSceneColor;
+
   /// The image-based-lighting environment in effect for this draw.
   final EnvironmentMap environmentMap;
 

@@ -8,6 +8,7 @@ import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/light.dart';
+import 'package:flutter_scene/src/render/camera_replay.dart';
 import 'package:flutter_scene/src/render/depth_prepass.dart';
 import 'package:flutter_scene/src/render/kept_pass_draw.dart';
 import 'package:flutter_scene/src/render/linear_depth_probe.dart';
@@ -297,6 +298,13 @@ class RenderPassContext {
   final CustomRenderPass _pass;
   bool _wrote = false;
 
+  // While the pass runs again for another camera of a frame
+  // ([CameraReplay]): the view blocks its kept draw states, which it then
+  // draws nothing for.
+  bool _replaying = false;
+  List<ByteData>? _replayed;
+  int _replays = 0;
+
   gpu.Texture get _ownDestination =>
       _destination ??
       (throw StateError(
@@ -573,6 +581,11 @@ class RenderPassContext {
     required void Function(gpu.RenderPass pass) record,
     List<ByteData> viewBlocks = const [],
   }) {
+    if (_replaying) {
+      _replayed = viewBlocks;
+      _replays++;
+      return;
+    }
     final commands = gpu.gpuContext.createCommandBuffer(label: _pass.name);
     final target = gpu.RenderTarget.singleColor(
       gpu.ColorAttachment(
@@ -593,9 +606,30 @@ class RenderPassContext {
           key: key,
           record: record,
           viewBlocks: viewBlocks,
+          replay: _replay,
         );
     if (!drawn) record(pass);
     rendererSubmissions.submit(commands);
+  }
+
+  // Runs the pass again for [view] in place of the frame's camera, and
+  // returns the view blocks its one kept draw states, or null where it states
+  // none or several.
+  List<ByteData>? _replay(CameraReplayView view) {
+    final context = RenderPassContext._(
+      _context,
+      stage,
+      view.camera,
+      view.dimensions,
+      _destination,
+      _renderScene,
+      _viewLayerMask,
+      _passKey,
+      view.time,
+      _pass,
+    ).._replaying = true;
+    _pass.execute(context);
+    return context._replays == 1 ? context._replayed : null;
   }
 
   void applyShader(

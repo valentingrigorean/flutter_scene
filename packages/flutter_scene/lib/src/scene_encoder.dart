@@ -51,6 +51,7 @@ import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/render/uniform_slots.dart';
 import 'package:flutter_scene/src/render/view_info.dart';
+import 'package:flutter_scene/src/render/camera_replay.dart';
 
 /// A deferred opaque draw. Holds the [RenderItem] (instanced or not), its
 /// resolved pipeline, a per-pipeline grouping key, and the camera
@@ -3550,6 +3551,9 @@ final class RetainedColorDraws extends RetainedDraws {
       lighting.environmentMap,
     );
     EngineLightingUniforms.packFog(_fogScratch, lighting);
+    CameraReplay.recording
+      ?..pass(SceneItems.colorPass, _colorReplay(lighting, _appBlocks))
+      ..refuseWhere(encoded.isNotEmpty);
     items.draw(
       pass,
       SceneItems.colorPass,
@@ -3842,9 +3846,13 @@ final class RetainedTranslucentDraws extends RetainedDraws {
       Material.whitePlaceholder(lighting.sceneDepthLinear),
     ];
     while (drawsBelow(order)) {
+      final index = _passOf[_drawn[_cursor++]]!;
+      CameraReplay.recording
+        ?..pass(index, _colorReplay(lighting, _appBlocks))
+        ..refuseWhere(encoded.isNotEmpty);
       items.draw(
         pass,
-        _passOf[_drawn[_cursor++]]!,
+        index,
         viewBlocks: blocks,
         clip: encoder._cameraTransform.storage,
         viewTextures: viewTextures,
@@ -3878,3 +3886,44 @@ final class RetainedTranslucentDraws extends RetainedDraws {
     super.dispose();
   }
 }
+
+// Rebuilds the color pass's view blocks for another camera of the frame:
+// `ViewInfo`, `FragInfo` from [lighting] as that camera sees it, `FogInfo`,
+// and the app's [appBlocks] read again. Null where the lighting draws
+// punctual lights, which move apart from the camera.
+CameraReplayPass _colorReplay(
+  Lighting lighting,
+  List<ByteData Function()> appBlocks,
+) => (view) {
+  if (lighting.froxels != null || lighting.punctualParamsCount > 0) {
+    return null;
+  }
+  final camera = view.camera;
+  final position = camera.position;
+  final forward = camera.forward.normalized();
+  final right = camera.up.cross(forward)..normalize();
+  final up = forward.cross(right)..normalize();
+  final seen = lighting.withView(
+    cameraPosition: position,
+    cameraForward: forward,
+    cameraRight: right,
+    cameraUp: up,
+    projection: ProjectionParams.of(camera.projection, view.dimensions),
+    cascades: view.cascades,
+    time: view.time,
+  );
+  final fragInfo = Float32List(EngineLightingUniforms.fragInfoFloatCount);
+  EngineLightingUniforms.packInto(fragInfo, seen, seen.environmentMap);
+  final fog = Float32List(24);
+  EngineLightingUniforms.packFog(fog, seen);
+  final transform = rasterViewTransformOf(camera, view.dimensions);
+  return (
+    blocks: [
+      viewInfoBytesOf(transform, position),
+      ByteData.sublistView(fragInfo),
+      ByteData.sublistView(fog),
+      for (final bytes in appBlocks) bytes(),
+    ],
+    clip: transform.storage,
+  );
+};

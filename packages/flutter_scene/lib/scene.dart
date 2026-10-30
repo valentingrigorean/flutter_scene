@@ -277,6 +277,7 @@ export 'src/render/shadow_pass.dart'
         debugSplitShadowMap,
         shadowMapIsDepth,
         shadowMapIsSplit;
+export 'src/render/camera_replay.dart' show CameraReplayBlocks;
 export 'src/render/draw_recorder.dart' show DrawPhase, DrawSkipReason;
 export 'src/render/depth_raster.dart' show DepthRaster, currentDrawDepthRaster;
 export 'src/render/linear_depth_probe.dart'

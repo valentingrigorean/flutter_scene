@@ -142,6 +142,20 @@ void encodeSkybox(
           ),
           record: record,
           viewBlocks: [frameInfo, skyboxInfo!],
+          replay: (view) {
+            final seen = view.camera;
+            return [
+              ByteData.sublistView(
+                skyboxFrameInfoOf(
+                  skyboxInverseViewProjection(seen, view.dimensions),
+                  seen.position,
+                  environmentTransform,
+                  farClipDepth: depthRasterOf(seen).farClipDepth,
+                ),
+              ),
+              skyboxInfo,
+            ];
+          },
         )) {
       // The kept sky bound its own pipeline and blocks on the pass.
       renderPass.clearBindings();
