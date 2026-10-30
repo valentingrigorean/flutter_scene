@@ -12,6 +12,8 @@ import 'package:flutter_scene/src/material/physically_based_material.dart'
 
 import 'package:vector_math/vector_math.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
+import 'package:flutter_scene/src/render_texture.dart';
+import 'package:flutter_scene/src/render/view_info.dart' show HeldBlock;
 import 'package:flutter_scene/src/render/uniform_slots.dart';
 
 /// A material that draws geometry with a flat color or texture, ignoring
@@ -53,7 +55,12 @@ class UnlitMaterial extends Material {
   /// Texture-coordinate channel used by [baseColorTexture].
   int baseColorTextureTexCoord = 0;
 
+  static final Float32List _unlitInfoScratch = Float32List(8);
   static final Float32List _textureTransformScratch = Float32List(8);
+
+  // The material's own blocks, held so a still draw rewrites none of them.
+  final HeldBlock _heldUnlitInfo = HeldBlock(8);
+  final HeldBlock _heldTextureTransform = HeldBlock(8);
 
   /// How the material's alpha is interpreted. [AlphaMode.opaque] ignores
   /// alpha; [AlphaMode.blend] routes the material through the depth-sorted
@@ -109,6 +116,27 @@ class UnlitMaterial extends Material {
   /// applies it.
   double vertexColorWeight = 1.0;
 
+  /// Kept when opaque, scene-referred and depth-tested as usual, with no clip
+  /// volume and a still base color texture: its blocks are then held and the
+  /// rest it reads (`ViewInfo`, `FogInfo`) are the color pass's view blocks.
+  /// A display-referred surface draws in its own layer, a surface drawn
+  /// regardless of depth relies on its place in the draw order, which a kept
+  /// draw does not keep, and a render texture changes what it samples from
+  /// frame to frame.
+  @override
+  bool get colorRetainable =>
+      alphaMode == AlphaMode.opaque &&
+      !displayReferred &&
+      depthCompare == gpu.CompareFunction.lessEqual &&
+      clipVolume == null &&
+      baseColorTexture is! RenderTexture;
+
+  @override
+  Iterable<HeldBlock> get heldFragmentBlocks => [
+    _heldUnlitInfo,
+    _heldTextureTransform,
+  ];
+
   @override
   void bind(
     gpu.RenderPass pass,
@@ -117,16 +145,17 @@ class UnlitMaterial extends Material {
   ) {
     super.bind(pass, transientsBuffer, lighting);
 
-    var fragInfo = Float32List.fromList([
-      baseColorFactor.r, baseColorFactor.g,
-      baseColorFactor.b, baseColorFactor.a, // color
-      vertexColorWeight, // vertex_color_weight
-      lodFade, // fade
-      displayReferred ? 1.0 : 0.0, // display_referred
-    ]);
+    final unlitInfo = _unlitInfoScratch
+      ..[0] = baseColorFactor.r
+      ..[1] = baseColorFactor.g
+      ..[2] = baseColorFactor.b
+      ..[3] = baseColorFactor.a
+      ..[4] = vertexColorWeight
+      ..[5] = lodFade
+      ..[6] = displayReferred ? 1.0 : 0.0;
     pass.bindUniform(
-      fragmentShader.cachedUniformSlot("FragInfo"),
-      transientsBuffer.emplace(ByteData.sublistView(fragInfo)),
+      fragmentShader.cachedUniformSlot('UnlitInfo'),
+      _heldUnlitInfo.bound(unlitInfo),
     );
     final transform = _textureTransformScratch
       ..[0] = baseColorTextureTransform.offset.x
@@ -138,7 +167,7 @@ class UnlitMaterial extends Material {
       ..[6] = baseColorTextureTexCoord.clamp(0, 1).toDouble();
     pass.bindUniform(
       fragmentShader.cachedUniformSlot('TextureTransform'),
-      transientsBuffer.emplace(ByteData.sublistView(transform)),
+      _heldTextureTransform.bound(transform),
     );
     pass.bindTexture(
       fragmentShader.cachedUniformSlot('base_color_texture'),
