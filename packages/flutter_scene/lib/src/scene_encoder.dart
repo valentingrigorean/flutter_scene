@@ -1417,14 +1417,17 @@ base class SceneEncoder {
   /// instance so each can be depth-sorted independently.
   void submit(RenderItem item) => _submit(item, null, 0);
 
-  /// Encodes [item]'s single opaque color draw immediately onto this encoder's
+  /// Encodes [item]'s single color draw immediately onto this encoder's
   /// render pass, for recording into an item set ([RetainedColorDraws]): no
-  /// sorting, coverage pre-draw or translucent phase. The caller guarantees
-  /// [item] is an opaque, keepable, non-LOD draw.
+  /// sorting, coverage pre-draw or cross-fade. The caller guarantees [item]
+  /// is a keepable draw of [geometry] and [material], its own or those of
+  /// one of its levels of detail.
   @internal
-  void encodeForKeep(RenderItem item) {
-    final geometry = item.geometry;
-    final material = item.material;
+  void encodeForKeep(
+    RenderItem item, {
+    required Geometry geometry,
+    required Material material,
+  }) {
     final materialVertex = material.vertexShaderForGeometry(geometry);
     final vertexShader = materialVertex ?? geometry.vertexShader;
     final fragmentShader = material.fragmentShaderForLighting(_lighting);
@@ -3372,10 +3375,12 @@ base class SceneEncoder {
 /// by the camera, with the view's `ViewInfo`, `FragInfo` and `FogInfo` as view
 /// blocks, and encodes [encoded].
 ///
-/// A draw is kept when it is an opaque, non-LOD, unskinned, unmorphed,
-/// non-instanced mesh (the structural checks [RetainedDraws] makes) whose
-/// material holds its fragment blocks and binds no per-material lighting of its
-/// own ([Material.colorRetainable]). The frame-transient engine textures a lit
+/// A draw is kept when it is an opaque, unskinned, unmorphed, non-instanced
+/// mesh (the structural checks [RetainedDraws] makes) whose material holds its
+/// fragment blocks and binds no per-material lighting of its own
+/// ([Material.colorRetainable]). An item with levels of detail that does not
+/// cross-fade keeps the draw of the level this view selects, recorded again
+/// when the selection changes ([levelOf]). The frame-transient engine textures a lit
 /// draw samples — the shadow atlas, ambient occlusion, the punctual-light
 /// data textures, and the opaque linear depth a scene-input material reads —
 /// are supplied each [drawKept] as the pass's view textures, so a kept draw
@@ -3450,11 +3455,21 @@ final class RetainedColorDraws extends RetainedDraws {
       !(_keepsTranslucent && RetainedTranslucentDraws.drawsBlended(item));
 
   @override
+  int levelOf(RenderItem item) {
+    final lod = item.lod;
+    if (lod == null) return RetainedDraws.wholeItem;
+    // A cross-fade draws two levels through their coverage.
+    if (lod.blendRange > 0) return RetainedDraws.refusedLevel;
+    final selected = _pass._resolveLod(lod, item.worldBounds);
+    return selected.isEmpty ? RetainedDraws.culledLevel : selected.first.level;
+  }
+
+  @override
   bool keepable(RenderItem item) {
     // A debug view redraws every surface through a different fragment shader;
     // keep nothing while one is active.
     if (_pass._debugView != null) return false;
-    final material = item.material;
+    final material = materialOf(item);
     // A draw that blends in the opaque phase sets its blend state there, a
     // display-referred one draws in a layer of its own, and one that cuts
     // itself out draws its coverage first.
@@ -3468,8 +3483,8 @@ final class RetainedColorDraws extends RetainedDraws {
 
   @override
   Object? pipelineOf(RenderItem item) {
-    final geometry = item.geometry;
-    final material = item.material;
+    final geometry = geometryOf(item);
+    final material = materialOf(item);
     final materialVertex = material.vertexShaderForGeometry(geometry);
     final vertexShader = materialVertex ?? geometry.vertexShader;
     final fragmentShader = material.fragmentShaderForLighting(_pass._lighting);
@@ -3482,14 +3497,14 @@ final class RetainedColorDraws extends RetainedDraws {
 
   @override
   Object? stateOf(RenderItem item) {
-    final material = item.material;
+    final material = materialOf(item);
     return (
       material.renderCullMode,
       material.depthLayer,
       material.tieBreakRank,
       material.depthBias,
       material.clipVolume,
-      item.windingFor(item.geometry),
+      item.windingFor(geometryOf(item)),
     );
   }
 
@@ -3509,7 +3524,11 @@ final class RetainedColorDraws extends RetainedDraws {
     );
     final key = transientDrawKey;
     transientDrawKey = item;
-    encoder.encodeForKeep(item);
+    encoder.encodeForKeep(
+      item,
+      geometry: geometryOf(item),
+      material: materialOf(item),
+    );
     transientDrawKey = key;
   }
 
@@ -3527,7 +3546,7 @@ final class RetainedColorDraws extends RetainedDraws {
     }
     // The material's own fragment blocks (MatInfo, and the standard shader's
     // held TextureTransforms).
-    for (final block in item.material.heldFragmentBlocks) {
+    for (final block in materialOf(item).heldFragmentBlocks) {
       final view = block.lastBound;
       if (view != null && block.pin(view)) {
         recordPin(item, () => block.unpin(view));
@@ -3801,7 +3820,7 @@ final class RetainedTranslucentDraws extends RetainedDraws {
       ..setModelScaleFromTransform(item.worldTransform);
     final key = transientDrawKey;
     transientDrawKey = item;
-    encoder.encodeForKeep(item);
+    encoder.encodeForKeep(item, geometry: item.geometry, material: material);
     transientDrawKey = key;
   }
 
