@@ -326,6 +326,7 @@ abstract final class ItemSet {
     required int passes,
     Float32List? bounds,
     ItemInstances? instances,
+    int? order,
   });
   void discard(RenderPass recorder);
   void remove(int id);

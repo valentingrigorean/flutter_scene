@@ -222,6 +222,7 @@ final class _ItemDraw {
   final _ItemDrawState state;
 
   int passes = 0;
+  int? order;
   Float32List? bounds;
   _ItemInstances? instances;
 }
@@ -390,6 +391,9 @@ final class _ItemSet {
   final Map<int, _ItemDraw> _items = {};
   int _lastId = 0;
 
+  // The items in the order a pass draws them, null after a keep or a remove.
+  List<_ItemDraw>? _drawOrder;
+
   // One buffer per pass index, holding [_itemViewTurns] turns of the pass's
   // view blocks, and the views onto each turn.
   final Map<int, fg.DeviceBuffer> _blocks = {};
@@ -414,14 +418,17 @@ final class _ItemSet {
     required int passes,
     Float32List? bounds,
     ItemInstances? instances,
+    int? order,
   }) {
     final draw = recorder.take();
     if (draw == null) {
       if (id != 0) remove(id);
       return null;
     }
+    _drawOrder = null;
     draw
       ..passes = passes
+      ..order = order
       ..bounds = bounds == null ? null : Float32List.fromList(bounds)
       ..instances = instances == null ? null : _instancesOf(instances);
     final at = id != 0 ? id : ++_lastId;
@@ -429,7 +436,17 @@ final class _ItemSet {
     return at;
   }
 
-  void remove(int id) => _items.remove(id);
+  void remove(int id) {
+    if (_items.remove(id) != null) _drawOrder = null;
+  }
+
+  // Items with an order draw in ascending order, the rest after them in the
+  // order they were kept.
+  List<_ItemDraw> _ordered() => _drawOrder ??= [
+    ...(_items.values.where((draw) => draw.order != null).toList()
+      ..sort((a, b) => a.order!.compareTo(b.order!))),
+    ..._items.values.where((draw) => draw.order == null),
+  ];
 
   _ItemInstances _instancesOf(ItemInstances instances) {
     final records = Uint8List.fromList(instances.records);
@@ -511,7 +528,7 @@ final class _ItemSet {
     List<fg.BufferView>? views;
     _ItemDrawState? saved;
     fg.RenderPipeline? bound;
-    for (final draw in _items.values) {
+    for (final draw in _ordered()) {
       if (draw.passes & mask == 0) continue;
       final bounds = draw.bounds;
       if (bounds != null && !_inside(planes, bounds, 0)) continue;
@@ -577,6 +594,7 @@ final class _ItemSet {
 
   void destroy() {
     _items.clear();
+    _drawOrder = null;
     _blocks.clear();
     _blockViews.clear();
     _turns.clear();
