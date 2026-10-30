@@ -3848,7 +3848,9 @@ final class RetainedTranslucentDraws extends RetainedDraws {
         viewBlocks: blocks,
         clip: encoder._cameraTransform.storage,
         viewTextures: viewTextures,
-        sort: gpu.ItemSort.farthestFirst,
+        sort: encoder._raster.reversed
+            ? gpu.ItemSort.farthestFirstReversedDepth
+            : gpu.ItemSort.farthestFirst,
       );
     }
   }
