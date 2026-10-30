@@ -487,7 +487,10 @@ class ShadowEncoder {
 
     final instances = item.instanceTransforms;
     if (instances != null) {
-      final ranges = item.shadowInstanceRanges ?? item.instanceRowRanges;
+      // A kept draw takes every row, and its item set draws the rows it holds.
+      final ranges = currentDrawKept
+          ? item.instanceRowRanges
+          : item.shadowInstanceRanges ?? item.instanceRowRanges;
       final limit = instanceLimit == null || instanceLimit >= instances.length
           ? null
           : instanceLimit;
@@ -522,7 +525,7 @@ class ShadowEncoder {
               ? gpu.WindingOrder.counterClockwise
               : gpu.WindingOrder.clockwise,
         );
-        final sharedRanges = item.instanceRanges;
+        final sharedRanges = currentDrawKept ? null : item.instanceRanges;
         final draws = rows.drawCountOf(sharedRanges);
         for (var draw = 0; draw < draws; draw++) {
           final count = rows.bind(

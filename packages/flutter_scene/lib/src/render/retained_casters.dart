@@ -6,7 +6,7 @@ import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart'
-    show setCurrentViewInstanceBand;
+    show Geometry, setCurrentViewInstanceBand;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/light.dart' show ShadowCasterFaces;
 import 'package:flutter_scene/src/render/depth_raster.dart';
@@ -55,6 +55,17 @@ final class RetainedShadowCasters extends RetainedDraws {
   // Every cascade a frame names, one bit each.
   @override
   int get passes => 0xF << SceneItems.casterPass;
+
+  @override
+  bool get keepsInstances => true;
+
+  // The position-only path binds the position stream alone, so the records
+  // follow it at slot 1.
+  @override
+  int instanceSlotOf(RenderItem item, Geometry geometry) =>
+      shadowCasterDraw(geometry, item.material).positionOnly
+      ? 1
+      : geometry.vertexStreamCount;
 
   /// Brings the kept casters up to date with the scene for a shadow map
   /// drawn into [target] with [casterFaces] and [casterChannelMask].

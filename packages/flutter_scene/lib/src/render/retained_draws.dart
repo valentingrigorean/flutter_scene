@@ -393,6 +393,13 @@ abstract base class RetainedDraws {
   @protected
   bool get keepsInstances => false;
 
+  /// The instance-rate vertex buffer slot the pass's draw of [item] with
+  /// [geometry] reads its instance records from: the one after its vertex
+  /// streams.
+  @protected
+  int instanceSlotOf(RenderItem item, Geometry geometry) =>
+      geometry.vertexStreamCount;
+
   /// Whether the pass's draw of [item] is kept as a render item, alone or in
   /// a run.
   @protected
@@ -833,8 +840,8 @@ abstract base class RetainedDraws {
   // The rows the instanced [item] draws as the instances of its kept draw of
   // [geometry]: its own rows, each culled by its own bounds where the item
   // culls its rows, or the rows its ranges take of the records it shares.
-  static gpu.ItemInstances _rowInstances(RenderItem item, Geometry geometry) {
-    final slot = geometry.vertexStreamCount;
+  gpu.ItemInstances _rowInstances(RenderItem item, Geometry geometry) {
+    final slot = instanceSlotOf(item, geometry);
     final shared = item.sharedRows;
     if (shared != null) {
       final (:records, :stride) = sharedInstanceRowsOf(
