@@ -106,3 +106,9 @@ GpuBackendTexture? gpuBackendTextureOf(Texture texture) => texture._backend;
 @experimental
 Texture gpuTextureOfBackend(GpuBackendTexture texture) =>
     Texture._backend(texture);
+
+/// A shim buffer over [buffer], a buffer of the registered backend made away
+/// from the shim, such as on a worker isolate.
+@experimental
+DeviceBuffer gpuDeviceBufferOfBackend(GpuBackendDeviceBuffer buffer) =>
+    DeviceBuffer._backend(buffer);
