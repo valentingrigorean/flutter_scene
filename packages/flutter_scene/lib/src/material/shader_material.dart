@@ -238,10 +238,9 @@ class ShaderMaterial extends Material {
   /// Whether the color pass may keep a still draw of this material: it
   /// [holdsBlocks], samples no environment (which the scene may swap under a
   /// kept draw) and no render texture (which changes what it samples from
-  /// frame to frame). Its `ViewInfo` and `SceneInputInfo` are the color
-  /// pass's view blocks, and the scene depth a view texture; the backend still
-  /// refuses a draw that binds anything else of the frame's, such as the scene
-  /// color.
+  /// frame to frame). Its `ViewInfo` is the color pass's view block; the
+  /// backend still refuses a draw that binds anything else of the frame's,
+  /// such as a scene input's `SceneInputInfo` or the scene color.
   @override
   bool get colorRetainable =>
       holdsBlocks &&
