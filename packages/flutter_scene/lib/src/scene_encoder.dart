@@ -3360,24 +3360,27 @@ base class SceneEncoder {
 /// non-instanced mesh (the structural checks [RetainedDraws] makes) whose
 /// material holds its fragment blocks and binds no per-material lighting of its
 /// own ([Material.colorRetainable]). The frame-transient engine textures a lit
-/// draw samples — the shadow atlas, ambient occlusion, and the punctual-light
-/// data textures — are supplied each [drawKept] as the pass's view textures,
-/// so a kept draw holds only persistent resources beside them. A draw binding
-/// any other frame-transient buffer or texture (the scene-color textures) is
-/// refused by the backend and encoded instead.
+/// draw samples — the shadow atlas, ambient occlusion, the punctual-light
+/// data textures, and the opaque linear depth a scene-input material reads —
+/// are supplied each [drawKept] as the pass's view textures, so a kept draw
+/// holds only persistent resources beside them. A draw binding any other
+/// frame-transient buffer or texture (the scene-color textures) is refused by
+/// the backend and encoded instead.
 final class RetainedColorDraws extends RetainedDraws {
   RetainedColorDraws._(super.renderScene, super.items);
 
   // The frame-transient engine textures a kept lit draw samples, re-supplied
   // each [drawKept] so the backend keeps the draw instead of refusing it: the
-  // directional shadow atlas, ambient occlusion, and the two punctual-light
-  // data textures. [drawKept] supplies them in this order. Any other
-  // transient texture a draw binds is still refused by the backend.
+  // directional shadow atlas, ambient occlusion, the two punctual-light data
+  // textures, and the opaque linear depth a scene-input material samples.
+  // [drawKept] supplies them in this order. Any other transient texture a
+  // draw binds is still refused by the backend.
   static const _viewTextureNames = [
     'shadow_map',
     'ssao_texture',
     'punctual_lights',
     'punctual_index',
+    'scene_depth',
   ];
 
   static final Expando<RetainedColorDraws> _byScene = Expando(
@@ -3535,6 +3538,7 @@ final class RetainedColorDraws extends RetainedDraws {
         Material.whitePlaceholder(lighting.ssaoMap),
         Material.whitePlaceholder(lighting.punctualParamsTexture),
         Material.whitePlaceholder(lighting.punctualIndexTexture),
+        Material.whitePlaceholder(lighting.sceneDepthLinear),
       ],
     );
   }
