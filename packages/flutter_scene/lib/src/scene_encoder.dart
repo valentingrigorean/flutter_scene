@@ -3365,9 +3365,15 @@ base class SceneEncoder {
 /// are supplied each [drawKept] as the pass's view textures, so a kept draw
 /// holds only persistent resources beside them. A draw binding any other
 /// frame-transient buffer or texture (the scene-color textures) is refused by
-/// the backend and encoded instead.
+/// the backend and encoded instead. The app's own view blocks
+/// ([RenderScene.viewBlocks]) are supplied each [drawKept] beside the
+/// engine's, so a kept draw may read a value that changes every frame.
 final class RetainedColorDraws extends RetainedDraws {
-  RetainedColorDraws._(super.renderScene, super.items);
+  RetainedColorDraws._(super.renderScene, super.items, this._appBlocks)
+    : _blocksRevision = renderScene.viewBlocksRevision;
+
+  final List<ByteData Function()> _appBlocks;
+  final int _blocksRevision;
 
   // The frame-transient engine textures a kept lit draw samples, re-supplied
   // each [drawKept] so the backend keeps the draw instead of refusing it: the
@@ -3391,19 +3397,24 @@ final class RetainedColorDraws extends RetainedDraws {
   /// items.
   static RetainedColorDraws? of(RenderScene renderScene) {
     final held = _byScene[renderScene];
-    if (held != null && held.generation == gpu.gpuContextGeneration) {
+    if (held != null &&
+        held.generation == gpu.gpuContextGeneration &&
+        held._blocksRevision == renderScene.viewBlocksRevision) {
       return held;
     }
     held?.dispose();
+    final appBlocks = renderScene.viewBlocks;
     final items = gpu.gpuContext.createItemSet(
-      viewBlockNames: const ['ViewInfo', 'FragInfo', 'FogInfo'],
+      viewBlockNames: ['ViewInfo', 'FragInfo', 'FogInfo', ...appBlocks.keys],
       viewBlockLength:
           EngineLightingUniforms.fragInfoFloatCount *
           Float32List.bytesPerElement,
       viewTextureNames: _viewTextureNames,
     );
     if (items == null) return null;
-    return _byScene[renderScene] = RetainedColorDraws._(renderScene, items);
+    return _byScene[renderScene] = RetainedColorDraws._(renderScene, items, [
+      ...appBlocks.values,
+    ]);
   }
 
   late SceneEncoder _pass;
@@ -3534,6 +3545,7 @@ final class RetainedColorDraws extends RetainedDraws {
         view,
         ByteData.sublistView(_fragInfoScratch),
         ByteData.sublistView(_fogScratch),
+        for (final bytes in _appBlocks) bytes(),
       ],
       clip: encoder._cameraTransform.storage,
       viewTextures: [
@@ -3544,6 +3556,9 @@ final class RetainedColorDraws extends RetainedDraws {
         Material.whitePlaceholder(lighting.sceneDepthLinear),
       ],
     );
+    activeRenderCounters
+      ..colorItemsKept += keptCount
+      ..colorItemsEncoded += encoded.length;
     // The kept items bound their own pipeline and blocks on the pass, so what
     // the encoder holds of its bindings no longer stands.
     encoder._clearBindings();

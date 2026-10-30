@@ -1838,6 +1838,15 @@ class RenderScene {
   @internal
   int changeLogEpoch = 0;
 
+  /// The app's own view blocks, by uniform block name, each with what gives
+  /// the frame's bytes; see `Scene.setViewBlock`.
+  @internal
+  final Map<String, ByteData Function()> viewBlocks = {};
+
+  /// Counts the changes to [viewBlocks].
+  @internal
+  int viewBlocksRevision = 0;
+
   /// Appends [item] to [changeLog].
   @internal
   void logItemChange(RenderItem item) {

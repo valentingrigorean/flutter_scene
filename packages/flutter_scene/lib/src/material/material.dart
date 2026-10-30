@@ -872,6 +872,15 @@ abstract class Material {
   /// this (part of the retention extension surface), so it is public.
   bool get colorRetainable => false;
 
+  /// Counts the changes to what a draw of this material binds that the
+  /// material's identity does not show, such as a held block's values or a
+  /// texture it binds changed in place. A pass that keeps the draw as a
+  /// backend item records it again when this differs from its recording, on
+  /// the next frame that refreshes the node ([Node.markMaterialsChanged]).
+  /// The base is 0; a material that changes its own held blocks in place
+  /// overrides it.
+  int get keptRevision => 0;
+
   /// The held fragment uniform blocks a kept color draw of this material
   /// reads, for [RetainedColorDraws] to pin so their slots are not reused for
   /// other values while the backend still draws from them. The base is the

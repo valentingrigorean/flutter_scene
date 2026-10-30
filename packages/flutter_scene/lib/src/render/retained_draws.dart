@@ -26,6 +26,7 @@ final class _Kept {
   bool encoded = false;
 
   Object? material;
+  int materialRevision = 0;
   Object? geometry;
   Object? pipeline;
   Object? state;
@@ -125,8 +126,8 @@ abstract base class RetainedDraws {
   void forgetRecorded() {}
 
   /// The number of draws kept as render items.
-  @visibleForTesting
-  int get keptCount => _kept.values.where((kept) => kept.id != 0).length;
+  int get keptCount => _keptItems;
+  int _keptItems = 0;
 
   /// Brings the kept draws up to date with the scene for the pass drawing
   /// into [target], whose own settings [key] states.
@@ -215,6 +216,7 @@ abstract base class RetainedDraws {
     final bounds = item.frustumCulled ? item.worldBounds : null;
     if (kept.id != 0 &&
         identical(kept.material, item.material) &&
+        kept.materialRevision == item.material.keptRevision &&
         identical(kept.geometry, item.geometry) &&
         identical(kept.pipeline, pipeline) &&
         kept.state == state &&
@@ -229,6 +231,7 @@ abstract base class RetainedDraws {
     kept
       ..changedAt = _syncs
       ..material = item.material
+      ..materialRevision = item.material.keptRevision
       ..geometry = item.geometry
       ..pipeline = pipeline
       ..state = state
@@ -251,11 +254,14 @@ abstract base class RetainedDraws {
       bounds: bounds == null ? null : kept.bounds,
     );
     _unpin(item, kept);
+    final had = kept.id != 0;
     if (id == null) {
+      if (had) _keptItems--;
       kept.id = 0;
       _encode(item, kept, true);
       return;
     }
+    if (!had) _keptItems++;
     kept.id = id;
     pinHeld(item);
     _encode(item, kept, false);
@@ -313,6 +319,7 @@ abstract base class RetainedDraws {
     if (kept.id != 0) {
       items.remove(kept.id);
       kept.id = 0;
+      _keptItems--;
     }
     _unpin(item, kept);
   }
@@ -338,6 +345,7 @@ abstract base class RetainedDraws {
       _unpin(item, kept);
     }
     _kept.clear();
+    _keptItems = 0;
     encoded.clear();
     items.dispose();
   }

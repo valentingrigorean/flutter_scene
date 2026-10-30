@@ -652,6 +652,27 @@ base class Scene implements SceneGraph {
     if (renderScene.drawOrigin.moveTo(x, y, z)) markSceneDrawChanged();
   }
 
+  /// Supplies the bytes [bytes] gives, each frame, as the uniform block
+  /// [name] to every color-pass draw the backend keeps as a render item, or
+  /// stops when [bytes] is null.
+  ///
+  /// For a block an app shader reads whose bytes follow the frame rather than
+  /// the draw, such as an animation clock. The material binds the same bytes
+  /// itself on a draw the pass encodes; a kept draw reads them like the
+  /// engine's `ViewInfo`, so it stays kept while the value changes. A block is
+  /// at most as long as the engine's `FragInfo`.
+  void setViewBlock(String name, ByteData Function()? bytes) {
+    final blocks = renderScene.viewBlocks;
+    if (bytes == null) {
+      if (blocks.remove(name) == null) return;
+    } else {
+      final had = blocks.containsKey(name);
+      blocks[name] = bytes;
+      if (had) return;
+    }
+    renderScene.viewBlocksRevision++;
+  }
+
   // Builds the per-frame data texture carrying the scene's point, spot, and
   // extra directional lights. Rebuilt once per frame in [render].
   final PunctualLightBuffer _punctualLightBuffer = PunctualLightBuffer();
