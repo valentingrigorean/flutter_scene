@@ -1,0 +1,468 @@
+/// The contract a native GPU backend other than Impeller implements for the
+/// GPU shim, which an app registers with `registerGpuBackend` before the first
+/// GPU object exists.
+///
+/// The shim's public classes are final facades that hold either a flutter_gpu
+/// object or one of these backend objects. On Impeller each member is a direct
+/// call to flutter_gpu; on a registered backend it is one interface call into
+/// the objects below. The members take and return backend objects and
+/// flutter_gpu's value types, never the shim's own classes, and carry the
+/// shim's argument values with every default already applied.
+library;
+
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:flutter_gpu/gpu.dart'
+    show
+        CompareFunction,
+        ColorBlendEquation,
+        CompletionCallback,
+        CullMode,
+        GpuPresentStatus,
+        IndexType,
+        LoadAction,
+        PixelFormat,
+        PolygonMode,
+        PrimitiveType,
+        SamplerOptions,
+        Scissor,
+        StencilConfig,
+        StencilFace,
+        StorageMode,
+        StoreAction,
+        TextureCompressionFamily,
+        TextureType,
+        VertexLayout,
+        Viewport,
+        WindingOrder;
+import 'package:meta/meta.dart' show experimental;
+import 'package:vector_math/vector_math.dart' as vm;
+
+import '../shared/gpu_capabilities.dart';
+
+/// A GPU backend the shim can render through instead of Impeller.
+@experimental
+abstract interface class GpuBackend {
+  /// The kind `selectGpuBackend` and `FLUTTER_SCENE_GPU_BACKEND` name this
+  /// backend by; never [GpuBackendKind.impeller].
+  GpuBackendKind get kind;
+
+  /// Opens the device every GPU object of the process is created on. The shim
+  /// calls it once, on the first GPU object.
+  GpuBackendContext openContext();
+}
+
+/// One color attachment of a backend render pass.
+typedef GpuBackendColorTarget = ({
+  GpuBackendTexture texture,
+  GpuBackendTexture? resolveTexture,
+  LoadAction loadAction,
+  StoreAction storeAction,
+  vm.Vector4 clearValue,
+  int mipLevel,
+  int slice,
+});
+
+/// The depth-stencil attachment of a backend render pass.
+typedef GpuBackendDepthStencilTarget = ({
+  GpuBackendTexture texture,
+  LoadAction depthLoadAction,
+  StoreAction depthStoreAction,
+  double depthClearValue,
+  LoadAction stencilLoadAction,
+  StoreAction stencilStoreAction,
+  int stencilClearValue,
+  int mipLevel,
+  int slice,
+});
+
+/// A rectangle of one mip level and slice of a backend texture, with its
+/// extent resolved.
+typedef GpuBackendTextureRegion = ({
+  GpuBackendTexture texture,
+  int x,
+  int y,
+  int width,
+  int height,
+  int mipLevel,
+  int slice,
+});
+
+/// A range of a backend buffer.
+typedef GpuBackendBufferRange = ({
+  GpuBackendDeviceBuffer buffer,
+  int offsetInBytes,
+  int lengthInBytes,
+});
+
+/// The backend device behind the shim's `GpuContext`.
+@experimental
+abstract interface class GpuBackendContext {
+  /// What the device can do; `gpuHost.capabilities` on this backend.
+  GpuCapabilities get capabilities;
+
+  /// The color format Flutter's own rendering uses.
+  PixelFormat get defaultColorFormat;
+
+  /// The stencil-only format the device prefers.
+  PixelFormat get defaultStencilFormat;
+
+  /// The combined depth-stencil format the device prefers.
+  PixelFormat get defaultDepthStencilFormat;
+
+  /// The alignment every uniform buffer view's offset must have.
+  int get minimumUniformByteAlignment;
+
+  /// Whether offscreen render targets can be multisampled.
+  bool get doesSupportOffscreenMSAA;
+
+  /// Whether a pass can render into a mip level other than the base.
+  bool get doesSupportFramebufferRenderMipmap;
+
+  /// Whether each mip level can be uploaded separately.
+  bool get doesSupportManuallyMippedTextures;
+
+  /// The largest anisotropy a sampler takes; 1 without anisotropic filtering.
+  int get maxSamplerAnisotropy;
+
+  /// Whether the device samples textures of [family].
+  bool supportsTextureCompression(TextureCompressionFamily family);
+
+  /// Whether the device allocates a texture of [format] with this usage.
+  bool supportsTextureFormat(
+    PixelFormat format, {
+    required bool renderTarget,
+    required bool shaderRead,
+    required bool shaderWrite,
+  });
+
+  /// Allocates [size] bytes of GPU memory usable as any kind of buffer.
+  GpuBackendDeviceBuffer createDeviceBuffer(StorageMode storageMode, int size);
+
+  /// Allocates a host-visible buffer holding a copy of [data].
+  GpuBackendDeviceBuffer createDeviceBufferWithCopy(ByteData data);
+
+  /// Creates a per-frame bump allocator over blocks of [blockLengthInBytes].
+  GpuBackendHostBuffer createHostBuffer({required int blockLengthInBytes});
+
+  /// Allocates a texture.
+  GpuBackendTexture createTexture(
+    StorageMode storageMode,
+    int width,
+    int height, {
+    required PixelFormat format,
+    required int sampleCount,
+    required TextureType textureType,
+    required bool enableRenderTargetUsage,
+    required bool enableShaderReadUsage,
+    required bool enableShaderWriteUsage,
+    required int mipLevelCount,
+  });
+
+  /// Wraps or uploads a Flutter-rendered [image]. Throws an [Exception] when
+  /// the backend cannot, which `gpuHost.imageToTexture` turns into null.
+  GpuBackendTexture textureFromImage(ui.Image image);
+
+  /// Creates a command buffer.
+  GpuBackendCommandBuffer createCommandBuffer();
+
+  /// Creates a pipeline from a vertex and a fragment shader.
+  GpuBackendRenderPipeline createRenderPipeline(
+    GpuBackendShader vertexShader,
+    GpuBackendShader fragmentShader, {
+    VertexLayout? vertexLayout,
+  });
+
+  /// Loads the shader bundle asset [assetName], or null when it is missing.
+  /// The shim calls it once per asset.
+  Future<GpuBackendShaderLibrary?> loadShaderLibraryFromAsset(String assetName);
+
+  /// Reads a shader bundle from [bytes], or null when it is not one.
+  GpuBackendShaderLibrary? loadShaderLibraryFromBytes(ByteData bytes);
+
+  /// Creates a surface of [width] by [height] frames of [format] whose
+  /// presented frame Flutter draws as a `ui.Image`.
+  GpuBackendImageSurface createImageSurface(
+    int width,
+    int height, {
+    required PixelFormat format,
+  });
+}
+
+/// A region of GPU memory.
+@experimental
+abstract interface class GpuBackendDeviceBuffer {
+  /// How the memory is reachable from the host.
+  StorageMode get storageMode;
+
+  /// The buffer's size.
+  int get sizeInBytes;
+
+  /// Whether the buffer is still backed by GPU memory.
+  bool get isValid;
+
+  /// Copies [sourceBytes] into the buffer from [destinationOffsetInBytes].
+  /// Returns false when the copy did not happen.
+  bool overwrite(ByteData sourceBytes, {required int destinationOffsetInBytes});
+
+  /// Makes host writes to the range visible to the GPU; a [lengthInBytes] of
+  /// -1 spans the rest of the buffer.
+  void flush({required int offsetInBytes, required int lengthInBytes});
+}
+
+/// A per-frame bump allocator for transient data such as uniforms.
+@experimental
+abstract interface class GpuBackendHostBuffer {
+  /// How many frames of blocks the allocator rotates through.
+  int get frameCount;
+
+  /// Copies [bytes] into the current frame's blocks and returns its range,
+  /// aligned for a uniform binding.
+  GpuBackendBufferRange emplace(ByteData bytes);
+
+  /// Advances to the next frame's blocks.
+  void reset();
+}
+
+/// A texture in GPU memory.
+@experimental
+abstract interface class GpuBackendTexture {
+  /// How the memory is reachable from the host.
+  StorageMode get storageMode;
+
+  /// The texel format.
+  PixelFormat get format;
+
+  /// The base level's width.
+  int get width;
+
+  /// The base level's height.
+  int get height;
+
+  /// Samples per texel; above 1 for a multisampled texture.
+  int get sampleCount;
+
+  /// The texture's dimensionality.
+  TextureType get textureType;
+
+  /// Whether a pass can render into the texture.
+  bool get enableRenderTargetUsage;
+
+  /// Whether shaders can sample the texture.
+  bool get enableShaderReadUsage;
+
+  /// Whether shaders can write the texture.
+  bool get enableShaderWriteUsage;
+
+  /// The number of mip levels.
+  int get mipLevelCount;
+
+  /// Whether the texture is still backed by GPU memory.
+  bool get isValid;
+
+  /// Replaces the texels of one mip level and slice with [sourceBytes].
+  void overwrite(
+    ByteData sourceBytes, {
+    required int mipLevel,
+    required int slice,
+  });
+
+  /// Hands the base level to Flutter as a `ui.Image`.
+  ui.Image asImage();
+}
+
+/// The shaders of one loaded shader bundle.
+@experimental
+abstract interface class GpuBackendShaderLibrary {
+  /// The shader named [shaderName], or null when the bundle has none. The
+  /// shim asks once per name.
+  GpuBackendShader? operator [](String shaderName);
+
+  /// Replaces the library's shaders in place from regenerated bundle [bytes],
+  /// keeping every shader it handed out. Returns an error description, or
+  /// null on success.
+  String? reinitializeFromBytes(ByteData bytes);
+
+  /// Reloads the library in place from the asset [assetName]. Returns an
+  /// error description, or null on success.
+  String? reinitializeFromAsset(String assetName);
+}
+
+/// One compiled shader stage and the reflection it binds by.
+@experimental
+abstract interface class GpuBackendShader {
+  /// The size of the uniform struct [uniformName], or null when absent.
+  int? uniformStructSize(String uniformName);
+
+  /// Where [memberName] sits in the uniform struct [uniformName], or null
+  /// when absent.
+  int? uniformMemberOffset(String uniformName, String memberName);
+}
+
+/// A pipeline built from a vertex and a fragment shader; a render pass of the
+/// same backend binds it.
+@experimental
+abstract interface class GpuBackendRenderPipeline {}
+
+/// Records render passes and copies, then submits them to the GPU.
+@experimental
+abstract interface class GpuBackendCommandBuffer {
+  /// Starts a render pass into [colors] and [depthStencil], ending the pass
+  /// before it.
+  GpuBackendRenderPass createRenderPass({
+    required List<GpuBackendColorTarget> colors,
+    GpuBackendDepthStencilTarget? depthStencil,
+  });
+
+  /// Copies tightly packed texel data from [source] into [destination].
+  void copyBufferToTexture(
+    GpuBackendBufferRange source,
+    GpuBackendTextureRegion destination,
+  );
+
+  /// Copies the texels of [source] into [destination], tightly packed.
+  void copyTextureToBuffer(
+    GpuBackendTextureRegion source,
+    GpuBackendBufferRange destination,
+  );
+
+  /// Copies the texels of [source] into [destination] at [x], [y] of
+  /// [mipLevel] and [slice].
+  void copyTextureToTexture(
+    GpuBackendTextureRegion source,
+    GpuBackendTexture destination, {
+    required int x,
+    required int y,
+    required int mipLevel,
+    required int slice,
+  });
+
+  /// Submits the recorded work. [completionCallback] runs once the GPU is
+  /// done with it. The shim calls it at most once.
+  void submit({CompletionCallback? completionCallback});
+}
+
+/// Draws into the attachments of one render pass.
+@experimental
+abstract interface class GpuBackendRenderPass {
+  /// Binds [pipeline] for the following draws.
+  void bindPipeline(GpuBackendRenderPipeline pipeline);
+
+  /// Binds a vertex buffer range to [slot].
+  void bindVertexBuffer(
+    GpuBackendDeviceBuffer buffer,
+    int offsetInBytes,
+    int lengthInBytes, {
+    required int slot,
+  });
+
+  /// Binds the index buffer range.
+  void bindIndexBuffer(
+    GpuBackendDeviceBuffer buffer,
+    int offsetInBytes,
+    int lengthInBytes,
+    IndexType indexType,
+  );
+
+  /// Binds a buffer range to [shader]'s uniform block [uniformName].
+  void bindUniform(
+    GpuBackendShader shader,
+    String uniformName,
+    GpuBackendDeviceBuffer buffer,
+    int offsetInBytes,
+    int lengthInBytes,
+  );
+
+  /// Binds [texture], sampled with [sampler], to [shader]'s texture
+  /// [uniformName].
+  void bindTexture(
+    GpuBackendShader shader,
+    String uniformName,
+    GpuBackendTexture texture,
+    SamplerOptions? sampler,
+  );
+
+  /// Forgets every uniform, texture, vertex and index binding.
+  void clearBindings();
+
+  /// Turns blending on or off for one color attachment.
+  void setColorBlendEnable(bool enable, {required int colorAttachmentIndex});
+
+  /// Sets the blend equation for one color attachment.
+  void setColorBlendEquation(
+    ColorBlendEquation equation, {
+    required int colorAttachmentIndex,
+  });
+
+  /// Turns depth writes on or off.
+  void setDepthWriteEnable(bool enable);
+
+  /// Sets the depth test.
+  void setDepthCompareOperation(CompareFunction compareFunction);
+
+  /// Sets the stencil reference value.
+  void setStencilReference(int referenceValue);
+
+  /// Sets the stencil test and operations for [targetFace].
+  void setStencilConfig(StencilConfig configuration, StencilFace targetFace);
+
+  /// Sets which faces are culled.
+  void setCullMode(CullMode cullMode);
+
+  /// Sets whether triangles fill or draw as lines.
+  void setPolygonMode(PolygonMode polygonMode);
+
+  /// Sets the primitive topology.
+  void setPrimitiveType(PrimitiveType primitiveType);
+
+  /// Sets which winding is front-facing.
+  void setWindingOrder(WindingOrder windingOrder);
+
+  /// Sets the scissor rectangle.
+  void setScissor(Scissor scissor);
+
+  /// Sets the viewport.
+  void setViewport(Viewport viewport);
+
+  /// Draws [vertexCount] vertices, [instanceCount] times.
+  void draw(int vertexCount, {required int instanceCount});
+
+  /// Draws [indexCount] indices from the bound index buffer, [instanceCount]
+  /// times.
+  void drawIndexed(int indexCount, {required int instanceCount});
+}
+
+/// A ring of textures whose presented frame Flutter draws as a `ui.Image`.
+@experimental
+abstract interface class GpuBackendImageSurface {
+  /// The frame width.
+  int get width;
+
+  /// The frame height.
+  int get height;
+
+  /// The color format of every frame.
+  PixelFormat get format;
+
+  /// How many textures back the surface.
+  int get debugBackingTextureCount;
+
+  /// The most recently presented frame, or null before the first.
+  ui.Image? get currentImage;
+
+  /// Resizes later frames.
+  void resize(int width, int height);
+
+  /// A texture to render the next frame into.
+  GpuBackendTexture acquireNextFrame();
+
+  /// Presents [frame] once [commandBuffer], which renders it, is submitted.
+  GpuPresentStatus present(
+    GpuBackendTexture frame,
+    GpuBackendCommandBuffer commandBuffer,
+  );
+
+  /// Returns [frame] unpresented.
+  void discard(GpuBackendTexture frame);
+}

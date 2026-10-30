@@ -1,6 +1,6 @@
 part of '_gpu.dart';
 
-/// Flutter GPU's integration with the Flutter host.
+/// The active backend's integration with the Flutter host.
 ///
 /// Flutter GPU is a handle on Impeller's own context rather than an external
 /// renderer, so textures cross in both directions without a copy.
@@ -8,7 +8,12 @@ class GpuHost {
   const GpuHost._();
 
   /// See [GpuCapabilities].
-  GpuCapabilities get capabilities => const GpuCapabilities(
+  GpuCapabilities get capabilities => switch (_kind) {
+    GpuBackendKind.impeller => _impellerCapabilities,
+    GpuBackendKind.wgpu => gpuContext._backend!.capabilities,
+  };
+
+  static const _impellerCapabilities = GpuCapabilities(
     textureToImage: true,
     imageToTexture: true,
     // Native uses Texture.asImage directly; the present path is a web concept.

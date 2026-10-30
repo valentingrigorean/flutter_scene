@@ -1,5 +1,6 @@
 ## 0.24.4
 
+* On native platforms the GPU shim draws through its own resource classes over Flutter GPU, and an app can register another native GPU backend at start-up (`registerGpuBackend`, `selectGpuBackend` in `package:flutter_scene/gpu_backend.dart`), which implements the device contract `GpuBackend` and `GpuBackendContext` describe. Impeller stays the default. `package:flutter_scene/shader_bundle_format.dart` reads a shader bundle's entries for such a backend.
 * glTF imports read `EXT_texture_webp` textures, so a model whose textures are only WebP loads instead of failing.
 * glTF imports honor `KHR_node_visibility`, so a node marked hidden imports hidden along with its subtree.
 * glTF imports play `KHR_animation_pointer` animations of node visibility, light color, intensity, range, and cone angles, material factors, and texture transforms. A pointer the engine can't drive warns and is skipped.
