@@ -3,6 +3,7 @@
 library;
 
 import 'dart:collection';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
@@ -47,10 +48,27 @@ final class _Kept {
   final Float32List bounds = Float32List(6);
   bool bounded = false;
 
+  // What the recorded draw read that its transform reaches: the instance
+  // record's slot and floats (no slot: it binds none), the model scale and
+  // the punctual light slice.
+  int slot = -1;
+  int floats = 0;
+  final Float64List scale = Float64List(3);
+  int lightCount = -1;
+  int lightOffset = -1;
+
+  // Whether the item moved since it was first kept: a draw kept alone then
+  // draws its one instance record from the set ([placed]), which a later move
+  // replaces without recording the draw again.
+  bool moves = false;
+  bool placed = false;
+
   // The run the kept draw belongs to, and the translation its instance frame
-  // adds (see [_Run]).
+  // adds (see [_Run]); [origin] is the translation the frame of its recorded
+  // draw added.
   _Run? run;
   final Float64List shift = Float64List(3);
+  final Float64List origin = Float64List(3);
 }
 
 /// Kept draws that differ only in their instance record and their bounds,
@@ -72,6 +90,10 @@ final class _Run {
   int id = 0;
   RenderItem? ref;
   List<void Function()>? pins;
+
+  // The translation the instance frame of [ref]'s recorded draw adds, which
+  // each record is relative to.
+  final Float64List origin = Float64List(3);
 }
 
 /// What the members of a [_Run] share.
@@ -257,8 +279,11 @@ final class SceneItems {
 /// the scene logged as joining, leaving or refreshed since the last
 /// ([RenderScene.changeLog]), and every item once after the pass's key
 /// changed or the log was dropped; it records again only the items whose
-/// draw changed. An item that changes in two syncs in a row is encoded each
-/// frame like every draw that cannot be kept, until it rests for a while.
+/// draw changed. An item that only moves, through its instance record, keeps
+/// its draw: the set holds that record from its first move, and each move
+/// places it again ([gpu.ItemSet.place]) without recording the draw. Any
+/// other item that changes in two syncs in a row is encoded each frame like
+/// every draw that cannot be kept, until it rests for a while.
 /// The pass then draws the kept items natively and encodes [encoded].
 ///
 /// An item with levels of detail is checked each [sync] for the level the
@@ -268,7 +293,8 @@ final class SceneItems {
 /// same mesh drawn by several nodes) are kept as one item that draws them as
 /// instances, culled one by one ([gpu.ItemInstances]), so the pass issues
 /// one draw for the run instead of one per member. The item is recorded
-/// again only when the run's members change.
+/// again only when the run's members change; a member's move places its
+/// records again.
 abstract base class RetainedDraws {
   /// Keeps the draws of [renderScene] in [items], the scene's
   /// [SceneItems].
@@ -293,6 +319,9 @@ abstract base class RetainedDraws {
   // change of level.
   final Set<RenderItem> _leveled = LinkedHashSet.identity();
   final Set<_Run> _changedRuns = LinkedHashSet.identity();
+
+  // The kept runs a member of moved in this sync.
+  final Set<_Run> _movedRuns = LinkedHashSet.identity();
 
   /// The items the pass encodes each frame: those it draws that cannot be
   /// kept, and those that changed in two syncs in a row.
@@ -553,7 +582,22 @@ abstract base class RetainedDraws {
         _sameBounds(kept, bounds)) {
       return;
     }
-    final hot = kept.changedAt >= 0 && _syncs - kept.changedAt <= 1;
+    final moved = _movedOnly(
+      item,
+      kept,
+      material,
+      geometry,
+      pipeline,
+      state,
+      bounds,
+    );
+    if (moved) {
+      kept.moves = true;
+      if ((kept.id != 0 || kept.run != null) && _place(item, kept, bounds)) {
+        return;
+      }
+    }
+    final hot = !moved && kept.changedAt >= 0 && _syncs - kept.changedAt <= 1;
     kept
       ..changedAt = _syncs
       ..material = material
@@ -574,6 +618,7 @@ abstract base class RetainedDraws {
     forgetRecorded();
     heldInstanceBinding = null;
     recordKeptDraw(() => record(item));
+    _takeRecorded(item, kept);
     _leaveRun(item, kept);
     final key = joinsRuns ? _runKeyOf(item, kept, pipeline, state) : null;
     heldInstanceBinding = null;
@@ -588,12 +633,7 @@ abstract base class RetainedDraws {
       _encode(item, kept, false);
       return;
     }
-    final id = items.keep(
-      recorder,
-      id: kept.id,
-      passes: passesOf(item),
-      bounds: bounds == null ? null : kept.bounds,
-    );
+    final id = _keepLone(item, kept, id: kept.id);
     _unpin(item, kept);
     if (id == null) {
       kept.id = 0;
@@ -605,6 +645,131 @@ abstract base class RetainedDraws {
     _encode(item, kept, false);
     activeRenderCounters.drawsKept++;
     if (key != null) _join(item, kept, _runs[key] ??= _Run(key));
+  }
+
+  // Whether the pass's draw of [item] changed only where it stands since it
+  // was recorded: its transform and bounds, not its model scale or light
+  // slice, through an instance record of a mesh whose bind holds no
+  // transform of its own.
+  bool _movedOnly(
+    RenderItem item,
+    _Kept kept,
+    Material material,
+    Geometry geometry,
+    Object? pipeline,
+    Object? state,
+    Aabb3? bounds,
+  ) =>
+      kept.slot >= 0 &&
+      pipeline != null &&
+      !geometry.keepsItsDraw &&
+      kept.transform != item.worldTransformRevision &&
+      identical(kept.material, material) &&
+      kept.materialRevision == material.keptRevision &&
+      identical(kept.geometry, geometry) &&
+      identical(kept.pipeline, pipeline) &&
+      kept.state == state &&
+      kept.buffers == geometry.buffersRevision &&
+      kept.flipped == item.windingFlipped &&
+      kept.primitive == geometry.primitiveType.index &&
+      kept.bounded == (bounds != null) &&
+      kept.lightCount == item.lightListCount &&
+      kept.lightOffset == item.lightListOffset &&
+      _sameScale(kept.scale, item.worldTransform);
+
+  // Places the kept draw of [item], which only moved, where it now stands:
+  // a lone draw kept with its instance record at once, a run's at the end of
+  // the sync. False where it was kept otherwise, to be recorded again.
+  bool _place(RenderItem item, _Kept kept, Aabb3? bounds) {
+    final run = kept.run;
+    final inRun = run != null && run.id != 0;
+    if (!inRun && (kept.id == 0 || !kept.placed)) return false;
+    kept.transform = item.worldTransformRevision;
+    _takeBounds(kept, bounds);
+    for (var axis = 0; axis < 3; axis++) {
+      kept.shift[axis] = item.drawShift(axis);
+    }
+    if (inRun) {
+      _movedRuns.add(run);
+      return true;
+    }
+    return items.place(
+      kept.id,
+      bounds: kept.bounded ? kept.bounds : null,
+      instances: _loneInstances(item, kept),
+    );
+  }
+
+  // Takes what the draw of [item] just recorded read that a move reaches.
+  void _takeRecorded(RenderItem item, _Kept kept) {
+    final binding = heldInstanceBinding;
+    kept
+      ..slot = binding?.slot ?? -1
+      ..floats = binding?.floats ?? 0
+      ..lightCount = item.lightListCount
+      ..lightOffset = item.lightListOffset;
+    _scaleOf(item.worldTransform, kept.scale);
+    for (var axis = 0; axis < 3; axis++) {
+      kept.origin[axis] = item.drawShift(axis);
+    }
+  }
+
+  // Keeps the draw [recorder] just recorded of [item] as its own item [id],
+  // from its one instance record held by the set once it has moved.
+  int? _keepLone(RenderItem item, _Kept kept, {int id = 0}) {
+    final instances = kept.moves && kept.slot >= 0
+        ? _loneInstances(item, kept)
+        : null;
+    kept.placed = instances != null;
+    return items.keep(
+      recorder,
+      id: id,
+      passes: passesOf(item),
+      bounds: kept.bounded ? kept.bounds : null,
+      instances: instances,
+    );
+  }
+
+  // The one instance record of [item]'s lone kept draw, relative to the
+  // instance frame its recorded draw adds.
+  static gpu.ItemInstances _loneInstances(RenderItem item, _Kept kept) {
+    final record = packSingleInstanceData(
+      item.worldTransform,
+      attributeFloats: kept.floats - kInstanceRecordFloats,
+    );
+    for (var axis = 0; axis < 3; axis++) {
+      final delta = item.drawShift(axis) - kept.origin[axis];
+      if (delta != 0) record[12 + axis] += delta;
+    }
+    return gpu.ItemInstances(
+      slot: kept.slot,
+      stride: kept.floats * Float32List.bytesPerElement,
+      records: Uint8List.fromList(Uint8List.sublistView(record)),
+    );
+  }
+
+  static void _scaleOf(Matrix4 transform, Float64List scale) {
+    final s = transform.storage;
+    for (var axis = 0; axis < 3; axis++) {
+      final at = axis * 4;
+      scale[axis] = math.sqrt(
+        s[at] * s[at] + s[at + 1] * s[at + 1] + s[at + 2] * s[at + 2],
+      );
+    }
+  }
+
+  // Whether [transform] scales as [scale] does, to the rounding a rotation
+  // leaves in its basis lengths.
+  static bool _sameScale(Float64List scale, Matrix4 transform) {
+    final s = transform.storage;
+    for (var axis = 0; axis < 3; axis++) {
+      final at = axis * 4;
+      final length = math.sqrt(
+        s[at] * s[at] + s[at + 1] * s[at + 1] + s[at + 2] * s[at + 2],
+      );
+      if ((length - scale[axis]).abs() > 1e-6 * scale[axis]) return false;
+    }
+    return true;
   }
 
   // The key of the run the draw of [item] just recorded may join, with
@@ -676,7 +841,14 @@ abstract base class RetainedDraws {
   // Keeps each run whose members changed in this sync again: a run of two
   // or more as one item of instances, a run of one as its member's own
   // item, and an empty run not at all.
+  // A run whose members only moved has its records placed instead.
   void _keepChangedRuns() {
+    if (_movedRuns.isNotEmpty) {
+      for (final run in _movedRuns) {
+        if (!_changedRuns.contains(run) && run.id != 0) _placeRun(run);
+      }
+      _movedRuns.clear();
+    }
     if (_changedRuns.isEmpty) return;
     _keptCountStale = true;
     final changed = [..._changedRuns];
@@ -703,12 +875,11 @@ abstract base class RetainedDraws {
   // Keeps the lone member of a run as its own item again.
   void _keepAlone(_Run run, RenderItem item, _Kept kept) {
     forgetRecorded();
+    heldInstanceBinding = null;
     recordKeptDraw(() => record(item));
-    final id = items.keep(
-      recorder,
-      passes: passesOf(item),
-      bounds: kept.bounded ? kept.bounds : null,
-    );
+    _takeRecorded(item, kept);
+    heldInstanceBinding = null;
+    final id = _keepLone(item, kept);
     if (id == null) {
       kept.run = null;
       run.members.clear();
@@ -741,7 +912,51 @@ abstract base class RetainedDraws {
       }
     }
     ref!;
-    final origin = _kept[ref]!.shift;
+    run.origin.setAll(0, _kept[ref]!.shift);
+    final (instances, all) = _runInstances(run);
+    forgetRecorded();
+    recordKeptDraw(() => record(ref!));
+    final id = items.keep(
+      recorder,
+      id: run.id,
+      passes: passes,
+      bounds: all,
+      instances: instances,
+    );
+    if (id == null) {
+      // The backend refused the run's draw: every member is encoded.
+      run.id = 0;
+      for (final item in [...members]) {
+        final kept = _kept[item]!;
+        kept.run = null;
+        _encode(item, kept, true);
+      }
+      members.clear();
+      if (identical(_runs[run.key], run)) _runs.remove(run.key);
+      return;
+    }
+    run
+      ..id = id
+      ..ref = ref;
+    pinHeld(ref);
+    run.pins = _pins.remove(ref);
+    activeRenderCounters.drawsKept++;
+  }
+
+  // Places the records of a kept run whose members only moved, or keeps it
+  // again where the backend cannot.
+  void _placeRun(_Run run) {
+    final (instances, all) = _runInstances(run);
+    if (items.place(run.id, bounds: all, instances: instances)) return;
+    _unpinRun(run);
+    _keepRun(run);
+  }
+
+  // The instance records of [run]'s members, relative to the instance frame
+  // of its reference draw, with each member's bounds and the bounds of all.
+  (gpu.ItemInstances, Float32List?) _runInstances(_Run run) {
+    final members = run.members;
+    final origin = run.origin;
     final floats = run.key.rest.floats;
     final count = members.length;
     final records = Float32List(count * floats);
@@ -776,38 +991,15 @@ abstract base class RetainedDraws {
       }
       at++;
     }
-    forgetRecorded();
-    recordKeptDraw(() => record(ref!));
-    final id = items.keep(
-      recorder,
-      id: run.id,
-      passes: passes,
-      bounds: all,
-      instances: gpu.ItemInstances(
+    return (
+      gpu.ItemInstances(
         slot: run.key.rest.slot,
         stride: floats * Float32List.bytesPerElement,
         records: Uint8List.sublistView(records),
         bounds: each,
       ),
+      all,
     );
-    if (id == null) {
-      // The backend refused the run's draw: every member is encoded.
-      run.id = 0;
-      for (final item in [...members]) {
-        final kept = _kept[item]!;
-        kept.run = null;
-        _encode(item, kept, true);
-      }
-      members.clear();
-      if (identical(_runs[run.key], run)) _runs.remove(run.key);
-      return;
-    }
-    run
-      ..id = id
-      ..ref = ref;
-    pinHeld(ref);
-    run.pins = _pins.remove(ref);
-    activeRenderCounters.drawsKept++;
   }
 
   void _unpinRun(_Run run) {
@@ -910,6 +1102,7 @@ abstract base class RetainedDraws {
     }
     _runs.clear();
     _changedRuns.clear();
+    _movedRuns.clear();
     _leveled.clear();
     _kept.clear();
     _keptCount = 0;

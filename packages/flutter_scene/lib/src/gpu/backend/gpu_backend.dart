@@ -369,6 +369,12 @@ abstract interface class GpuBackendItemSet {
     int? order,
   });
 
+  /// Replaces the records and [bounds] of item [id], kept with instances of
+  /// the same slot, stride and count, culled by their own bounds where it was
+  /// kept so, without recording its draw again. Returns false, changing
+  /// nothing, where [id] was kept otherwise.
+  bool place(int id, {Float32List? bounds, required ItemInstances instances});
+
   /// Removes item [id]; an unknown id is ignored.
   void remove(int id);
 

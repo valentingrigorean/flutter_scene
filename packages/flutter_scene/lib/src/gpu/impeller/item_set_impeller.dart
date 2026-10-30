@@ -463,6 +463,30 @@ final class _ItemSet {
     return at;
   }
 
+  bool place(int id, {Float32List? bounds, required ItemInstances instances}) {
+    final draw = _items[id];
+    final held = draw?.instances;
+    if (draw == null ||
+        held == null ||
+        held.slot != instances.slot ||
+        held.stride != instances.stride ||
+        held.count != instances.count ||
+        (held.bounds == null) != (instances.bounds == null)) {
+      return false;
+    }
+    // The shown turns carry over, written again on the next draw.
+    final placed = _instancesOf(instances);
+    for (final MapEntry(key: index, value: shown) in held.shown.entries) {
+      placed.shown[index] = shown
+        ..length = -1
+        ..view = null;
+    }
+    draw
+      ..bounds = bounds == null ? null : Float32List.fromList(bounds)
+      ..instances = placed;
+    return true;
+  }
+
   void remove(int id) {
     if (_items.remove(id) != null) _drawOrder = null;
   }
