@@ -360,6 +360,11 @@ abstract interface class GpuBackendItemSet {
   /// that states one for every item draws them in that order, such as paint
   /// order. Without it the backend orders a pass's items as it draws them
   /// fastest.
+  ///
+  /// With [prologue], the item draws in one pass and runs the prologue's
+  /// dispatches before the draws of that pass, for the view it draws
+  /// (`GpuBackendItemPrologue`). A backend that runs no prologue returns
+  /// null for it.
   int? keep(
     GpuBackendRenderPass recorder, {
     int id = 0,
@@ -367,6 +372,7 @@ abstract interface class GpuBackendItemSet {
     Float32List? bounds,
     ItemInstances? instances,
     int? order,
+    GpuBackendItemPrologue? prologue,
   });
 
   /// Replaces the records and [bounds] of item [id], kept with instances of
@@ -394,6 +400,68 @@ abstract interface class GpuBackendItemSet {
 
   /// Releases every item.
   void destroy();
+}
+
+/// The compute work a kept item runs before the draws of its pass
+/// ([GpuBackendItemSet.keep]): its [dispatches] in order, in a compute pass
+/// ahead of the render passes of the frame, for the view the pass draws, so
+/// they can order what the item draws for that view. They run again only
+/// when the first [watchedBytes] bytes of a view block they bind change,
+/// such as the camera at the start of `ViewInfo`; a change to anything else
+/// they read keeps the item again.
+@experimental
+final class GpuBackendItemPrologue {
+  /// Runs [dispatches] again whenever [watchedBytes] of their view blocks
+  /// change.
+  const GpuBackendItemPrologue(this.dispatches, {required this.watchedBytes});
+
+  /// The dispatches, in the order they run.
+  final List<GpuBackendItemDispatch> dispatches;
+
+  /// The bytes at the start of each view block the dispatches bind whose
+  /// change runs them again.
+  final int watchedBytes;
+}
+
+/// One dispatch of a [GpuBackendItemPrologue]: [pipeline] with [buffers] and
+/// [viewBlocks] bound, over [workgroups] or over the three 32-bit unsigned
+/// workgroup counts [indirect] holds.
+@experimental
+final class GpuBackendItemDispatch {
+  /// Dispatches [pipeline] over [workgroups], or over [indirect]'s counts.
+  const GpuBackendItemDispatch(
+    this.pipeline, {
+    this.buffers = const [],
+    this.viewBlocks = const [],
+    this.workgroups = (1, 1, 1),
+    this.indirect,
+  });
+
+  /// The compute pipeline.
+  final GpuBackendComputePipeline pipeline;
+
+  /// The uniform and storage buffer ranges bound at their WGSL `@group` and
+  /// `@binding`.
+  final List<
+    ({
+      int group,
+      int binding,
+      GpuBackendDeviceBuffer buffer,
+      int offsetInBytes,
+      int lengthInBytes,
+    })
+  >
+  buffers;
+
+  /// The pass's view blocks bound at their `@group` and `@binding`, each by
+  /// a name [GpuBackendContext.createItemSet] gave a view block.
+  final List<({int group, int binding, String name})> viewBlocks;
+
+  /// The workgroup counts in x, y and z, unless [indirect] holds them.
+  final (int, int, int) workgroups;
+
+  /// The buffer and offset of the workgroup counts, read when it runs.
+  final ({GpuBackendDeviceBuffer buffer, int offsetInBytes})? indirect;
 }
 
 /// The compute half of a [GpuBackendContext]: pipelines compiled from WGSL
