@@ -53,6 +53,11 @@ class RenderCounters {
   /// Nodes folded into those merged draws.
   int batchedItems = 0;
 
+  /// Bytes of render items' `ItemInfo` blocks written: an item that first
+  /// draws, or whose depth offset or depth bias changed. Zero on a frame that
+  /// moves only the camera.
+  int itemInfoBytesWritten = 0;
+
   void reset() {
     draws = 0;
     instances = 0;
@@ -65,6 +70,7 @@ class RenderCounters {
     pipelineBuilds = 0;
     batches = 0;
     batchedItems = 0;
+    itemInfoBytesWritten = 0;
   }
 
   void copyFrom(RenderCounters other) {
@@ -79,6 +85,7 @@ class RenderCounters {
     pipelineBuilds = other.pipelineBuilds;
     batches = other.batches;
     batchedItems = other.batchedItems;
+    itemInfoBytesWritten = other.itemInfoBytesWritten;
   }
 
   /// Sets this to `now - start`.
@@ -94,6 +101,8 @@ class RenderCounters {
     pipelineBuilds = now.pipelineBuilds - start.pipelineBuilds;
     batches = now.batches - start.batches;
     batchedItems = now.batchedItems - start.batchedItems;
+    itemInfoBytesWritten =
+        now.itemInfoBytesWritten - start.itemInfoBytesWritten;
   }
 
   Map<String, int> toJson() => {
@@ -108,6 +117,7 @@ class RenderCounters {
     'pipelineBuilds': pipelineBuilds,
     'batches': batches,
     'batchedItems': batchedItems,
+    'itemInfoBytesWritten': itemInfoBytesWritten,
   };
 }
 

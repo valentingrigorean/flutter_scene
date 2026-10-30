@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter_scene/src/material/engine_lighting.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/view_info.dart';
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
@@ -233,6 +234,10 @@ class ShadowCatcherBakePass extends RenderGraphPass {
         pass.setColorBlendEnable(false);
         pass.setDepthWriteEnable(false);
         pass.setDepthCompareOperation(gpu.CompareFunction.always);
+        // The vertex stage's view carries the camera axis the fragment
+        // stage's reads, where one block serves both stages (WebGL2).
+        currentViewForward = lighting.cameraForward;
+        currentViewOrthographic = lighting.orthographic;
         geometry.bind(
           pass,
           context.transientsBuffer,

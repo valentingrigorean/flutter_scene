@@ -1,6 +1,7 @@
 import 'package:flutter_scene/src/render/depth_raster.dart';
+import 'package:flutter_scene/src/render/view_info.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart'
-    show Geometry, bindUnskinnedFrameInfo;
+    show Geometry, UnskinnedGeometry, bindUnskinnedDrawInfo;
 import 'package:flutter_scene/src/geometry/vertex_layout.dart'
     show VertexLayoutDescriptor;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
@@ -509,17 +510,20 @@ class ShadowEncoder {
     final surfaceShader = _drawSurfaceShader;
     final masked = _drawMasked;
     final fragmentShader = _drawFragment!;
+    currentViewForward = null;
     if (_drawDepthPath) {
       geometry.bindPositionStream(_renderPass);
-      bindUnskinnedFrameInfo(
+      bindUnskinnedDrawInfo(
         _renderPass,
         _transientsBuffer,
         activeVertex,
         _lightSpaceMatrix,
         _cameraPosition,
+        held: item.heldItemInfo,
         depthBias: 0.0,
       );
     } else {
+      currentDrawItemInfo = item.heldItemInfo;
       geometry.bind(
         _renderPass,
         _transientsBuffer,
@@ -529,6 +533,17 @@ class ShadowEncoder {
         shaderOverride: materialVertex,
         depthBias: 0.0,
       );
+      if (geometry is! UnskinnedGeometry) {
+        bindViewAndItemInfo(
+          _renderPass,
+          _transientsBuffer,
+          materialVertex ?? geometry.vertexShader,
+          _lightSpaceMatrix,
+          _cameraPosition,
+          depthBias: 0.0,
+        );
+      }
+      currentDrawItemInfo = null;
     }
     if (materialVertex != null) {
       item.material.bindVertexStage(

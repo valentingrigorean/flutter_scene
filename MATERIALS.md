@@ -863,8 +863,9 @@ them off. When you sample an sRGB texture, linearize it first (`SRGBToLinear`,
 or `pow(c, vec3(2.2))`). A `.fmat` material gets the premultiplied output for
 free; `EvaluateLighting` (lit) and the unlit path both handle it.
 
-The vertex `FrameInfo` block (model / camera matrices) is engine-bound and not
-visible in the fragment stage; the world-space outputs already encode it.
+The vertex stage's camera and item blocks are engine-bound; the world-space
+outputs already encode them. A fragment stage that includes
+`material_varyings.glsl` reads the pass's view as `view_info` (see below).
 
 ---
 
@@ -1163,10 +1164,11 @@ For an unskinned mesh, the engine binds these and your shader declares all of
 the fixed inputs:
 
 ```glsl
-uniform FrameInfo {
-  mat4 camera_transform;
-  vec3 camera_position;
-} frame_info;
+// The pass's view: view_info.camera_transform, view_info.camera_position.xyz.
+#include <view_info.glsl>
+// The item's own values (depth offsets and depth bias), which the engine's
+// vertex bodies read; include it to draw like them.
+#include <item_info.glsl>
 
 in vec3 position;
 in vec3 normal;
@@ -1189,6 +1191,17 @@ inputs after that record (see
 [Custom instance attributes](#custom-instance-attributes-instance-to-vertex-and-fragment));
 a raw `ShaderMaterial` has no such declaration and always sees the fixed record.
 
+`ViewInfo` is one block per pass, emplaced once and shared by every draw and
+by the fragment stage. `ItemInfo` sits at an offset each render item keeps
+from frame to frame and is written only when its values change, so a still
+mesh writes no uniform bytes while the camera moves. A shader that declares
+the earlier `uniform FrameInfo { mat4 camera_transform; vec3 camera_position;
+... } frame_info;` instead still gets it, emplaced for every draw.
+
+A custom `Geometry` whose vertex shader declares `ViewInfo` or `ItemInfo` gets
+them bound after its `bind`, in every pass, so its `bind` binds its buffers and
+its own blocks alone.
+
 Your shader writes `gl_Position` and the standard outputs the fragment stage reads
 (`v_position`, `v_normal`, `v_viewvector`, `v_texture_coords`,
 `v_texture_coords_1`, `v_color`, `v_tangent`), plus any of
@@ -1196,8 +1209,7 @@ your own varyings. Write clip space as `camera_transform * world_position`.
 `camera_transform` already carries the view's depth convention, which is
 reversed (near at 1, far at 0) on most devices (`Scene.reversedDepth`), so a
 shader that writes clip depth itself (a sky at `z = w`) is only right with
-`Scene.reversedDepth = false`. `FrameInfo` continues past `camera_position`
-with engine fields a shader may leave undeclared. A skinned mesh
+`Scene.reversedDepth = false`. A skinned mesh
 instead takes its model transform,
 `enable_skinning`, and `joint_texture_size` in `FrameInfo`, and adds the
 `joints` and `weights` attributes and a `joints_texture` sampler.

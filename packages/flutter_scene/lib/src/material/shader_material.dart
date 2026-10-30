@@ -358,7 +358,8 @@ class ShaderMaterial extends Material {
   /// With no vertex shader the engine's standard one runs, which is the
   /// fragment-only workflow. Supplying one takes over the vertex stage for
   /// that mesh kind, and the shader must then satisfy the engine contract
-  /// (see `MATERIALS.md`): it declares the `FrameInfo` block, the attributes
+  /// (see `MATERIALS.md`): it declares the `ViewInfo` and `ItemInfo` blocks (or
+  /// the earlier `FrameInfo`), the attributes
   /// its geometry's layout provides, and the `v_*` outputs the fragment stage
   /// reads.
   ///

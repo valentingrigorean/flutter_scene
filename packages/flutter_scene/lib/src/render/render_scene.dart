@@ -28,6 +28,7 @@ import 'package:flutter_scene/src/render/instance_packing.dart'
 import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/render/lod.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
+import 'package:flutter_scene/src/render/view_info.dart';
 import 'package:flutter_scene/src/render_view.dart';
 
 /// One drawable primitive in the flat render layer.
@@ -59,6 +60,10 @@ class RenderItem {
   }
 
   Material _material;
+
+  /// The `ItemInfo` blocks this item draws with, kept from frame to frame.
+  @internal
+  final HeldItemInfo heldItemInfo = HeldItemInfo();
 
   /// Identity sort keys for [geometry] and [material], cached so the batching
   /// sorts in the depth prepass and shadow encoder compare plain integers.
@@ -947,6 +952,7 @@ class RenderScene {
       last.sceneSlot = slot;
     }
     item.sceneSlot = -1;
+    item.heldItemInfo.release();
     _structureRevision++;
     _structureDirty = true;
   }

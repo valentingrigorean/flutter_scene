@@ -130,17 +130,16 @@ class DepthRaster {
   /// 24-bit depth and standard float depth have a constant step in window
   /// depth past twice the near plane, so they add a multiple of w.
   void writeOffset(double steps, Float32List out, int index) {
-    if (steps == 0.0) {
-      out[index] = 0.0;
-      out[index + 1] = 0.0;
-    } else if (reversed && floatDepth) {
-      out[index] = steps * _kFloatRelativeStep;
-      out[index + 1] = 0.0;
-    } else {
-      out[index] = 0.0;
-      out[index + 1] = (reversed ? steps : -steps) * _kUnormStep;
-    }
+    out[index] = steps * stepScale;
+    out[index + 1] = steps * stepClip;
   }
+
+  /// The relative z scale [writeOffset] writes for one step.
+  double get stepScale => reversed && floatDepth ? _kFloatRelativeStep : 0.0;
+
+  /// The multiple of w [writeOffset] writes for one step.
+  double get stepClip =>
+      reversed && floatDepth ? 0.0 : (reversed ? _kUnormStep : -_kUnormStep);
 
   /// The slope-scaled offset that moves a surface [pixels] of its own depth
   /// gradient toward the camera, for a view whose window depth changes by
@@ -211,37 +210,54 @@ void setCurrentDrawDepthOffset(
   double pixelSlope = 0.0,
   double nudge = 0.0,
 }) {
+  currentDrawDepthRaster = raster;
+  currentDrawPixelSlope = pixelSlope;
   currentRasterFarClipDepth = raster.farClipDepth;
   final tie = raster.tieBreak && layer == 0;
   final below = raster.tieBreak && layer < 0 ? kTieBreakRanks - 1.0 : 0.0;
   final materialRanks = tie ? rank * 3.0 : 0.0;
-  raster.writeOffset(
-    layer * kDepthLayerSteps -
+  final steps = currentDrawDepthSteps
+    ..[0] =
+        layer * kDepthLayerSteps -
         (below + materialRanks) * kTieBreakSteps +
-        nudge * kDepthNudgeSteps,
-    currentDrawDepthOffset,
-    0,
-  );
-  raster.writeOffset(
-    tie ? -kTieBreakSteps.toDouble() : 0.0,
-    currentDrawDepthOffset,
-    2,
-  );
-  currentDrawDepthSlope[0] = raster.slopeOffset(
-    layer * kDepthLayerPixels -
+        nudge * kDepthNudgeSteps
+    ..[1] = tie ? -kTieBreakSteps.toDouble() : 0.0;
+  final pixels = currentDrawDepthPixels
+    ..[0] =
+        layer * kDepthLayerPixels -
         below * kTieBreakPixels +
-        nudge * kDepthNudgePixels,
-    pixelSlope,
-  );
-  currentDrawDepthSlope[1] = raster.slopeOffset(
-    tie ? -kTieBreakPixels : 0.0,
-    pixelSlope,
-  );
-  currentDrawDepthSlope[2] = raster.slopeOffset(
-    -materialRanks * kTieBreakPixels,
-    pixelSlope,
-  );
+        nudge * kDepthNudgePixels
+    ..[1] = tie ? -kTieBreakPixels : 0.0
+    ..[2] = -materialRanks * kTieBreakPixels;
+  raster.writeOffset(steps[0], currentDrawDepthOffset, 0);
+  raster.writeOffset(steps[1], currentDrawDepthOffset, 2);
+  for (var index = 0; index < 3; index++) {
+    currentDrawDepthSlope[index] = raster.slopeOffset(
+      pixels[index],
+      pixelSlope,
+    );
+  }
 }
+
+/// The depth raster the draw being encoded states its offsets under.
+@internal
+DepthRaster currentDrawDepthRaster = DepthRaster.standard;
+
+/// The depth-buffer steps of the draw being encoded, whose offsets
+/// [currentDrawDepthOffset] holds under its raster: `[0]` the material's
+/// layer and tie-break rank, `[1]` one per-instance tie-break rank.
+@internal
+final Float32List currentDrawDepthSteps = Float32List(2);
+
+/// The pixels of depth gradient of the draw being encoded, whose offsets
+/// [currentDrawDepthSlope] holds under its pixel slope, in its order.
+@internal
+final Float32List currentDrawDepthPixels = Float32List(3);
+
+/// The pixel slope the draw being encoded states its offsets under (see
+/// [pixelDepthSlope]); zero in a pass that leaves the slope out.
+@internal
+double currentDrawPixelSlope = 0.0;
 
 /// How much window depth changes per pixel of screen distance per unit of
 /// the vertex stage's `DepthSlope`, for a view rasterizing with [projection]
@@ -270,9 +286,13 @@ double pixelWorldScale(Matrix4 projection, double height) {
 /// (shadow maps).
 @internal
 void clearCurrentDrawDepthOffset() {
+  currentDrawDepthRaster = DepthRaster.standard;
+  currentDrawPixelSlope = 0.0;
   currentRasterFarClipDepth = 1.0;
   currentDrawDepthOffset.fillRange(0, 4, 0.0);
   currentDrawDepthSlope.fillRange(0, 4, 0.0);
+  currentDrawDepthSteps.fillRange(0, 2, 0.0);
+  currentDrawDepthPixels.fillRange(0, 3, 0.0);
 }
 
 /// [matrix] with its depth row reversed (`row2 := row3 - row2`), so clip

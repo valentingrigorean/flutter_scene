@@ -18,6 +18,7 @@ import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/uniform_slots.dart';
+import 'package:flutter_scene/src/render/view_info.dart';
 
 /// [data] as a [ByteData], without copying when it already is one.
 ///
@@ -246,6 +247,7 @@ abstract class Geometry {
   /// turn-key path that allocates and uploads in one step, see
   /// [uploadVertexData].
   void setVertices(gpu.BufferView vertices, int vertexCount) {
+    _bindRevision++;
     _clearResolvedOnLayoutChange(1);
     _vertexStreams = [vertices];
     _vertexCount = vertexCount;
@@ -259,6 +261,7 @@ abstract class Geometry {
   /// uses [setVertices].
   @internal
   void setVertexStreams(List<gpu.BufferView> streams, int vertexCount) {
+    _bindRevision++;
     _clearResolvedOnLayoutChange(streams.length);
     _vertexStreams = streams;
     _vertexCount = vertexCount;
@@ -301,7 +304,9 @@ abstract class Geometry {
   /// same schema (see [instancedVertexLayoutFor]).
   @internal
   void useVertexAttributes(VertexAttributeSchema? schema) {
+    if (identical(_activeAttributes, schema)) return;
     _activeAttributes = schema;
+    _bindRevision++;
   }
 
   // Resolved streams and layouts per schema, since one geometry alternates
@@ -476,6 +481,7 @@ abstract class Geometry {
     );
     buffer.overwrite(bytes);
     _resolved.clear();
+    _bindRevision++;
     _customAttributes[name] = (
       format: _vertexFormatForComponents(components),
       view: gpu.BufferView(
@@ -494,6 +500,7 @@ abstract class Geometry {
   /// The element count is computed automatically from the buffer view's
   /// byte length.
   void setIndices(gpu.BufferView indices, gpu.IndexType indexType) {
+    _bindRevision++;
     _indices = indices;
     _indexType = indexType;
     _debugEdges = null;
@@ -1110,8 +1117,8 @@ abstract class Geometry {
   ///
   /// [shaderOverride] is the vertex shader the pipeline actually runs when it
   /// differs from this geometry's default [vertexShader] (a custom material's
-  /// generated vertex variant). The per-frame uniforms (`FrameInfo`, the joints
-  /// texture) must be bound against that shader's slots, since a variant can
+  /// generated vertex variant). The vertex uniforms (`ViewInfo` and `ItemInfo`,
+  /// the joints texture) must be bound against that shader's slots, since a variant can
   /// place its uniform blocks at different binding points.
   /// [depthBias] offsets this draw toward [cameraPosition] in world units.
   void bind(
@@ -1144,16 +1151,15 @@ abstract class Geometry {
   /// draw from a [MeshDrawSelection] and reset it with [clearDrawWindow].
   @internal
   void setDrawWindow(int first, int? count) {
+    if (_windowFirst == first && _windowCount == count) return;
     _windowFirst = first;
     _windowCount = count;
+    _bindRevision++;
   }
 
   /// Draws the whole geometry again.
   @internal
-  void clearDrawWindow() {
-    _windowFirst = 0;
-    _windowCount = null;
-  }
+  void clearDrawWindow() => setDrawWindow(0, null);
 
   int get _windowIndexCount {
     final rest = math.max(0, _indexCount - _windowFirst);
@@ -1304,6 +1310,7 @@ abstract class Geometry {
   }) {
     _vertexLayout = layout;
     _bindsModelTransformInstance = layout == null ? null : bindsModelTransform;
+    _bindRevision++;
   }
 
   /// Whether the color encoder should bind the node's model transform as a
@@ -1330,6 +1337,20 @@ abstract class Geometry {
   /// instead of culling it away.
   @internal
   bool get isDoubleSided => false;
+
+  /// Counts the changes to the buffers [bindGeometryBuffers] binds: the
+  /// vertex streams, the custom attribute streams a draw reads, the index
+  /// buffer and its draw window, and the vertex layout. A pass that bound
+  /// this geometry's buffers at the same revision, with no other buffers
+  /// bound since, binds them again for no draw.
+  ///
+  /// A subclass whose own buffers change calls [markBindChanged].
+  int get bindRevision => _bindRevision;
+  int _bindRevision = 0;
+
+  /// Moves [bindRevision].
+  @protected
+  void markBindChanged() => _bindRevision++;
 
   /// Binds all of this geometry's vertex streams (to slots 0, 1, ...) and
   /// its index buffer onto [pass] without binding any uniforms.
@@ -1740,7 +1761,7 @@ class UnskinnedGeometry extends Geometry {
     // Unskinned vertex UBO. The model transform is NOT part of this block;
     // it arrives through the instance-rate vertex buffer (the last slot),
     // bound by the encoder for instanced and non-instanced draws alike.
-    bindUnskinnedFrameInfo(
+    bindUnskinnedDrawInfo(
       pass,
       transientsBuffer,
       shaderOverride ?? vertexShader,
@@ -2166,41 +2187,30 @@ final VertexLayoutDescriptor kUnskinnedSoADepthLayout = VertexLayoutDescriptor(
   buffers: const [_kPositionBuffer, _kInstanceModelTransformBuffer],
 );
 
-/// Emplaces and binds the unskinned `FrameInfo` uniform (camera transform
-/// plus camera position) onto [pass], resolving the slot against [shader].
-///
-/// Shared by the color path ([UnskinnedGeometry.bind]) and the depth-style
-/// passes, which drive the position-only shader but use the identical
-/// `FrameInfo` block; the slot is resolved against whichever shader the bound
-/// pipeline uses.
-// Reused across every call: this runs for every draw of every pass, and
-// [TransientWriter.emplace] copies the bytes out immediately, so a shared
-// scratch is safe and avoids a per-draw allocation.
-final Float32List _unskinnedFrameInfoScratch = Float32List(28);
-
+/// Binds the view and item blocks of the unskinned vertex stage [shader]
+/// for the draw bound next: shared by the color path
+/// ([UnskinnedGeometry.bind]) and the depth-style passes, which drive the
+/// position-only shader with the same blocks. [held] is the item's, which
+/// keeps its block from frame to frame.
 @internal
-void bindUnskinnedFrameInfo(
+void bindUnskinnedDrawInfo(
   gpu.RenderPass pass,
   TransientWriter transientsBuffer,
   gpu.Shader shader,
   vm.Matrix4 cameraTransform,
   vm.Vector3 cameraPosition, {
   double depthBias = 0.0,
-}) {
-  final frameInfoSlot = shader.cachedUniformSlot('FrameInfo');
-  final scratch = _unskinnedFrameInfoScratch
-    ..setAll(0, cameraTransform.storage)
-    ..[16] = cameraPosition.x
-    ..[17] = cameraPosition.y
-    ..[18] = cameraPosition.z
-    ..[19] = depthBias
-    ..setAll(20, currentDrawDepthOffset)
-    ..setAll(24, currentDrawDepthSlope);
-  pass.bindUniform(
-    frameInfoSlot,
-    transientsBuffer.emplace(scratchBytesOf(scratch)),
-  );
-}
+  HeldItemInfo? held,
+}) => bindViewAndItemInfo(
+  pass,
+  transientsBuffer,
+  shader,
+  cameraTransform,
+  cameraPosition,
+  held: held,
+  depthBias: depthBias,
+  frameInfo: true,
+);
 
 /// Slot 0 of a skinned mesh: the interleaved 104-byte vertex stream the
 /// `SkinnedVertex` shader reads. Offsets match the bytes

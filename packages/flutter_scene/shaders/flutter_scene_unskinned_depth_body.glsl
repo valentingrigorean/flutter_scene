@@ -13,18 +13,8 @@
 // camera_position is a placeholder, so a camera-relative displacement is only
 // correct in the shadow map once the real camera position is plumbed here.
 
-uniform FrameInfo {
-  mat4 camera_transform;
-  vec3 camera_position;
-  float depth_bias;
-  // The draw's depth-layer offset (xy) and one instance tie-break rank's
-  // (zw), see ApplyDepthOffset.
-  vec4 depth_offset;
-  // The color body's slope-scaled offsets, unused here: this stage reads no
-  // normal, so it matches the position-only velocity pass instead.
-  vec4 depth_slope;
-}
-frame_info;
+#include <view_info.glsl>
+#include <item_info.glsl>
 
 #include <depth_bias.glsl>
 
@@ -56,19 +46,19 @@ void main() {
   vertex.uv = vec2(0.0);
   vertex.uv1 = vec2(0.0);
   vertex.color = vec4(0.0);
-  vertex.camera_position = frame_info.camera_position;
+  vertex.camera_position = view_info.camera_position.xyz;
   vertex.model_transform = model_transform;
   Vertex(vertex);
 
   v_position = vertex.world_position;
   vec3 draw_position = ApplyDepthBias(
-      vertex.world_position, frame_info.camera_transform,
-      frame_info.camera_position, frame_info.depth_bias);
-  vec4 clip_position = frame_info.camera_transform * vec4(draw_position, 1.0);
+      vertex.world_position, view_info.camera_transform,
+      view_info.camera_position.xyz, item_info.depth_steps.z);
+  vec4 clip_position = view_info.camera_transform * vec4(draw_position, 1.0);
   gl_Position = ApplyDepthOffset(
-      clip_position, frame_info.depth_offset, model_transform_3.xyz,
-      frame_info.camera_transform, draw_position, frame_info.camera_position);
-  v_viewvector = frame_info.camera_position - vertex.world_position;
+      clip_position, ItemDepthOffset(), model_transform_3.xyz,
+      view_info.camera_transform, draw_position, view_info.camera_position.xyz);
+  v_viewvector = view_info.camera_position.xyz - vertex.world_position;
   v_normal = vec3(0.0);
   v_texture_coords = vec2(0.0);
   v_texture_coords_1 = vec2(0.0);

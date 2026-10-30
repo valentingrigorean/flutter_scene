@@ -4,18 +4,8 @@
 // the no-op hook; a material variant includes it after defining
 // HAS_MATERIAL_VERTEX and its own Vertex()).
 
-uniform FrameInfo {
-  mat4 camera_transform;
-  vec3 camera_position;
-  float depth_bias;
-  // The draw's depth-layer offset (xy) and one instance tie-break rank's
-  // (zw), see ApplyDepthOffset.
-  vec4 depth_offset;
-  // The same as slope-scaled offsets: x the draw's layer, z its tie-break
-  // rank, y one instance rank's. See ApplySlopedDepthOffset.
-  vec4 depth_slope;
-}
-frame_info;
+#include <view_info.glsl>
+#include <item_info.glsl>
 
 #include <depth_bias.glsl>
 #include <normal_transform.glsl>
@@ -77,20 +67,20 @@ void main() {
   vertex.uv = texture_coords;
   vertex.uv1 = texture_coords_1;
   vertex.color = color * instance_color;
-  vertex.camera_position = frame_info.camera_position;
+  vertex.camera_position = view_info.camera_position.xyz;
   vertex.model_transform = model_transform;
   Vertex(vertex);
 
   v_position = vertex.world_position;
   vec3 draw_position = ApplyDepthBias(
-      vertex.world_position, frame_info.camera_transform,
-      frame_info.camera_position, frame_info.depth_bias);
-  vec4 clip_position = frame_info.camera_transform * vec4(draw_position, 1.0);
+      vertex.world_position, view_info.camera_transform,
+      view_info.camera_position.xyz, item_info.depth_steps.z);
+  vec4 clip_position = view_info.camera_transform * vec4(draw_position, 1.0);
   gl_Position = ApplySlopedDepthOffset(
-      clip_position, frame_info.depth_offset, frame_info.depth_slope,
-      model_transform_3.xyz, frame_info.camera_transform, draw_position,
-      frame_info.camera_position, vertex.world_normal);
-  v_viewvector = frame_info.camera_position - vertex.world_position;
+      clip_position, ItemDepthOffset(), ItemDepthSlope(),
+      model_transform_3.xyz, view_info.camera_transform, draw_position,
+      view_info.camera_position.xyz, vertex.world_normal);
+  v_viewvector = view_info.camera_position.xyz - vertex.world_position;
   // Unit length before interpolation (UnitOrZero, normal_transform.glsl).
   v_normal = UnitOrZero(vertex.world_normal);
   v_texture_coords = vertex.uv;

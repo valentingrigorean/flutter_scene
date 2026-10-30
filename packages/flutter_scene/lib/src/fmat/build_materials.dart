@@ -122,6 +122,7 @@ const _frameworkShaderFiles = <String>[
   'flutter_scene_unskinned_depth_body.glsl',
   'fog.glsl',
   'interleaved_gradient_noise.glsl',
+  'item_info.glsl',
   'irradiance_field.glsl',
   'irradiance_receiver.glsl',
   'lightmap.glsl',
@@ -143,6 +144,7 @@ const _frameworkShaderFiles = <String>[
   'ssao_geometry.glsl',
   'texture.glsl',
   'tone_mapping.glsl',
+  'view_info.glsl',
   'wireframe.glsl',
 ];
 

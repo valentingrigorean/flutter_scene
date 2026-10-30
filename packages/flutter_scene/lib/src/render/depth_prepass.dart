@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
+import 'package:flutter_scene/src/render/view_info.dart';
 import 'package:flutter_scene/src/fmat/fmat_ast.dart' show DepthSurfaceKind;
 import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
@@ -17,7 +18,7 @@ import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/geometry/geometry.dart'
-    show Geometry, bindUnskinnedFrameInfo;
+    show Geometry, UnskinnedGeometry, bindUnskinnedDrawInfo;
 import 'package:flutter_scene/src/material/material.dart' show Material;
 import 'package:flutter_scene/src/render/draw_recorder.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
@@ -814,17 +815,20 @@ class _DepthPrepassEncoder {
     final geometry = _drawGeometry!;
     final activeVertex = _drawVertex!;
     final materialVertex = _drawMaterialVertex;
+    currentViewForward = null;
     if (_drawDepthPath) {
       geometry.bindPositionStream(_renderPass);
-      bindUnskinnedFrameInfo(
+      bindUnskinnedDrawInfo(
         _renderPass,
         _transientsBuffer,
         activeVertex,
         _cameraTransform,
         _cameraPosition,
+        held: item.heldItemInfo,
         depthBias: item.material.depthBias,
       );
     } else {
+      currentDrawItemInfo = item.heldItemInfo;
       geometry.bind(
         _renderPass,
         _transientsBuffer,
@@ -834,6 +838,17 @@ class _DepthPrepassEncoder {
         shaderOverride: materialVertex,
         depthBias: item.material.depthBias,
       );
+      if (geometry is! UnskinnedGeometry) {
+        bindViewAndItemInfo(
+          _renderPass,
+          _transientsBuffer,
+          materialVertex ?? geometry.vertexShader,
+          _cameraTransform,
+          _cameraPosition,
+          depthBias: item.material.depthBias,
+        );
+      }
+      currentDrawItemInfo = null;
     }
     // Feed the material's parameters to its vertex variant so the same
     // displacement runs here as in the color pass.

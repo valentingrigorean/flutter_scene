@@ -1,5 +1,8 @@
 ## 0.24.4
 
+* The engine vertex stages read two blocks in place of one `FrameInfo` per draw: `ViewInfo` (`view_info.glsl`), the pass's view, emplaced once per pass (each shadow cascade its own) and shared with the fragment stage's `view_info`; and `ItemInfo` (`item_info.glsl`), each render item's depth offsets and depth bias, held at an offset the item keeps from frame to frame and written only when they change. A still mesh writes no uniform bytes while the camera moves; `RenderCounters.itemInfoBytesWritten` counts what is written. A material vertex shader that declares the earlier `FrameInfo` still gets it, emplaced per draw.
+* A custom `Geometry` whose vertex shader declares `ViewInfo` or `ItemInfo` gets them bound after its `bind` in every pass, so its `bind` binds only its buffers and its own blocks.
+* `Geometry.bindRevision` counts the changes to the buffers a geometry binds; a pass binds an unchanged geometry's buffers once for a run of its draws. A subclass with buffers of its own calls `markBindChanged`.
 * glTF imports read `EXT_texture_webp` textures, so a model whose textures are only WebP loads instead of failing.
 * glTF imports honor `KHR_node_visibility`, so a node marked hidden imports hidden along with its subtree.
 * glTF imports play `KHR_animation_pointer` animations of node visibility, light color, intensity, range, and cone angles, material factors, and texture transforms. A pointer the engine can't drive warns and is skipped.
