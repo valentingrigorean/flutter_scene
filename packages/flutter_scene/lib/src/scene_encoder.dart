@@ -2442,9 +2442,8 @@ base class SceneEncoder {
           fade,
           sortBackToFrontFrom: sortBackToFrontFrom == null || !nodeSpace
               ? sortBackToFrontFrom
-              : Matrix4.inverted(
-                  item.drawTransform,
-                ).transformed3(sortBackToFrontFrom),
+              : Matrix4.inverted(item.drawTransform)
+                    .transformed3(sortBackToFrontFrom),
           instanceLimit: selection.instanceCount,
           fallback:
               debugFallback ?? _usesDebugFallback(item, material, geometry),
@@ -3387,8 +3386,8 @@ base class SceneEncoder {
 /// The color pass's draws of a [RenderScene]'s still items that the backend
 /// keeps as render items ([gpu.ItemSet]), so a frame that moves only the
 /// camera encodes none of them. The pass draws the kept items natively, culled
-/// by the camera, with the view's `ViewInfo`, `FragInfo` and `FogInfo` as view
-/// blocks, and encodes [encoded].
+/// by the camera, with the view's `ViewInfo`, `FragInfo`, `FogInfo` and
+/// `SceneInputInfo` as view blocks, and encodes [encoded].
 ///
 /// A draw is kept when it is an opaque, unskinned, unmorphed, non-instanced
 /// mesh (the structural checks [RetainedDraws] makes) whose material holds its
@@ -3434,6 +3433,7 @@ final class RetainedColorDraws extends RetainedDraws {
     EngineLightingUniforms.fragInfoFloatCount,
   );
   final Float32List _fogScratch = Float32List(24);
+  final Float32List _inputScratch = Float32List(24);
 
   @override
   int get passes => 1 << SceneItems.colorPass;
@@ -3573,7 +3573,8 @@ final class RetainedColorDraws extends RetainedDraws {
   }
 
   /// Draws the kept color items into [pass], the render pass [encoder]
-  /// encodes, supplying the view's `ViewInfo`, `FragInfo` and `FogInfo`.
+  /// encodes, supplying the view's `ViewInfo`, `FragInfo`, `FogInfo` and
+  /// `SceneInputInfo`.
   void drawKept(gpu.RenderPass pass, SceneEncoder encoder) {
     final lighting = encoder._lighting;
     final view = viewInfoBytesOf(
@@ -3587,6 +3588,7 @@ final class RetainedColorDraws extends RetainedDraws {
       lighting.environmentMap,
     );
     EngineLightingUniforms.packFog(_fogScratch, lighting);
+    EngineLightingUniforms.packSceneInputInfo(_inputScratch, lighting);
     CameraReplay.recording
       ?..pass(
         SceneItems.colorPass,
@@ -3600,6 +3602,7 @@ final class RetainedColorDraws extends RetainedDraws {
         view,
         ByteData.sublistView(_fragInfoScratch),
         ByteData.sublistView(_fogScratch),
+        ByteData.sublistView(_inputScratch),
         for (final bytes in _appBlocks) bytes(),
       ],
       clip: encoder._cameraTransform.storage,
@@ -3697,6 +3700,7 @@ final class RetainedTranslucentDraws extends RetainedDraws {
     EngineLightingUniforms.fragInfoFloatCount,
   );
   final Float32List _fogScratch = Float32List(24);
+  final Float32List _inputScratch = Float32List(24);
   List<ByteData>? _viewBlocks;
   ViewInfoState? _viewInfo;
 
@@ -3913,11 +3917,13 @@ final class RetainedTranslucentDraws extends RetainedDraws {
       lighting.environmentMap,
     );
     EngineLightingUniforms.packFog(_fogScratch, lighting);
+    EngineLightingUniforms.packSceneInputInfo(_inputScratch, lighting);
     _viewInfo = ViewInfoState.current();
     return [
       viewInfoBytesOf(encoder._cameraTransform, encoder._cameraPosition),
       ByteData.sublistView(_fragInfoScratch),
       ByteData.sublistView(_fogScratch),
+      ByteData.sublistView(_inputScratch),
       for (final bytes in _appBlocks) bytes(),
     ];
   }
@@ -3932,8 +3938,8 @@ final class RetainedTranslucentDraws extends RetainedDraws {
 }
 
 // Rebuilds the color pass's view blocks for another camera of the frame:
-// `ViewInfo`, `FragInfo` from [lighting] as that camera sees it, `FogInfo`,
-// and the app's [appBlocks] read again. Null where the lighting draws
+// `ViewInfo`, `FragInfo` and `SceneInputInfo` from [lighting] as that camera
+// sees it, `FogInfo`, and the app's [appBlocks] read again. Null where the lighting draws
 // punctual lights, which move apart from the camera.
 CameraReplayPass _colorReplay(
   Lighting lighting,
@@ -3961,12 +3967,15 @@ CameraReplayPass _colorReplay(
   EngineLightingUniforms.packInto(fragInfo, seen, seen.environmentMap);
   final fog = Float32List(24);
   EngineLightingUniforms.packFog(fog, seen);
+  final input = Float32List(24);
+  EngineLightingUniforms.packSceneInputInfo(input, seen);
   final transform = rasterViewTransformOf(camera, view.dimensions);
   return (
     blocks: [
       viewInfo.bytesFor(transform, camera, view.dimensions, view.viewScale),
       ByteData.sublistView(fragInfo),
       ByteData.sublistView(fog),
+      ByteData.sublistView(input),
       for (final bytes in appBlocks) bytes(),
     ],
     clip: transform.storage,

@@ -176,8 +176,8 @@ final class _RunKey {
 /// the passes in the order they draw, so an index does not order them.
 ///
 /// Each pass states its own view blocks: `ViewInfo` first, then `DepthInfo`
-/// for the prepass, or `FragInfo`, `FogInfo` and the app's blocks
-/// (`Scene.setViewBlock`) for the color pass and its translucent draws;
+/// for the prepass, or `FragInfo`, `FogInfo`, `SceneInputInfo` and the app's
+/// blocks (`Scene.setViewBlock`) for the color pass and its translucent draws;
 /// `SkyboxFrameInfo` and `SkyboxInfo` for the sky, `ResolveInfo` for the
 /// resolve, `FxaaInfo` for the anti-aliasing, and a custom render pass's
 /// `CustomRenderPass.keptViewBlocks` for its draw.
@@ -192,6 +192,11 @@ final class SceneItems {
 
   /// The color pass's pass index.
   static const int colorPass = 5;
+
+  /// The index of `SceneInputInfo` among the view blocks of every pass of
+  /// the set: a kept draw that reads it in a pass of its own is supplied it
+  /// there (`KeptPassItems.sceneInputBlock`).
+  static const int sceneInputBlock = 3;
 
   /// The sky's pass index, drawn in the color pass's render pass.
   static const int skyPass = 6;
@@ -243,7 +248,8 @@ final class SceneItems {
         'DepthInfo': 1,
         'FragInfo': 1,
         'FogInfo': 2,
-        for (final (index, name) in appBlocks.indexed) name: 3 + index,
+        'SceneInputInfo': sceneInputBlock,
+        for (final (index, name) in appBlocks.indexed) name: 4 + index,
         'SkyboxFrameInfo': 0,
         'SkyboxInfo': 1,
         'ResolveInfo': 0,
@@ -844,9 +850,8 @@ abstract base class RetainedDraws {
     final slot = instanceSlotOf(item, geometry);
     final shared = item.sharedRows;
     if (shared != null) {
-      final (:records, :stride) = sharedInstanceRowsOf(
-        shared,
-      ).recordsOf(item.instanceRanges);
+      final (:records, :stride) = sharedInstanceRowsOf(shared)
+          .recordsOf(item.instanceRanges);
       return gpu.ItemInstances(slot: slot, stride: stride, records: records);
     }
     return gpu.ItemInstances(

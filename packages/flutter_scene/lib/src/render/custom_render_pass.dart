@@ -245,7 +245,7 @@ abstract class CustomRenderPass {
 
   /// The names of the uniform blocks the draw [RenderPassContext.drawKept]
   /// keeps reads afresh each frame, in the order that call supplies their
-  /// bytes; four at most. Every other block the draw binds must hold its
+  /// bytes; eight at most. Every other block the draw binds must hold its
   /// bytes from frame to frame. Read once, when the pass is added to a
   /// scene. Empty by default.
   List<String> get keptViewBlocks => const [];

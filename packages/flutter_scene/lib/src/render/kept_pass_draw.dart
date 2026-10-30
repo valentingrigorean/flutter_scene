@@ -194,6 +194,10 @@ final class KeptPassItems {
     ];
   }
 
+  /// The index of `SceneInputInfo` among the view blocks a [draw] supplies,
+  /// for draws that read it.
+  static const int sceneInputBlock = SceneItems.sceneInputBlock;
+
   /// Keeps [draws] as the items of the pass index, in their order, for a pass
   /// whose attachments [target] describes. Returns false, keeping none,
   /// where the backend refused one of them.
