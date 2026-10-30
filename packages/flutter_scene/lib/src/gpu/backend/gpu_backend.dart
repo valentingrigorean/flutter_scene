@@ -309,14 +309,15 @@ abstract interface class GpuBackendContext {
 
   /// Creates a set of render items the backend keeps and draws inside a
   /// render pass, or null where it keeps none. A draw's uniform blocks named
-  /// in [viewBlockNames] are the pass's view blocks, of at most
-  /// [viewBlockLength] bytes each, which each [GpuBackendItemSet.draw]
-  /// states in that order. A draw's textures named in [viewTextureNames] are
+  /// in [viewBlocks] are the pass's view blocks, of at most
+  /// [viewBlockLength] bytes each, each at the index [viewBlocks] gives it
+  /// among the blocks each [GpuBackendItemSet.draw] states. Two names may
+  /// share an index where the passes that read them draw different items. A draw's textures named in [viewTextureNames] are
   /// the pass's view textures, re-supplied in that order each
   /// [GpuBackendItemSet.draw], so a kept item may sample a frame-transient
   /// target whose handle changes each frame.
   GpuBackendItemSet? createItemSet({
-    required List<String> viewBlockNames,
+    required Map<String, int> viewBlocks,
     required int viewBlockLength,
     List<String> viewTextureNames = const [],
   });
@@ -366,8 +367,8 @@ abstract interface class GpuBackendItemSet {
 
   /// Draws the items of pass [index] into [pass] where it stands, under its
   /// viewport and scissor, with [viewBlocks] as the pass's view blocks and
-  /// [viewTextures] as its view textures, each in the order the set names
-  /// them, culled by [clip] (a column-major matrix into clip space). A
+  /// [viewTextures] as its view textures, each at the index the set gives
+  /// it, culled by [clip] (a column-major matrix into clip space). A
   /// command buffer draws a pass index once.
   void draw(
     GpuBackendRenderPass pass,
