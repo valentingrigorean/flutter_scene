@@ -40,6 +40,7 @@ import 'package:meta/meta.dart' show experimental;
 import 'package:vector_math/vector_math.dart' as vm;
 
 import '../shared/gpu_capabilities.dart';
+import '../shared/item_instances.dart';
 
 /// A GPU backend the shim can render through instead of Impeller.
 @experimental
@@ -348,11 +349,16 @@ abstract interface class GpuBackendItemSet {
   /// culled. Returns null, keeping nothing and removing [id], when the
   /// recorder recorded no draw or several. The recorder's bindings are
   /// cleared either way.
+  ///
+  /// With [instances], the item draws its recorded draw as one instanced
+  /// draw of the instances each [draw] does not cull by their own bounds
+  /// ([ItemInstances]); [bounds] then holds them all.
   int? keep(
     GpuBackendRenderPass recorder, {
     int id = 0,
     required int passes,
     Float32List? bounds,
+    ItemInstances? instances,
   });
 
   /// Removes item [id]; an unknown id is ignored.

@@ -25,6 +25,11 @@ const int kViewInfoFloats = 36;
 /// The floats of the `ItemInfo` block.
 const int kItemInfoFloats = 88;
 
+/// The floats [HeldItemInfo.drawValuesOf] returns: the depth steps, pixels
+/// and bias (0-5), the instance frame (6-21), the local transform (22-37),
+/// whether a band is set (38) and the band (39-48).
+const int kHeldItemDrawFloats = 49;
+
 /// The floats of the fragment-stage `MatInfo` block (held per material) and
 /// `ItemFragInfo` block (held per item) of a lit material. Kept here
 /// with [HeldBlock] so the holders and the packing agree without a dependency
@@ -359,6 +364,18 @@ final class HeldItemInfo {
   static bool _sameView(gpu.BufferView a, gpu.BufferView b) =>
       identical(a.buffer, b.buffer) && a.offsetInBytes == b.offsetInBytes;
 
+  /// The values the block [view] holds, for telling whether two items draw
+  /// with the same block: the depth steps, pixels and bias, the instance
+  /// frame and local transform (the identity where none was stated) and the
+  /// band, in [kHeldItemDrawFloats] floats. Null when [view] is none of this
+  /// item's blocks, or when the block turns, whose values move with time.
+  Float32List? drawValuesOf(gpu.BufferView view) {
+    for (final entry in _entries) {
+      if (_sameView(entry.view, view)) return entry.drawValues();
+    }
+    return null;
+  }
+
   /// The block of the draw bound next, written if no held one matches.
   gpu.BufferView bound(double depthBias) {
     final generation = gpu.gpuContextGeneration;
@@ -437,6 +454,19 @@ final class _HeldItem {
     if (band != null) band.writeTo(_band, 0);
     _spin = currentDrawSpin;
     _epoch = epoch;
+  }
+
+  Float32List? drawValues() {
+    if (_spin != null) return null;
+    final values = Float32List(kHeldItemDrawFloats)..setAll(0, _depth);
+    values.setAll(6, _hasFrame ? _frame : _identity.storage);
+    values.setAll(22, _hasLocal ? _local : _identity.storage);
+    if (_hasBand) {
+      values
+        ..[38] = 1.0
+        ..setAll(39, _band);
+    }
+    return values;
   }
 
   bool holds(double depthBias, double epoch) {
@@ -558,6 +588,15 @@ final class HeldBlock {
         return;
       }
     }
+  }
+
+  /// The values the block [view] holds, or null when [view] is none of this
+  /// holder's blocks. The list is the holder's own: read it, do not keep it.
+  Float32List? valuesOf(gpu.BufferView view) {
+    for (final entry in _entries) {
+      if (_sameView(entry.view, view)) return entry._values;
+    }
+    return null;
   }
 
   /// Gives every slot back as the owner leaves its render scene.

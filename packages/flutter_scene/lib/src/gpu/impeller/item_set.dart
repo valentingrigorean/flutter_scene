@@ -49,11 +49,16 @@ final class ItemSet {
   /// and culled by [bounds] (min x, y, z, max x, y, z), and returns its id;
   /// null when it recorded no draw or several, or a draw that reads a
   /// buffer [markTransientBuffer] names, which removes [id].
+  ///
+  /// With [instances], the item draws as one instanced draw of the instances
+  /// a [draw] does not cull, each by its own bounds; [bounds] then holds
+  /// them all.
   int? keep(
     RenderPass recorder, {
     int id = 0,
     required int passes,
     Float32List? bounds,
+    ItemInstances? instances,
   }) {
     assert(identical(recorder._records, this));
     if (recorder._readsTransient) {
@@ -69,6 +74,7 @@ final class ItemSet {
         id: id,
         passes: passes,
         bounds: bounds,
+        instances: instances,
       );
     }
     return _backend!.keep(
@@ -76,7 +82,16 @@ final class ItemSet {
       id: id,
       passes: passes,
       bounds: bounds,
+      instances: instances,
     );
+  }
+
+  /// Drops the draws [recorder] recorded since its last keep without keeping
+  /// them.
+  void discard(RenderPass recorder) {
+    assert(identical(recorder._records, this));
+    recorder._readsTransient = false;
+    recorder.clearBindings();
   }
 
   /// Removes item [id].
