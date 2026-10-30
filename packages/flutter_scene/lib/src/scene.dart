@@ -15,6 +15,7 @@ import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/depth_conflicts.dart'
     as depth_conflicts
     show DepthConflictReport, probeDepthConflicts;
+import 'package:flutter_scene/src/render/kept_pass_draw.dart';
 import 'package:flutter_scene/src/render/retained_draws.dart';
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
@@ -1828,10 +1829,11 @@ base class Scene implements SceneGraph {
   void addRenderPass(CustomRenderPass pass) {
     if (_renderPasses.contains(pass)) return;
     _renderPasses.add(pass);
-    if (pass.keepsDraw) {
+    if (pass.keepsDraw || pass.keptItemPasses > 0) {
       renderScene.keepPass(
         pass,
         pass.keptViewBlocks,
+        count: pass.keepsDraw ? 1 : pass.keptItemPasses,
         slots: SceneItems.customPasses,
       );
     }
@@ -1841,10 +1843,13 @@ base class Scene implements SceneGraph {
   /// present.
   /// {@category Rendering}
   bool removeRenderPass(CustomRenderPass pass) {
-    renderScene.releasePass(
+    final slots = renderScene.releasePass(
       pass,
       (held) => (held as CustomRenderPass).keptViewBlocks,
     );
+    for (final slot in slots) {
+      KeptPassDraw.drop(renderScene, SceneItems.customPass + slot);
+    }
     return _renderPasses.remove(pass);
   }
 

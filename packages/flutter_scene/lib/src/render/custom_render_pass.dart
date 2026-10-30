@@ -235,6 +235,13 @@ abstract class CustomRenderPass {
   /// when the pass is added to a scene. False by default.
   bool get keepsDraw => false;
 
+  /// How many pass indices this pass, drawing in place and not keeping one
+  /// draw ([keepsDraw]), keeps draws in through [RenderPassContext.keptItems],
+  /// each a list of draws in the order the pass gives. Read once, when the
+  /// pass is added to a scene; where fewer are free the pass keeps none. 0 by
+  /// default.
+  int get keptItemPasses => 0;
+
   /// The names of the uniform blocks the draw [RenderPassContext.drawKept]
   /// keeps reads afresh each frame, in the order that call supplies their
   /// bytes; four at most. Every other block the draw binds must hold its
@@ -581,7 +588,7 @@ class RenderPassContext {
       ),
     );
     final pass = commands.createRenderPass(target, label: _pass.name);
-    final slot = _renderScene.keptPassSlots[_pass];
+    final slot = _renderScene.keptPassSlots[_pass]?.first;
     final kept = slot == null
         ? null
         : KeptPassDraw.of(_renderScene, SceneItems.customPass + slot);
@@ -596,6 +603,22 @@ class RenderPassContext {
         );
     if (!drawn) record(pass);
     rendererSubmissions.submit(commands);
+  }
+
+  /// The draws this pass keeps at its [slot]th pass index, below
+  /// [CustomRenderPass.keptItemPasses], or null where the scene gave the pass
+  /// no such index, the backend keeps no items, its buffer writes do not
+  /// follow the work submitted before them
+  /// ([gpu.GpuCapabilities.orderedBufferWrites]), or the frame records its
+  /// draws for a capture: the pass then encodes its draws itself.
+  KeptPassItems? keptItems(int slot) {
+    final slots = _renderScene.keptPassSlots[_pass];
+    if (slots == null ||
+        slot >= slots.length ||
+        !gpu.gpuHost.capabilities.orderedBufferWrites) {
+      return null;
+    }
+    return KeptPassItems.of(_renderScene, SceneItems.customPass + slots[slot]);
   }
 
   void applyShader(
