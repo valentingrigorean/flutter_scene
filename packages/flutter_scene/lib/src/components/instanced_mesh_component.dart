@@ -79,6 +79,7 @@ class InstancedMeshComponent extends Component {
   void refreshRenderItem() {
     final item = _renderItem;
     if (item == null) return;
+    node.internalRenderScene?.logItemChange(item);
     item.sharedRows = instancedMesh.recordSource;
     item.debugView = Node.debugViewOverrideCount == 0
         ? null
@@ -211,6 +212,7 @@ class InstancedMeshComponent extends Component {
   void hideRenderItem() {
     final item = _renderItem;
     if (item == null) return;
+    node.internalRenderScene?.logItemChange(item);
     if (item.visible && item.shadowStatic && item.castsShadows) {
       node.internalRenderScene?.markStaticShadowDirty(item);
     }
