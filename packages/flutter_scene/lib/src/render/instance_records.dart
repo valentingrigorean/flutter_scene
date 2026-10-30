@@ -14,6 +14,7 @@ import 'package:flutter_scene/src/render/held_slots.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
+import 'package:meta/meta.dart' show internal;
 
 /// The record an item that draws one instance holds on the device.
 final class HeldInstanceRecord {
@@ -76,8 +77,18 @@ void bindHeldInstanceRecord(
       ),
     );
   }
+  heldInstanceBinding = (
+    slot: slot,
+    floats: kInstanceRecordFloats + attributeFloats,
+  );
   pass.bindVertexBuffer(view, slot: slot);
 }
+
+/// The instance-rate slot and record floats of the last
+/// [bindHeldInstanceRecord], for a pass that keeps the draw it records as
+/// one of a run of instances (see `RetainedDraws`); null once read.
+@internal
+({int slot, int floats})? heldInstanceBinding;
 
 /// Binds rows `[first, first + count)` of [item]'s instance records to the
 /// instance-rate [slot], from the device copy the item keeps while its
