@@ -3076,6 +3076,7 @@ base class Scene implements SceneGraph {
       light?.shadowMapResolution,
       light?.cacheStaticShadows,
       postProcess.bloom.enabled,
+      postProcess.colorGrading.lut,
       for (final effect in postProcess.customEffects) effect.enabled,
       ambientOcclusion.enabled,
       autoExposure.enabled,

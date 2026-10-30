@@ -299,9 +299,10 @@ class RenderPassContext {
   bool _wrote = false;
 
   // While the pass runs again for another camera of a frame
-  // ([CameraReplay]): the view blocks its kept draw states, which it then
-  // draws nothing for.
+  // ([CameraReplay]): the key and view blocks its kept draw states, which it
+  // then draws nothing for.
   bool _replaying = false;
+  Object? _replayedKey;
   List<ByteData>? _replayed;
   int _replays = 0;
 
@@ -582,6 +583,7 @@ class RenderPassContext {
     List<ByteData> viewBlocks = const [],
   }) {
     if (_replaying) {
+      _replayedKey = key;
       _replayed = viewBlocks;
       _replays++;
       return;
@@ -606,7 +608,7 @@ class RenderPassContext {
           key: key,
           record: record,
           viewBlocks: viewBlocks,
-          replay: _replay,
+          replay: (view) => _replay(view, key),
         );
     if (!drawn) record(pass);
     rendererSubmissions.submit(commands);
@@ -614,8 +616,8 @@ class RenderPassContext {
 
   // Runs the pass again for [view] in place of the frame's camera, and
   // returns the view blocks its one kept draw states, or null where it states
-  // none or several.
-  List<ByteData>? _replay(CameraReplayView view) {
+  // none, several, or one under another key than [key].
+  List<ByteData>? _replay(CameraReplayView view, Object key) {
     final context = RenderPassContext._(
       _context,
       stage,
@@ -629,7 +631,9 @@ class RenderPassContext {
       _pass,
     ).._replaying = true;
     _pass.execute(context);
-    return context._replays == 1 ? context._replayed : null;
+    return context._replays == 1 && context._replayedKey == key
+        ? context._replayed
+        : null;
   }
 
   void applyShader(
