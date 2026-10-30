@@ -19,10 +19,10 @@ import '../geometry/morphed_geometry.dart';
 /// the UI. The offline scene emitter shares the same packer.
 ///
 /// [morphTargetNames] and [defaultMorphWeights] carry the owning glTF mesh's
-/// target metadata when the primitive is morphed. [skinnedBounds] are the
-/// pose bounds of a skinned primitive (see `skinnedPoseBounds`); a skinned
-/// geometry without them carries no bounds, since its bind-pose extent
-/// under-covers the poses its joints take.
+/// target metadata when the primitive is morphed. [skinnedBounds] are the pose
+/// bounds of a skinned primitive (see `skinnedPoseBounds`). A skinned geometry
+/// without them carries no bounds, since its bind-pose extent under-covers the
+/// poses its joints take.
 Geometry geometryFromPacked(
   PackedPrimitive packed, {
   List<String>? morphTargetNames,

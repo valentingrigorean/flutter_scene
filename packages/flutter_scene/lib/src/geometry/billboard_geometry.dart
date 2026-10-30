@@ -271,8 +271,8 @@ class BillboardGeometry extends Geometry {
   @override
   bool get isDoubleSided => true;
 
-  // The quad expansion runs in the engine's own vertex shader; a custom
-  // material's vertex variants do not apply to this geometry.
+  // The quad expansion runs in the engine's own vertex shader, so a custom
+  // material's vertex shader does not apply to this geometry.
   @override
   String? get materialVertexVariant => null;
 

@@ -177,19 +177,21 @@ int debugPoseBoundsPaletteBuilds = 0;
 ///
 /// For each node with both a skin and a mesh, the result holds one entry per
 /// triangle-mode (`mode == 4`) primitive, in source order: the union of the
-/// primitive's extent in mesh-local space across the rest pose (no channel
-/// applied) and, for each animation, every keyframe time of its channels that
-/// drive the skin's joints, applied over the rest transform of every joint the
-/// animation leaves. Each animation is posed on its own, as a model plays one
-/// clip at a time; a blend of two clips, a pose between keyframes that a
-/// rotation sweeps past, and a joint posed from code can leave the union. An
-/// entry
-/// is `null` when the primitive carries no `JOINTS_0`/`WEIGHTS_0` attributes
-/// (it packs and renders unskinned) or the union came up empty; consumers
-/// treat a missing bound as "always visible".
+/// primitive's extent in its rest pose and at every keyframe time of each
+/// animation driving the skin's joints. Each animation is posed on its own over
+/// the rest pose, as a model plays one at a time. The joint chains stop at the
+/// first non-joint ancestor, so the boxes are in that skeleton parent's space;
+/// [bakeSkinnedNodeBounds] moves them into the skinned node's. An entry is
+/// `null` when the primitive carries no `JOINTS_0`/`WEIGHTS_0` attributes (it
+/// packs and renders unskinned) or the union came up empty; consumers treat a
+/// missing bound as "always visible".
 ///
 /// Each skin is posed once per sample time, and that palette bounds every
 /// primitive of every node the skin drives.
+///
+/// TODO(skinned-bounds): two animations layered at once (one on the spine,
+/// another on an arm) can reach a pose no single animation does. Bake the
+/// joint subsets each pair of animations drives together if that shows up.
 Map<int, List<AabbBounds?>> bakeSkinnedPoseUnionAabbs(
   GltfDocument doc,
   Uint8List bufferData,
@@ -246,8 +248,8 @@ Map<int, List<AabbBounds?>> bakeSkinnedPoseUnionAabbs(
     // them, the spec mandates identity — match the runtime behaviour.
     final ibm = _readInverseBindMatrices(doc.skins[skinIdx], doc, bufferData);
 
-    // The rest pose, with no channel applied, then each animation's
-    // keyframe times with that animation's channels alone. With the
+    // Samples the rest pose with no channel applied, then each animation's
+    // keyframe times with only that animation's channels. With the
     // emitters converting CUBICSPLINE to bare keyframe values, evaluating
     // at each keyframe time is exact for our pipeline.
     final poses = <(Map<int, List<_PoseChannel>>, List<double>)>[
@@ -342,6 +344,85 @@ Map<int, List<AabbBounds?>> bakeSkinnedPoseUnionAabbs(
     }
   }
   return result;
+}
+
+/// [bakeSkinnedPoseUnionAabbs] moved into each skinned node's space, the space
+/// culling places them through.
+///
+/// Skinning lands vertices in world space and skips the node's own transform,
+/// so each box moves by the skeleton parent's rest transform and then by the
+/// inverse of the node's. A node whose rest transform does not invert, or
+/// whose joints hang under different parents, gets null entries and is never
+/// culled.
+Map<int, List<AabbBounds?>> bakeSkinnedNodeBounds(
+  GltfDocument doc,
+  Uint8List bufferData,
+) {
+  final parents = List<int>.filled(doc.nodes.length, -1);
+  for (var parent = 0; parent < doc.nodes.length; parent++) {
+    for (final child in doc.nodes[parent].children) {
+      if (child >= 0 && child < parents.length) parents[child] = parent;
+    }
+  }
+
+  // Walks at most one step per node, so a malformed parent cycle ends.
+  Matrix4 restOf(int node) {
+    final rest = Matrix4.identity();
+    var steps = 0;
+    for (var at = node; at >= 0 && steps++ < parents.length; at = parents[at]) {
+      final gltf = doc.nodes[at];
+      final local =
+          gltf.matrix?.clone() ??
+          Matrix4.compose(
+            gltf.translation ?? Vector3.zero(),
+            gltf.rotation ?? Quaternion.identity(),
+            gltf.scale ?? Vector3.all(1),
+          );
+      rest.setFrom(local..multiply(rest));
+    }
+    return rest;
+  }
+
+  // The first ancestor of the skin's joints that is not a joint, -1 for the
+  // scene root, or null when the joints hang under different ones.
+  int? skeletonParentOf(int skin) {
+    final joints = doc.skins[skin].joints.toSet();
+    int? shared;
+    for (final joint in joints) {
+      var at = joint;
+      var steps = 0;
+      while (at >= 0 && joints.contains(at) && steps++ < parents.length) {
+        at = parents[at];
+      }
+      if (shared != null && shared != at) return null;
+      shared = at;
+    }
+    return shared;
+  }
+
+  List<AabbBounds?> boundsOf(int node, List<AabbBounds?> boxes) {
+    final skeleton = skeletonParentOf(doc.nodes[node].skin!);
+    final toNode = restOf(node);
+    if (skeleton == null || toNode.invert() == 0) {
+      return List.filled(boxes.length, null);
+    }
+    if (skeleton >= 0) toNode.multiply(restOf(skeleton));
+    return [
+      for (final box in boxes)
+        if (box == null || box.isEmpty)
+          null
+        else
+          AabbBounds.empty()..expandToTransformedBox(box, toNode),
+    ];
+  }
+
+  return {
+    for (final MapEntry(key: node, value: boxes) in bakeSkinnedPoseUnionAabbs(
+      doc,
+      bufferData,
+    ).entries)
+      node: boundsOf(node, boxes),
+  };
 }
 
 // One skinned primitive of a pose-union bake: the joint-local extent of the
