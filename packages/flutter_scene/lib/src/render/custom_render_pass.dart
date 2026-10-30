@@ -607,17 +607,15 @@ class RenderPassContext {
 
   /// The draws this pass keeps at its [slot]th pass index, below
   /// [CustomRenderPass.keptItemPasses], or null where the scene gave the pass
-  /// no such index, the backend keeps no items, its buffer writes do not
-  /// follow the work submitted before them
-  /// ([gpu.GpuCapabilities.orderedBufferWrites]), or the frame records its
+  /// no such index, the backend keeps no items, or the frame records its
   /// draws for a capture: the pass then encodes its draws itself.
+  ///
+  /// A block or buffer a kept draw reads and the pass rewrites in place is
+  /// one of [gpu.GpuContext.createOrderedDeviceBuffer], so the draws already
+  /// submitted keep reading the bytes they were submitted with.
   KeptPassItems? keptItems(int slot) {
     final slots = _renderScene.keptPassSlots[_pass];
-    if (slots == null ||
-        slot >= slots.length ||
-        !gpu.gpuHost.capabilities.orderedBufferWrites) {
-      return null;
-    }
+    if (slots == null || slot >= slots.length) return null;
     return KeptPassItems.of(_renderScene, SceneItems.customPass + slots[slot]);
   }
 
