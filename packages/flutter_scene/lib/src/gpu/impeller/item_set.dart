@@ -14,6 +14,10 @@ final class ItemSet {
   final GpuBackendItemSet _backend;
   final List<String> _viewBlockNames;
 
+  /// The backend's set, which a backend reaches to draw the items outside a
+  /// pass it encodes, such as from a render thread of its own.
+  GpuBackendItemSet get backend => _backend;
+
   /// A pass that records draws for [keep], for attachments shaped like
   /// [target]'s.
   RenderPass recorder(RenderTarget target) {
