@@ -6,7 +6,7 @@ library;
 import 'package:meta/meta.dart' show experimental;
 
 import '../shared/gpu_capabilities.dart';
-import '../web/_gpu.dart' show Texture;
+import '../web/_gpu.dart' show DeviceBuffer, Texture;
 
 /// A GPU backend the native shim can render through instead of Impeller; on
 /// web it cannot be used.
@@ -127,3 +127,8 @@ GpuBackendTexture? gpuBackendTextureOf(Texture texture) => null;
 @experimental
 Texture gpuTextureOfBackend(GpuBackendTexture texture) =>
     throw UnsupportedError('A GPU backend texture exists on native only.');
+
+/// Throws an [UnsupportedError]: no backend buffer exists on web.
+@experimental
+DeviceBuffer gpuDeviceBufferOfBackend(Object buffer) =>
+    throw UnsupportedError('A GPU backend buffer exists on native only.');
