@@ -61,8 +61,9 @@ final class ItemSet {
   ///
   /// With [order], a pass draws its items in ascending [order], so a set
   /// that states one for every item draws them in that order, such as paint
-  /// order. Without it the backend orders a pass's items as it draws them
-  /// fastest.
+  /// order. Among items of one order, or of none, the backend orders those
+  /// that blend nothing as it draws them fastest, and keeps an item that
+  /// blends where it was kept.
   int? keep(
     RenderPass recorder, {
     int id = 0,
