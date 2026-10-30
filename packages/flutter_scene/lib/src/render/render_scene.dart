@@ -734,6 +734,43 @@ class RenderItem {
   @internal
   int worldTransformRevision = 0;
 
+  /// Counts the packs of [instanceWorldData] and [instanceRowRanges].
+  @internal
+  int instanceDataRevision = 0;
+
+  /// Each row's bounds as this item draws it, min x, y, z and max x, y, z,
+  /// six floats per row: its geometry's bounds placed by the record, moved
+  /// by the anchor minus the draw origin. Null where the geometry states no
+  /// bounds or the records are held relative to the node.
+  @internal
+  Float32List? instanceRowBounds() {
+    final instances = instanceTransforms;
+    final local = geometry.localBounds;
+    if (instances == null || local == null || nodeSpaceInstances) return null;
+    final packTransform = instancePackTransform;
+    final x = drawShift(0), y = drawShift(1), z = drawShift(2);
+    final bounds = Float32List(instances.length * 6);
+    for (var row = 0; row < instances.length; row++) {
+      _instanceWorldScratch
+        ..setFrom(packTransform)
+        ..multiply(instances[row]);
+      _instanceAabbScratch
+        ..copyFrom(local)
+        ..transform(_instanceWorldScratch);
+      final min = _instanceAabbScratch.min;
+      final max = _instanceAabbScratch.max;
+      final at = row * 6;
+      bounds
+        ..[at] = min.x + x
+        ..[at + 1] = min.y + y
+        ..[at + 2] = min.z + z
+        ..[at + 3] = max.x + x
+        ..[at + 4] = max.y + y
+        ..[at + 5] = max.z + z;
+    }
+    return bounds;
+  }
+
   /// Rebuilds cached world-space bounds and draw data after a node, geometry,
   /// or instance change. Static groups pay this once during setup.
   @internal
@@ -753,6 +790,7 @@ class RenderItem {
   void instanceFrameMoved() => _cellWorldBounds = null;
 
   void _packInstances(List<int>? rows) {
+    instanceDataRevision++;
     _cellWorldBounds = null;
     final instances = sharedRows == null ? instanceTransforms : null;
     final colors = instanceColors;

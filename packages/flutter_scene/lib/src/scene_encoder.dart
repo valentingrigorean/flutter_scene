@@ -1442,6 +1442,21 @@ base class SceneEncoder {
       vertexLayout,
     );
     if (pipeline == null) return;
+    if (item.instanceTransforms != null) {
+      // The kept draw takes every row; the backend culls them one by one.
+      final visible = item.visibleInstanceRanges;
+      item.visibleInstanceRanges = null;
+      _encodeInstanced(
+        pipeline,
+        geometry,
+        material,
+        item,
+        item.windingFor(geometry),
+        1.0,
+      );
+      item.visibleInstanceRanges = visible;
+      return;
+    }
     _encode(
       pipeline,
       item.drawTransform,
@@ -2431,9 +2446,8 @@ base class SceneEncoder {
           fade,
           sortBackToFrontFrom: sortBackToFrontFrom == null || !nodeSpace
               ? sortBackToFrontFrom
-              : Matrix4.inverted(
-                  item.drawTransform,
-                ).transformed3(sortBackToFrontFrom),
+              : Matrix4.inverted(item.drawTransform)
+                    .transformed3(sortBackToFrontFrom),
           instanceLimit: selection.instanceCount,
           fallback:
               debugFallback ?? _usesDebugFallback(item, material, geometry),
@@ -3423,6 +3437,9 @@ final class RetainedColorDraws extends RetainedDraws {
 
   @override
   int get passes => 1 << SceneItems.colorPass;
+
+  @override
+  bool get keepsInstances => true;
 
   /// Brings the kept draws up to date with the scene for the color pass that
   /// [encoder] encodes into [target]. Where [keepsTranslucent], the
