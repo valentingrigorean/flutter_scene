@@ -11,19 +11,24 @@ part of '_gpu.dart';
 final class ItemSet {
   ItemSet._(
     GpuBackendItemSet this._backend,
-    this._viewBlockNames,
+    this._viewBlocks,
     this._viewTextureNames,
   ) : _impeller = null;
   ItemSet._impeller(
     _ItemSet this._impeller,
-    this._viewBlockNames,
+    this._viewBlocks,
     this._viewTextureNames,
   ) : _backend = null;
 
   final GpuBackendItemSet? _backend;
   final _ItemSet? _impeller;
-  final List<String> _viewBlockNames;
+  final Map<String, int> _viewBlocks;
   final List<String> _viewTextureNames;
+
+  /// The backend's set, which a backend reaches to draw the items outside a
+  /// pass it encodes, such as from a render thread of its own; null on
+  /// Impeller, which keeps its items itself.
+  GpuBackendItemSet? get backend => _backend;
 
   /// A pass that records draws for [keep], for attachments shaped like
   /// [target]'s.
@@ -107,7 +112,7 @@ final class ItemSet {
   /// Draws the items of pass [index] into [pass] where it stands, under its
   /// viewport and scissor and leaving its fixed-function state as it stood,
   /// with [viewBlocks] as the pass's view blocks and [viewTextures] as its
-  /// view textures, each in the order [GpuContext.createItemSet] named them,
+  /// view textures, each at the index [GpuContext.createItemSet] gave it,
   /// culled by [clip].
   ///
   /// The items bind what they draw with on [pass], so the caller binds its

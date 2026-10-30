@@ -266,9 +266,9 @@ final class _ShownInstances {
 // nothing on the device and resolves the one draw it recorded into an
 // [_ItemDraw] the set keeps.
 final class _ItemRecorder {
-  _ItemRecorder(this._viewBlockNames, this._viewTextureNames);
+  _ItemRecorder(this._viewBlocks, this._viewTextureNames);
 
-  final List<String> _viewBlockNames;
+  final Map<String, int> _viewBlocks;
   final List<String> _viewTextureNames;
 
   final _ItemDrawState state = _ItemDrawState();
@@ -322,8 +322,8 @@ final class _ItemRecorder {
     final uniforms = <(fg.UniformSlot, fg.BufferView)>[];
     final viewUniforms = <(fg.UniformSlot, int)>[];
     for (final (slot, view) in _uniforms.values) {
-      final at = _viewBlockNames.indexOf(slot.uniformName);
-      if (at < 0) {
+      final at = _viewBlocks[slot.uniformName];
+      if (at == null) {
         uniforms.add((slot._impeller!, view._impeller!));
       } else {
         viewUniforms.add((slot._impeller!, at));
@@ -374,7 +374,7 @@ final class _ItemRecorder {
 final class _ItemSet {
   _ItemSet(
     this._context,
-    this._viewBlockNames,
+    this._viewBlocks,
     int viewBlockLength,
     this._viewTextureNames,
   ) : _blockStride = _aligned(
@@ -383,7 +383,7 @@ final class _ItemSet {
       );
 
   final fg.GpuContext _context;
-  final List<String> _viewBlockNames;
+  final Map<String, int> _viewBlocks;
   final List<String> _viewTextureNames;
   final int _blockStride;
 
@@ -406,7 +406,7 @@ final class _ItemSet {
   static int _aligned(int size, int alignment) =>
       (size + alignment - 1) ~/ alignment * alignment;
 
-  _ItemRecorder recorder() => _ItemRecorder(_viewBlockNames, _viewTextureNames);
+  _ItemRecorder recorder() => _ItemRecorder(_viewBlocks, _viewTextureNames);
 
   int? keep(
     _ItemRecorder recorder, {
@@ -585,7 +585,7 @@ final class _ItemSet {
   // Writes [viewBlocks] into this pass index's next turn and returns the
   // views onto it, built once per turn.
   List<fg.BufferView> _viewsOf(int index, List<ByteData> viewBlocks) {
-    final count = _viewBlockNames.length;
+    final count = _viewBlocks.values.fold(0, (a, b) => a > b ? a : b) + 1;
     var buffer = _blocks[index];
     List<List<fg.BufferView>> turns;
     if (buffer == null) {

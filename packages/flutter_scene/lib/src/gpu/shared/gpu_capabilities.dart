@@ -43,7 +43,7 @@ class GpuCapabilities {
     this.timestampQueries = false,
     this.aheadOfTimePipelines = false,
     this.float32Blending = true,
-    this.orderedAttachmentReuse = false,
+    this.orderedTextureReuse = false,
     this.orderedBufferWrites = false,
   });
 
@@ -85,13 +85,14 @@ class GpuCapabilities {
   /// caller that sums into a float target picks a 16-bit float one instead.
   final bool float32Blending;
 
-  /// The device orders the GPU work of successive submits that render into
-  /// one attachment, so a frame can render into an attachment the GPU is
-  /// still rendering an earlier frame into.
+  /// The device orders the GPU work of successive submits that use one
+  /// texture, so a frame can render into or sample a texture the GPU still
+  /// uses for an earlier frame.
   ///
-  /// Where this is true, a render graph keeps one texture for an attachment
-  /// no shader samples, in place of one for each frame in flight.
-  final bool orderedAttachmentReuse;
+  /// Where this is true, a render graph keeps one texture for each target of
+  /// a view, sampled or not, in place of one for each frame in flight, so a
+  /// target keeps its handle from frame to frame.
+  final bool orderedTextureReuse;
 
   /// A host write to a buffer reaches the GPU after the work already
   /// submitted, so a frame can write a buffer the GPU still reads for an
@@ -116,7 +117,7 @@ class GpuCapabilities {
       'textureArrays: $textureArrays, timestampQueries: $timestampQueries, '
       'aheadOfTimePipelines: $aheadOfTimePipelines, '
       'float32Blending: $float32Blending, '
-      'orderedAttachmentReuse: $orderedAttachmentReuse, '
+      'orderedTextureReuse: $orderedTextureReuse, '
       'orderedBufferWrites: $orderedBufferWrites)';
 }
 

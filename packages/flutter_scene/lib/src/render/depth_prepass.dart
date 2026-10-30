@@ -589,15 +589,11 @@ final class RetainedDepthDraws extends RetainedDraws {
   /// The kept draws of [renderScene], or null where the backend keeps no
   /// items.
   static RetainedDepthDraws? of(RenderScene renderScene) {
+    final items = SceneItems.of(renderScene);
     final held = _byScene[renderScene];
-    if (held != null && held.generation == gpu.gpuContextGeneration) {
-      return held;
-    }
+    if (held != null && identical(held.items, items)) return held;
     held?.dispose();
-    final items = gpu.gpuContext.createItemSet(
-      viewBlockNames: const ['ViewInfo', 'DepthInfo'],
-      viewBlockLength: kViewInfoFloats * Float32List.bytesPerElement,
-    );
+    _byScene[renderScene] = null;
     if (items == null) return null;
     return _byScene[renderScene] = RetainedDepthDraws._(renderScene, items);
   }
@@ -606,7 +602,7 @@ final class RetainedDepthDraws extends RetainedDraws {
   _DepthPrepassEncoder? _recording;
 
   @override
-  int get passes => 1;
+  int get passes => 1 << SceneItems.depthPass;
 
   /// Brings the kept draws up to date with the scene for the prepass that
   /// [encoder] encodes into [target].
@@ -698,7 +694,7 @@ final class RetainedDepthDraws extends RetainedDraws {
     );
     items.draw(
       pass,
-      0,
+      SceneItems.depthPass,
       viewBlocks: [view, ByteData.sublistView(encoder._depthInfo)],
       clip: encoder._cameraTransform.storage,
     );

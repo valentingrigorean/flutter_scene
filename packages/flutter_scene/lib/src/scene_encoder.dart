@@ -3369,25 +3369,9 @@ base class SceneEncoder {
 /// ([RenderScene.viewBlocks]) are supplied each [drawKept] beside the
 /// engine's, so a kept draw may read a value that changes every frame.
 final class RetainedColorDraws extends RetainedDraws {
-  RetainedColorDraws._(super.renderScene, super.items, this._appBlocks)
-    : _blocksRevision = renderScene.viewBlocksRevision;
+  RetainedColorDraws._(super.renderScene, super.items, this._appBlocks);
 
   final List<ByteData Function()> _appBlocks;
-  final int _blocksRevision;
-
-  // The frame-transient engine textures a kept lit draw samples, re-supplied
-  // each [drawKept] so the backend keeps the draw instead of refusing it: the
-  // directional shadow atlas, ambient occlusion, the two punctual-light data
-  // textures, and the opaque linear depth a scene-input material samples.
-  // [drawKept] supplies them in this order. Any other transient texture a
-  // draw binds is still refused by the backend.
-  static const _viewTextureNames = [
-    'shadow_map',
-    'ssao_texture',
-    'punctual_lights',
-    'punctual_index',
-    'scene_depth',
-  ];
 
   static final Expando<RetainedColorDraws> _byScene = Expando(
     'retained color draws',
@@ -3396,24 +3380,14 @@ final class RetainedColorDraws extends RetainedDraws {
   /// The kept color draws of [renderScene], or null where the backend keeps no
   /// items.
   static RetainedColorDraws? of(RenderScene renderScene) {
+    final items = SceneItems.of(renderScene);
     final held = _byScene[renderScene];
-    if (held != null &&
-        held.generation == gpu.gpuContextGeneration &&
-        held._blocksRevision == renderScene.viewBlocksRevision) {
-      return held;
-    }
+    if (held != null && identical(held.items, items)) return held;
     held?.dispose();
-    final appBlocks = renderScene.viewBlocks;
-    final items = gpu.gpuContext.createItemSet(
-      viewBlockNames: ['ViewInfo', 'FragInfo', 'FogInfo', ...appBlocks.keys],
-      viewBlockLength:
-          EngineLightingUniforms.fragInfoFloatCount *
-          Float32List.bytesPerElement,
-      viewTextureNames: _viewTextureNames,
-    );
+    _byScene[renderScene] = null;
     if (items == null) return null;
     return _byScene[renderScene] = RetainedColorDraws._(renderScene, items, [
-      ...appBlocks.values,
+      ...renderScene.viewBlocks.values,
     ]);
   }
 
@@ -3426,7 +3400,7 @@ final class RetainedColorDraws extends RetainedDraws {
   final Float32List _fogScratch = Float32List(24);
 
   @override
-  int get passes => 1;
+  int get passes => 1 << SceneItems.colorPass;
 
   /// Brings the kept draws up to date with the scene for the color pass that
   /// [encoder] encodes into [target].
@@ -3543,7 +3517,7 @@ final class RetainedColorDraws extends RetainedDraws {
     EngineLightingUniforms.packFog(_fogScratch, lighting);
     items.draw(
       pass,
-      0,
+      SceneItems.colorPass,
       viewBlocks: [
         view,
         ByteData.sublistView(_fragInfoScratch),
