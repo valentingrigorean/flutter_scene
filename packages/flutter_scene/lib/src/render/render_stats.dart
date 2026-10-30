@@ -73,10 +73,10 @@ class RenderCounters {
   /// that changed. Zero on a frame that moves only the camera or the light.
   int drawsKept = 0;
 
-  /// Draws the backend made from the render items it keeps, one per kept
-  /// draw each time a pass draws them: the kept side of a frame whose
-  /// encoded side is [draws]. The backend culls them against the pass's
-  /// view, so this counts the draws handed over, culled or not.
+  /// Render items a pass drew from what the backend keeps, alone or as an
+  /// instance of a kept run, each time a pass draws them: the kept side of a
+  /// frame whose encoded side is [submitted]. The backend culls them against
+  /// the pass's view, so this counts the items handed over, culled or not.
   int itemsKept = 0;
 
   /// Nodes the scene pre-pass visited: one per node it ticked and one per
