@@ -868,14 +868,15 @@ abstract class Material {
   /// only has to rule out what that check cannot: a wrong shared view block.
   /// The base is false; a lit engine material that holds its fragment blocks
   /// overrides it. [RetainedColorDraws] reads it beside its structural checks.
-  @internal
+  /// A downstream material that holds its own extra fragment blocks overrides
+  /// this (part of the retention extension surface), so it is public.
   bool get colorRetainable => false;
 
   /// The held fragment uniform blocks a kept color draw of this material
   /// reads, for [RetainedColorDraws] to pin so their slots are not reused for
   /// other values while the backend still draws from them. The base is the
-  /// shared `MatInfo`; a material that holds more fragment blocks adds them.
-  @internal
+  /// shared `MatInfo`; a material that holds more fragment blocks adds them
+  /// (typically `[...super.heldFragmentBlocks, ...]`), so it is public.
   Iterable<HeldBlock> get heldFragmentBlocks => [heldMatInfo];
 
   /// The planar reflection capture this material samples, or null when none
