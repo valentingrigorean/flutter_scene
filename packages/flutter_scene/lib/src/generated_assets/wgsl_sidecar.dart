@@ -178,9 +178,10 @@ Future<String> buildWgslSidecar(
 /// point's name (`main` for GLSL, the manifest's `entry_point` for HLSL),
 /// renaming it only to dodge a WGSL reserved word, so the output is read
 /// rather than assumed.
-String? wgslEntryPoint(String wgsl, String stage) => RegExp(
-  '@$stage\\b[^{;]*?\\bfn\\s+([A-Za-z_][A-Za-z0-9_]*)',
-).firstMatch(wgsl)?.group(1);
+String? wgslEntryPoint(String wgsl, String stage) =>
+    RegExp('@$stage\\b[^{;]*?\\bfn\\s+([A-Za-z_][A-Za-z0-9_]*)')
+        .firstMatch(wgsl)
+        ?.group(1);
 
 /// One shader's sidecar entry: its WGSL plus the reflection the WebGPU
 /// backend binds by, read from the same Vulkan entry the WGSL came from, so
@@ -247,8 +248,15 @@ final class TintProcessTranslator implements WgslBatchTranslator {
 
   /// Resolves the binary for [input] (override or pinned download) and reads
   /// its revision.
-  static Future<TintProcessTranslator> resolve(BuildInput input) async {
-    final binary = await resolveTintBinary(input);
+  static Future<TintProcessTranslator> resolve(BuildInput input) async =>
+      _of(await resolveTintBinary(input));
+
+  /// Resolves the binary with no build hook, cached under [cache]
+  /// ([resolveTintBinaryIn]), and reads its revision.
+  static Future<TintProcessTranslator> resolveIn(Uri cache) async =>
+      _of(await resolveTintBinaryIn(cache));
+
+  static Future<TintProcessTranslator> _of(String binary) async {
     final version = await Process.run(binary, ['--version']);
     if (version.exitCode != 0) {
       throw WgslSidecarException('$binary --version failed: ${version.stderr}');
