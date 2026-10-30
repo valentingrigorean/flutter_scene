@@ -21,6 +21,7 @@ import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
+import 'package:flutter_scene/src/render/shared_instance_rows.dart';
 import 'package:flutter_scene/src/render/view_info.dart';
 import 'package:flutter_scene/src/vertex_spin.dart';
 
@@ -69,11 +70,16 @@ final class _Kept {
   bool moves = false;
   bool placed = false;
 
-  // The pack of the rows a kept instanced draw holds as its instances
-  // ([RenderItem.instanceDataRevision]), and whether they reverse the
-  // winding; -1 for a draw of no rows.
+  // The revision of the rows a kept instanced draw holds as its instances
+  // ([RetainedDraws._rowsRevisionOf]), the ranges it takes of them and
+  // whether they reverse the winding; -1 for a draw of no rows.
   int rows = -1;
+  Object? ranges;
   bool rowsFlipped = false;
+
+  // The band and local transform the recorded draw's held `ItemInfo`
+  // carries ([RetainedDraws._heldDrawOf]).
+  final Float32List heldDraw = Float32List(_heldDrawFloats);
 
   // The run the kept draw belongs to, and the translation its instance frame
   // adds (see [_Run]); [origin] is the translation the frame of its recorded
@@ -82,6 +88,8 @@ final class _Kept {
   final Float64List shift = Float64List(3);
   final Float64List origin = Float64List(3);
 }
+
+const int _heldDrawFloats = 28;
 
 /// Kept draws that differ only in their instance record and their bounds,
 /// kept as one item that draws them as instances ([gpu.ItemInstances]).
@@ -377,10 +385,11 @@ abstract base class RetainedDraws {
   @protected
   bool get joinsRuns => true;
 
-  /// Whether the pass keeps a draw of an instanced item that packs its own
-  /// rows, as one item that holds every row as an instance culled by its
-  /// own bounds ([gpu.ItemInstances]). A change of the rows alone places
-  /// them again without recording the draw.
+  /// Whether the pass keeps a draw of an instanced item as one item that
+  /// holds the rows it draws as its instances ([gpu.ItemInstances]), each
+  /// culled by its own bounds where the item culls its rows. A change of the
+  /// rows or of the ranges it takes of them alone places them again without
+  /// recording the draw.
   @protected
   bool get keepsInstances => false;
 
@@ -593,7 +602,7 @@ abstract base class RetainedDraws {
     } else {
       _leveled.add(item);
     }
-    final spin = item.nodeSpin;
+    final spin = item.spin;
     if (spin == null) {
       _spun.remove(item);
     } else {
@@ -630,14 +639,17 @@ abstract base class RetainedDraws {
         identical(kept.spin, spin) &&
         kept.spinEpoch == spinEpoch &&
         _sameRows(item, kept) &&
+        _sameHeldDraw(item, kept) &&
         _sameBounds(kept, bounds)) {
       return;
     }
     if (kept.id != 0 &&
         kept.rows >= 0 &&
-        kept.rows != item.instanceDataRevision &&
+        kept.spinEpoch == spinEpoch &&
         _rowsOnly(item, kept, material, geometry, pipeline, state)) {
-      kept.rows = item.instanceDataRevision;
+      kept
+        ..rows = _rowsRevisionOf(item)
+        ..ranges = item.instanceRanges;
       _takeBounds(kept, bounds);
       if (items.place(
         kept.id,
@@ -671,8 +683,10 @@ abstract base class RetainedDraws {
       ..primitive = geometry.primitiveType.index
       ..spin = spin
       ..spinEpoch = spinEpoch
-      ..rows = item.instanceTransforms == null ? -1 : item.instanceDataRevision
+      ..rows = _rowsRevisionOf(item)
+      ..ranges = item.instanceRanges
       ..rowsFlipped = _rowsFlipped(item);
+    _heldDrawOf(item, kept.heldDraw);
     _takeBounds(kept, bounds);
     if (hot || pipeline == null) {
       _forget(item, kept);
@@ -762,27 +776,75 @@ abstract base class RetainedDraws {
       kept.transform == item.worldTransformRevision &&
       kept.flipped == item.windingFlipped &&
       kept.rowsFlipped == _rowsFlipped(item) &&
+      _sameHeldDraw(item, kept) &&
+      identical(kept.spin, item.spin) &&
       kept.primitive == geometry.primitiveType.index &&
       kept.lightCount == item.lightListCount &&
       kept.lightOffset == item.lightListOffset;
 
   static bool _sameRows(RenderItem item, _Kept kept) =>
-      item.instanceTransforms == null
-      ? kept.rows < 0
-      : kept.rows == item.instanceDataRevision;
+      kept.rows == _rowsRevisionOf(item) &&
+      identical(kept.ranges, item.instanceRanges);
+
+  // The revision of the rows [item] draws: those of the mesh whose records
+  // it draws, else its own pack; -1 for an item that draws no rows.
+  static int _rowsRevisionOf(RenderItem item) {
+    final shared = item.sharedRows;
+    if (shared != null) return shared.revision;
+    return item.instanceTransforms == null ? -1 : item.instanceDataRevision;
+  }
 
   static bool _rowsFlipped(RenderItem item) {
+    final shared = item.sharedRows;
+    if (shared != null) return shared.recordsMirrored;
     final ranges = item.instanceRowRanges;
     return ranges.length == 3 && ranges[2] != 0;
   }
 
-  // Every row of the instanced [item] as the instances of its kept draw of
-  // [geometry], each culled by its own bounds where the item culls its rows.
+  static final Float32List _heldDrawScratch = Float32List(_heldDrawFloats);
+
+  // Writes into [into] the band and local transform of the instanced mesh
+  // [item] draws, which its held `ItemInfo` carries.
+  static void _heldDrawOf(RenderItem item, Float32List into) {
+    into.fillRange(0, _heldDrawFloats, 0.0);
+    final source = item.instanceSource;
+    final band = source?.band;
+    if (band != null) {
+      into[0] = 1.0;
+      band.writeTo(into, 1);
+    }
+    final local = source?.instanceLocal;
+    if (local != null) {
+      into[11] = 1.0;
+      into.setAll(12, local.storage);
+    }
+  }
+
+  static bool _sameHeldDraw(RenderItem item, _Kept kept) {
+    if (item.instanceSource == null) return true;
+    _heldDrawOf(item, _heldDrawScratch);
+    final held = kept.heldDraw;
+    for (var at = 0; at < _heldDrawFloats; at++) {
+      if (held[at] != _heldDrawScratch[at]) return false;
+    }
+    return true;
+  }
+
+  // The rows the instanced [item] draws as the instances of its kept draw of
+  // [geometry]: its own rows, each culled by its own bounds where the item
+  // culls its rows, or the rows its ranges take of the records it shares.
   static gpu.ItemInstances _rowInstances(RenderItem item, Geometry geometry) {
-    final floats = item.instanceRecordFloats;
+    final slot = geometry.vertexStreamCount;
+    final shared = item.sharedRows;
+    if (shared != null) {
+      final (:records, :stride) = sharedInstanceRowsOf(
+        shared,
+      ).recordsOf(item.instanceRanges);
+      return gpu.ItemInstances(slot: slot, stride: stride, records: records);
+    }
     return gpu.ItemInstances(
-      slot: geometry.vertexStreamCount,
-      stride: floats * Float32List.bytesPerElement,
+      slot: slot,
+      stride: item.instanceRecordFloats * Float32List.bytesPerElement,
       records: Uint8List.sublistView(item.instanceWorldData!),
       bounds: item.cullInstances && item.frustumCulled
           ? item.instanceRowBounds()
@@ -1150,27 +1212,26 @@ abstract base class RetainedDraws {
   // Whether [item] draws one mesh, [geometry], from buffers it holds, or one
   // draw of a geometry that keeps its draw, with no skin, morph, instances or
   // draw selection. A mesh may turn; a geometry that keeps its draw may not.
-  // Where [instances], an instanced mesh that packs its own rows in one
-  // winding, with no row ranges, local transform, band or turns, holds its
-  // buffers too.
+  // Where [instances], an instanced mesh holds its buffers too when it packs
+  // its own rows in one winding with no ranges, or draws some rows of the
+  // records it shares: its local transform, band and turns are values of its
+  // held `ItemInfo`.
   static bool _holdsItsBuffers(
     RenderItem item,
     Geometry geometry,
     bool instances,
   ) {
-    if (instances && item.instanceTransforms != null) {
-      final source = item.instanceSource;
+    final shared = item.sharedRows;
+    if (instances && (shared != null || item.instanceTransforms != null)) {
       return geometry is UnskinnedGeometry &&
           geometry.morphTargets == null &&
           item.jointsTexture == null &&
           item.morphWeights == null &&
-          item.sharedRows == null &&
-          source?.instanceRanges == null &&
-          source?.drawLocal == null &&
-          source?.band == null &&
-          item.spin == null &&
-          item.instanceWorldData != null &&
-          item.instanceRowRanges.length == 3 &&
+          (shared == null
+              ? item.instanceSource?.instanceRanges == null &&
+                    item.instanceWorldData != null &&
+                    item.instanceRowRanges.length == 3
+              : sharedInstanceRowsOf(shared).rowsOf(item.instanceRanges) > 0) &&
           !hasMeshDrawSelector(item) &&
           geometry.instancedVertexLayout != null &&
           geometry.bindsModelTransformInstance;
