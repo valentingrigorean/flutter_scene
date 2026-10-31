@@ -724,10 +724,10 @@ abstract class Material with RenderSourceListeners {
   /// missing from the prepass and screen-space effects sample the wrong
   /// (farther) surface where a front face is actually drawn.
   ///
-  /// A double-sided material draws both faces, opaque or translucent. The
-  /// translucent pass draws a double-sided mesh twice at its place in the
-  /// back-to-front order, its back faces and then its front faces, so the
-  /// near side blends over the far side rather than in triangle-index order.
+  /// A double-sided material culls no face, opaque or translucent. The
+  /// translucent pass draws a double-sided mesh twice, its back faces and then
+  /// its front faces, so the near side blends over the far side whatever the
+  /// triangle order.
   @internal
   gpu.CullMode get renderCullMode =>
       doubleSided ? gpu.CullMode.none : gpu.CullMode.backFace;

@@ -125,7 +125,7 @@ SceneDocument buildSceneDocument(
   // Pose-union analysis for skinned culling, plus which nodes use each mesh
   // (geometry resources are shared per mesh, so a mesh used by a skinned
   // node carries pose-union bounds rather than rest bounds).
-  final poseUnions = bakeSkinnedPoseUnionAabbs(doc, bufferData);
+  final poseUnions = bakeSkinnedNodeBounds(doc, bufferData);
   final skinnedUsers = <int, List<int>>{};
   final unskinnedUse = <int>{};
   for (var i = 0; i < doc.nodes.length; i++) {
@@ -1006,9 +1006,9 @@ LocalId? _buildTexture(
   bool alignForCompression = false,
   TextureContent content = TextureContent.color,
 }) {
-  // A KHR_texture_basisu KTX2 image wins over the fallback source, matching
-  // the runtime importer.
-  final sourceIndex = texture.basisuSource ?? texture.source;
+  // A KTX2 or WebP image wins over the fallback source, matching the runtime
+  // importer.
+  final sourceIndex = texture.imageSource;
   if (sourceIndex == null ||
       sourceIndex < 0 ||
       sourceIndex >= doc.images.length) {

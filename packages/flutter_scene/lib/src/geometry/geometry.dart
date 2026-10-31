@@ -1018,10 +1018,8 @@ abstract class Geometry with RenderSourceListeners {
   /// default; [SkinnedGeometry] overrides it to `false` since the
   /// position scan would yield bind-pose extents, which under-cover
   /// the skinned mesh once joints animate. Skinned geometries get
-  /// their bounds from the pose union of their joints instead (the
-  /// offline-baked `skinned_pose_union_aabb`, or the runtime importer's
-  /// `skinnedPoseBounds`), or fall back to the always-visible cull path
-  /// when there is none (a morphed skinned primitive).
+  /// their bounds from the pose union the importers bake instead, or
+  /// fall back to the always-visible cull path when there is none.
   bool get _autoScanBoundsOnUpload => true;
 
   /// The exact interleaved vertex stride [uploadVertexData] expects, or

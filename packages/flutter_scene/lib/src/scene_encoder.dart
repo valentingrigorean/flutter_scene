@@ -3190,9 +3190,9 @@ base class SceneEncoder {
     );
   }
 
-  /// Encodes a blended [record]. A double-sided material that culls no face
-  /// draws its back faces and then its front faces, so the near side of the
-  /// mesh blends over its far side.
+  /// Encodes a blended [record]. A double-sided mesh that culls no face draws
+  /// its back faces and then its front faces, so its near side blends over its
+  /// far side.
   void _encodeBlended(_TranslucentRecord record) {
     if (!record.material.doubleSided ||
         record.material.renderCullMode != gpu.CullMode.none) {
