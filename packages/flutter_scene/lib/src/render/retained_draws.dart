@@ -654,7 +654,8 @@ abstract base class RetainedDraws {
         kept.spinEpoch == spinEpoch &&
         _sameRows(item, kept) &&
         _sameHeldDraw(item, kept) &&
-        _sameBounds(kept, bounds)) {
+        _sameBounds(kept, bounds) &&
+        _sameShift(item, kept)) {
       return;
     }
     if (kept.id != 0 &&
@@ -754,7 +755,8 @@ abstract base class RetainedDraws {
       kept.slot >= 0 &&
       pipeline != null &&
       !geometry.keepsItsDraw &&
-      kept.transform != item.worldTransformRevision &&
+      (kept.transform != item.worldTransformRevision ||
+          !_sameShift(item, kept)) &&
       identical(kept.material, material) &&
       kept.materialRevision == material.keptRevision &&
       identical(kept.geometry, geometry) &&
@@ -917,7 +919,7 @@ abstract base class RetainedDraws {
       ..lightOffset = item.lightListOffset;
     _scaleOf(item.worldTransform, kept.scale);
     for (var axis = 0; axis < 3; axis++) {
-      kept.origin[axis] = item.drawShift(axis);
+      kept.origin[axis] = kept.shift[axis] = item.drawShift(axis);
     }
   }
 
@@ -969,6 +971,13 @@ abstract base class RetainedDraws {
 
   // Whether [transform] scales as [scale] does, to the rounding a rotation
   // leaves in its basis lengths.
+  // Whether [item] draws at the translation its kept draw was last recorded
+  // or placed at: a draw origin that moved shifts every anchored draw.
+  static bool _sameShift(RenderItem item, _Kept kept) =>
+      kept.shift[0] == item.drawShift(0) &&
+      kept.shift[1] == item.drawShift(1) &&
+      kept.shift[2] == item.drawShift(2);
+
   static bool _sameScale(Float64List scale, Matrix4 transform) {
     final s = transform.storage;
     for (var axis = 0; axis < 3; axis++) {
