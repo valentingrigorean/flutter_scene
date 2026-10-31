@@ -2614,6 +2614,7 @@ base class SceneEncoder {
   /// pass snapshots the opaque color between them.
   void flushOpaque() {
     _flushOpaqueThrough(null);
+    keptOpaque = null;
     for (final record in _opaqueRecords) {
       if (_opaqueRecordPool.length == _recordPoolLimit) break;
       record.release();
@@ -2707,6 +2708,7 @@ base class SceneEncoder {
         (below == null || _opaqueRecords[index].item.renderOrder < below)) {
       final record = _opaqueRecords[index];
       final item = record.item;
+      _drawKeptOpaqueBelow(item.renderOrder);
       transientDrawKey = item;
       record.material.lightListOffset = item.lightListOffset;
       record.material.lightListCount = item.lightListCount;
@@ -2757,6 +2759,7 @@ base class SceneEncoder {
       index = end;
     }
     transientDrawKey = null;
+    _drawKeptOpaqueBelow(below ?? double.infinity);
     _opaqueCursor = index;
     encodeWatch?.stop();
     if (profileRendering) {
@@ -3235,6 +3238,20 @@ base class SceneEncoder {
     }
   }
 
+  /// The color pass's kept opaque draws, which [flushOpaque] draws at their
+  /// render order among the opaque draws this encoder sorts.
+  @internal
+  RetainedColorDraws? keptOpaque;
+
+  void _drawKeptOpaqueBelow(double order) {
+    final kept = keptOpaque;
+    if (kept == null || !kept.drawsBelow(order)) return;
+    kept.drawBelow(order, _renderPass, this);
+    // The kept items bound their own pipeline and blocks on the pass, so what
+    // the encoder holds of its bindings no longer stands.
+    _clearBindings();
+  }
+
   /// The color pass's kept translucent draws, which [flushTranslucent] draws
   /// at their render order among the translucent draws this encoder sorts.
   @internal
@@ -3390,6 +3407,13 @@ base class SceneEncoder {
 /// by the camera, with the view's `ViewInfo`, `FragInfo`, `FogInfo` and
 /// `SceneInputInfo` as view blocks, and encodes [encoded].
 ///
+/// Each render order ([RenderItem.renderOrder]) keeps its draws in a pass
+/// index of its own, [SceneItems.colorPass] for order 0, which the encoder
+/// draws among its own opaque draws where that order falls
+/// ([SceneEncoder.keptOpaque]): a draw of a higher order draws after every
+/// draw of a lower one, kept or encoded, as the stencil marks of a surface
+/// drawn first need.
+///
 /// A draw is kept when it is an opaque, unskinned, unmorphed, non-instanced
 /// mesh (the structural checks [RetainedDraws] makes) whose material holds its
 /// fragment blocks and binds no per-material lighting of its own
@@ -3398,11 +3422,11 @@ base class SceneEncoder {
 /// when the selection changes ([levelOf]). The frame-transient engine textures a lit
 /// draw samples — the shadow atlas, ambient occlusion, the punctual-light
 /// data textures, and the opaque linear depth a scene-input material reads —
-/// are supplied each [drawKept] as the pass's view textures, so a kept draw
+/// are supplied each [drawBelow] as the pass's view textures, so a kept draw
 /// holds only persistent resources beside them. A draw binding any other
 /// frame-transient buffer or texture (the scene-color textures) is refused by
 /// the backend and encoded instead. The app's own view blocks
-/// ([RenderScene.viewBlocks]) are supplied each [drawKept] beside the
+/// ([RenderScene.viewBlocks]) are supplied each [drawBelow] beside the
 /// engine's, so a kept draw may read a value that changes every frame.
 final class RetainedColorDraws extends RetainedDraws {
   RetainedColorDraws._(super.renderScene, super.items, this._appBlocks);
@@ -3457,6 +3481,41 @@ final class RetainedColorDraws extends RetainedDraws {
       target: target,
       key: (encoder._layerMask, encoder._debugView != null, keepsTranslucent),
     );
+    _viewBlocks = null;
+    _drawn.clear();
+    _cursor = 0;
+    for (final MapEntry(key: order, value: members) in _members.entries) {
+      members.removeWhere(
+        (item) =>
+            item.sceneSlot < 0 || item.renderOrder != order || !keeps(item),
+      );
+      if (members.isNotEmpty) _drawn.add(order);
+    }
+    _drawn.sort();
+    activeRenderCounters
+      ..colorItemsKept += keptCount
+      ..colorItemsEncoded += encoded.length;
+    encoder.keptOpaque = _drawn.isEmpty ? null : this;
+  }
+
+  // The pass index each render order keeps its draws in, and the draws kept
+  // under it; a draw that left the order or stopped being kept is dropped
+  // from its set at the next sync.
+  final Map<double, int> _passOf = {0.0: SceneItems.colorPass};
+  final Map<double, Set<RenderItem>> _members = {};
+
+  // The render orders [drawBelow] draws this frame, ascending, and the next
+  // of them to draw.
+  final List<double> _drawn = [];
+  int _cursor = 0;
+  List<ByteData>? _viewBlocks;
+  ViewInfoState? _viewInfo;
+
+  @override
+  int passesOf(RenderItem item) {
+    final order = item.renderOrder;
+    (_members[order] ??= LinkedHashSet.identity()).add(item);
+    return 1 << _passOf[order]!;
   }
 
   bool _keepsTranslucent = false;
@@ -3492,12 +3551,20 @@ final class RetainedColorDraws extends RetainedDraws {
     // A draw that blends in the opaque phase sets its blend state there, a
     // display-referred one draws in a layer of its own, and one that cuts
     // itself out draws its coverage first.
-    return material.isOpaque() &&
-        !material.blendsInOpaquePass &&
-        !material.displayReferred &&
-        !drawsCoverage(material, 1.0) &&
-        material.colorRetainable &&
-        !material.drawsDebugViews(_pass._lighting);
+    if (!material.isOpaque() ||
+        material.blendsInOpaquePass ||
+        material.displayReferred ||
+        drawsCoverage(material, 1.0) ||
+        !material.colorRetainable ||
+        material.drawsDebugViews(_pass._lighting)) {
+      return false;
+    }
+    final order = item.renderOrder;
+    if (_passOf.containsKey(order)) return true;
+    final index = SceneItems.takeOrderPass(items);
+    if (index == null) return false;
+    _passOf[order] = index;
+    return true;
   }
 
   @override
@@ -3524,6 +3591,7 @@ final class RetainedColorDraws extends RetainedDraws {
       material.depthBias,
       material.clipVolume,
       item.windingFor(geometryOf(item)),
+      item.renderOrder,
     );
   }
 
@@ -3576,15 +3644,42 @@ final class RetainedColorDraws extends RetainedDraws {
     }
   }
 
-  /// Draws the kept color items into [pass], the render pass [encoder]
-  /// encodes, supplying the view's `ViewInfo`, `FragInfo`, `FogInfo` and
-  /// `SceneInputInfo`.
-  void drawKept(gpu.RenderPass pass, SceneEncoder encoder) {
+  /// Whether a render order below [order] still has kept draws to draw this
+  /// frame.
+  bool drawsBelow(double order) =>
+      _cursor < _drawn.length && _drawn[_cursor] < order;
+
+  /// Draws into [pass], the render pass [encoder] encodes, the kept draws of
+  /// each render order below [order] not drawn yet this frame, supplying the
+  /// view's `ViewInfo`, `FragInfo`, `FogInfo` and `SceneInputInfo`.
+  void drawBelow(double order, gpu.RenderPass pass, SceneEncoder encoder) {
+    final blocks = _viewBlocks ??= _blocksOf(encoder);
+    final viewInfo = _viewInfo!;
     final lighting = encoder._lighting;
-    final view = viewInfoBytesOf(
-      encoder._cameraTransform,
-      encoder._cameraPosition,
-    );
+    final viewTextures = [
+      Material.whitePlaceholder(lighting.shadowMap),
+      Material.whitePlaceholder(lighting.ssaoMap),
+      Material.whitePlaceholder(lighting.punctualParamsTexture),
+      Material.whitePlaceholder(lighting.punctualIndexTexture),
+      Material.whitePlaceholder(lighting.sceneDepthLinear),
+    ];
+    while (drawsBelow(order)) {
+      final index = _passOf[_drawn[_cursor++]]!;
+      CameraReplay.recording
+        ?..pass(index, _colorReplay(lighting, _appBlocks, viewInfo))
+        ..refuseWhere(!keepsForAnyCamera);
+      items.draw(
+        pass,
+        index,
+        viewBlocks: blocks,
+        clip: encoder._cameraTransform.storage,
+        viewTextures: viewTextures,
+      );
+    }
+  }
+
+  List<ByteData> _blocksOf(SceneEncoder encoder) {
+    final lighting = encoder._lighting;
     _fragInfoScratch.fillRange(0, _fragInfoScratch.length, 0);
     EngineLightingUniforms.packInto(
       _fragInfoScratch,
@@ -3593,37 +3688,24 @@ final class RetainedColorDraws extends RetainedDraws {
     );
     EngineLightingUniforms.packFog(_fogScratch, lighting);
     EngineLightingUniforms.packSceneInputInfo(_inputScratch, lighting);
-    CameraReplay.recording
-      ?..pass(
-        SceneItems.colorPass,
-        _colorReplay(lighting, _appBlocks, ViewInfoState.current()),
-      )
-      ..refuseWhere(!keepsForAnyCamera);
-    items.draw(
-      pass,
-      SceneItems.colorPass,
-      viewBlocks: [
-        view,
-        ByteData.sublistView(_fragInfoScratch),
-        ByteData.sublistView(_fogScratch),
-        ByteData.sublistView(_inputScratch),
-        for (final bytes in _appBlocks) bytes(),
-      ],
-      clip: encoder._cameraTransform.storage,
-      viewTextures: [
-        Material.whitePlaceholder(lighting.shadowMap),
-        Material.whitePlaceholder(lighting.ssaoMap),
-        Material.whitePlaceholder(lighting.punctualParamsTexture),
-        Material.whitePlaceholder(lighting.punctualIndexTexture),
-        Material.whitePlaceholder(lighting.sceneDepthLinear),
-      ],
-    );
-    activeRenderCounters
-      ..colorItemsKept += keptCount
-      ..colorItemsEncoded += encoded.length;
-    // The kept items bound their own pipeline and blocks on the pass, so what
-    // the encoder holds of its bindings no longer stands.
-    encoder._clearBindings();
+    _viewInfo = ViewInfoState.current();
+    return [
+      viewInfoBytesOf(encoder._cameraTransform, encoder._cameraPosition),
+      ByteData.sublistView(_fragInfoScratch),
+      ByteData.sublistView(_fogScratch),
+      ByteData.sublistView(_inputScratch),
+      for (final bytes in _appBlocks) bytes(),
+    ];
+  }
+
+  @override
+  void dispose() {
+    _passOf
+      ..clear()
+      ..[0.0] = SceneItems.colorPass;
+    _members.clear();
+    _drawn.clear();
+    super.dispose();
   }
 }
 
@@ -3804,8 +3886,9 @@ final class RetainedTranslucentDraws extends RetainedDraws {
     }
     final order = item.renderOrder;
     if (_passOf.containsKey(order)) return true;
-    if (_passOf.length == SceneItems.translucentPasses) return false;
-    _passOf[order] = SceneItems.translucentPass + _passOf.length;
+    final index = SceneItems.takeOrderPass(items);
+    if (index == null) return false;
+    _passOf[order] = index;
     return true;
   }
 

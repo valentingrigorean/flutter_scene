@@ -173,7 +173,8 @@ final class _RunKey {
 /// color pass, [skyPass] the sky behind it, [resolvePass] the resolve and
 /// tone map, [postPass] the anti-aliasing after it, [customPass] and the
 /// [customPasses] after it the draws of custom render passes, and
-/// [translucentPass] onwards the color pass's translucent draws. A walk names
+/// [orderPass] onwards the color pass's draws of one render order each,
+/// opaque or translucent ([takeOrderPass]). A walk names
 /// the passes in the order they draw, so an index does not order them.
 ///
 /// Each pass states its own view blocks: `ViewInfo` first, then `DepthInfo`
@@ -214,12 +215,26 @@ final class SceneItems {
   /// The number of custom render pass indices.
   static const int customPasses = 23;
 
-  /// The first of the color pass's translucent pass indices, one per render
-  /// order whose draws it keeps, [translucentPasses] at most.
-  static const int translucentPass = customPass + customPasses;
+  /// The first of the color pass's render order pass indices, one for each
+  /// render order whose opaque draws, and one for each whose translucent
+  /// draws, it keeps, [orderPasses] at most.
+  static const int orderPass = customPass + customPasses;
 
-  /// The number of translucent pass indices, up to the 64 a set holds.
-  static const int translucentPasses = 64 - translucentPass;
+  /// The number of render order pass indices, up to the 64 a set holds.
+  static const int orderPasses = 64 - orderPass;
+
+  static final Expando<List<int>> _orderPassesTaken = Expando(
+    'order passes taken',
+  );
+
+  /// Takes the next of [items]' render order pass indices, or null where
+  /// all [orderPasses] are taken; a draw of an order with no index is
+  /// encoded.
+  static int? takeOrderPass(gpu.ItemSet items) {
+    final taken = _orderPassesTaken[items] ??= [0];
+    if (taken.first == orderPasses) return null;
+    return orderPass + taken.first++;
+  }
 
   /// The backend's item set.
   final gpu.ItemSet items;
@@ -1137,7 +1152,7 @@ abstract base class RetainedDraws {
     final id = items.keep(
       recorder,
       id: run.id,
-      passes: passes,
+      passes: passesOf(ref),
       bounds: all,
       instances: instances,
     );
