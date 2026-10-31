@@ -3541,13 +3541,16 @@ final class RetainedColorDraws extends RetainedDraws {
       cameraTransform: _pass._cameraTransform,
       primaryView: true,
     );
+    // A material drawn by several items holds the last one's per-item values,
+    // so the kept draw states its own, as the encoded opaque draw does.
+    final material = materialOf(item)
+      ..lightListOffset = item.lightListOffset
+      ..lightListCount = item.lightListCount
+      ..lightChannelMask = item.lightChannelMask
+      ..setModelScaleFromTransform(item.worldTransform);
     final key = transientDrawKey;
     transientDrawKey = item;
-    encoder.encodeForKeep(
-      item,
-      geometry: geometryOf(item),
-      material: materialOf(item),
-    );
+    encoder.encodeForKeep(item, geometry: geometryOf(item), material: material);
     transientDrawKey = key;
   }
 
