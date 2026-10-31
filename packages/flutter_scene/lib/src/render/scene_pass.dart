@@ -524,15 +524,14 @@ class ScenePass extends RenderGraphPass {
           : null;
       if (retained != null) {
         // The translucent draws keep too, which the backend orders back to
-        // front by depth; the encoder draws each render order's kept draws
-        // in its translucent phase.
+        // front by depth; the encoder draws each render order's kept draws,
+        // opaque and translucent, where that order falls in its phase.
         final translucent = RetainedTranslucentDraws.of(_renderScene);
         retained.syncColor(
           target: target,
           encoder: encoder,
           keepsTranslucent: translucent != null,
         );
-        retained.drawKept(renderPass, encoder);
         for (final item in retained.encoded) {
           encoder.submit(item);
         }
