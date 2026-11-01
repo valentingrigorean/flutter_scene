@@ -319,6 +319,18 @@ base class Skin {
     _playback = playback;
   }
 
+  /// Frees the joints textures this skin uploaded. Where the GPU backend can
+  /// free memory at once (wgpu, WebGPU, WebGL) it does so at this call, and
+  /// work already submitted keeps what it reads. The skin must not be drawn
+  /// afterwards; a [playback]'s palette stays with its owner.
+  void dispose() {
+    for (final texture in _jointsTextureRing) {
+      if (texture != null) gpu.gpuHost.releaseTexture(texture);
+    }
+    _jointsTextureRing.fillRange(0, _jointsTextureRing.length, null);
+    _jointsTextureDimension = 0;
+  }
+
   /// Changes whenever the world transform of a joint is recomputed, so a
   /// pose that stands uploads nothing.
   @internal

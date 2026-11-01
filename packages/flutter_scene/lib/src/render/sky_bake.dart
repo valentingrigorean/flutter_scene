@@ -342,6 +342,27 @@ class SkyBakeJob {
   /// Whether a cycle is in progress.
   bool get inFlight => _step >= 0;
 
+  /// Frees the capture targets and both atlas/SH pairs, ending any cycle in
+  /// progress; the next [start] allocates again. Work already submitted keeps
+  /// them.
+  void dispose() {
+    for (final texture in [
+      ...?_faces,
+      ?_equirect,
+      ..._atlases.nonNulls,
+      ..._shs.nonNulls,
+    ]) {
+      gpu.gpuHost.releaseTexture(texture);
+    }
+    _faces = null;
+    _equirect = null;
+    _atlases.fillRange(0, 2, null);
+    _shs.fillRange(0, 2, null);
+    _faceResolution = 0;
+    _equirectWidth = 0;
+    _step = -1;
+  }
+
   /// Begins a new cycle writing into the back atlas/SH pair, (re)allocating
   /// capture targets when the requested sizes changed.
   void start({required int faceResolution, required int equirectWidth}) {

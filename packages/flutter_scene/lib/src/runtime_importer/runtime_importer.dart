@@ -20,6 +20,7 @@ import '../node.dart';
 import '../skin.dart';
 import '../texture/texture2d.dart';
 import 'animation_builder.dart';
+import '../geometry/geometry.dart' show Geometry;
 import 'geometry_builder.dart';
 import 'gltf_import_worker.dart';
 import 'gltf_resources.dart';
@@ -306,7 +307,50 @@ Future<Node> _buildScene(
     'animations: ${doc.animations.length})',
   );
 
+  _importedResources[root] = (
+    textures: [
+      for (final texture in textures)
+        if (!isGltfPlaceholderTexture(texture)) texture,
+    ],
+    geometries: {
+      for (final node in engineNodes)
+        for (final primitive
+            in node.mesh?.primitives ?? const <MeshPrimitive>[])
+          primitive.geometry,
+    },
+    skins: skins,
+  );
   return root;
+}
+
+typedef _ImportedResources = ({
+  List<Texture2D> textures,
+  Set<Geometry> geometries,
+  List<Skin> skins,
+});
+
+final Expando<_ImportedResources> _importedResources = Expando(
+  'glTF import resources',
+);
+
+/// Frees the textures, geometry and skins the runtime glTF import of [root]
+/// made, for a template no instance draws any more: every [Node.clone] of
+/// [root] shares its geometry and textures. Work already submitted keeps
+/// them. Does nothing for a node that is no import root or was freed before.
+@internal
+void disposeImportedResources(Node root) {
+  final resources = _importedResources[root];
+  if (resources == null) return;
+  _importedResources[root] = null;
+  for (final texture in resources.textures) {
+    texture.dispose();
+  }
+  for (final geometry in resources.geometries) {
+    geometry.dispose();
+  }
+  for (final skin in resources.skins) {
+    skin.dispose();
+  }
 }
 
 void _populateNode({

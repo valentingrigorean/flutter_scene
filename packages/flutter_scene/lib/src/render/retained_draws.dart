@@ -282,6 +282,20 @@ final class SceneItems {
     return items;
   }
 
+  /// Disposes the kept draws of every pass of [renderScene] and then its
+  /// item set, which drops the native items and the bundles that drew them.
+  /// A later [of] makes a new set.
+  static void dispose(RenderScene renderScene) {
+    final held = _byScene[renderScene];
+    if (held == null) return;
+    _byScene[renderScene] = null;
+    for (final draws in RetainedDraws._ofSet[held.items] ?? const []) {
+      draws.dispose();
+    }
+    RetainedDraws._ofSet[held.items] = null;
+    held.items.dispose();
+  }
+
   /// The frame-transient engine textures a kept lit color draw samples,
   /// re-supplied each color pass so the backend keeps the draw instead of
   /// refusing it: the directional shadow atlas, ambient occlusion, the two
@@ -343,7 +357,15 @@ final class SceneItems {
 abstract base class RetainedDraws {
   /// Keeps the draws of [renderScene] in [items], the scene's
   /// [SceneItems].
-  RetainedDraws(this.renderScene, this.items);
+  RetainedDraws(this.renderScene, this.items) {
+    (_ofSet[items] ??= []).add(this);
+  }
+
+  // The kept draws of every pass of a set, which [SceneItems.dispose]
+  // disposes with it.
+  static final Expando<List<RetainedDraws>> _ofSet = Expando(
+    'retained draws of a set',
+  );
 
   /// The scene whose items are kept.
   final RenderScene renderScene;

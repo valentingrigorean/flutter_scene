@@ -327,11 +327,11 @@ void _rekeyCachedTexture(
 /// leaves the cache; releasing one holder's claim never pulls the texture out
 /// from under the other.
 ///
-/// Dropping the entry releases the engine's reference, not the memory. A
-/// texture a live material still points at stays resident until that reference
-/// goes too, and the GPU allocation is reclaimed after that on the engine's
-/// schedule rather than at this call. See `Scene.memoryReport` for what is
-/// actually resident.
+/// The last release frees the texture: where the GPU backend can free memory
+/// at once (wgpu, WebGPU, WebGL) it does so then, and work already submitted
+/// keeps what it reads. Every holder shares the one texture, so release only
+/// once no material of a live scene samples it. See `Scene.memoryReport` for
+/// what is actually resident.
 /// {@category Assets and loading}
 Future<bool> releaseTexture(
   String sourcePath, {
@@ -351,6 +351,10 @@ bool releaseTextureByAssetKey(String assetKey) {
   entry.holders--;
   if (entry.holders > 0) return false;
   _textureCache.remove(assetKey);
+  entry.source.then(
+    (source) => gpu.gpuHost.releaseTexture(source._texture),
+    onError: (Object _) {},
+  );
   return true;
 }
 

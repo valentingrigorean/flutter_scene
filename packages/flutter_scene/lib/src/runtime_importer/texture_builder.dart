@@ -246,3 +246,9 @@ Texture2D _placeholder() {
 }
 
 Texture2D? _whitePlaceholder;
+
+/// Whether [texture] is the white placeholder every import shares in place of
+/// an image it could not decode, which no import owns.
+@internal
+bool isGltfPlaceholderTexture(Texture2D texture) =>
+    identical(texture, _whitePlaceholder);

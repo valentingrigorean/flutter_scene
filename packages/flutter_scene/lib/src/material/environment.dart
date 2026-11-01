@@ -48,7 +48,10 @@ base class EnvironmentMap {
     gpu.Texture? rebakeSource,
     bool rebakeSourceIsLinear = false,
     RadiancePrefilterFill? radianceFill,
+    bool ownsRadiance = true,
   }) : assert(sh.length == kDiffuseShCoefficientCount),
+       _ownsRadiance = ownsRadiance,
+       _ownsDiffuseSh = true,
        _radianceFill = radianceFill,
        _diffuseSphericalHarmonics = sh,
        _diffuseShTexture = _shTextureFromList(sh) {
@@ -65,8 +68,11 @@ base class EnvironmentMap {
   // is empty). Used by [fromSky].
   EnvironmentMap._fromGpuSh(
     this._prefilteredRadianceTexture,
-    this._diffuseShTexture,
-  ) : _diffuseSphericalHarmonics = const <Vector3>[];
+    this._diffuseShTexture, {
+    required bool owned,
+  }) : _ownsRadiance = owned,
+       _ownsDiffuseSh = owned,
+       _diffuseSphericalHarmonics = const <Vector3>[];
 
   /// World-space center of this environment's parallax box proxy, or null
   /// when reflections sample the environment at infinity (the default,
@@ -92,6 +98,7 @@ base class EnvironmentMap {
     return EnvironmentMap._(
       Material.getBlackPlaceholderTexture(),
       _zeroSphericalHarmonics(),
+      ownsRadiance: false,
     );
   }
 
@@ -109,7 +116,11 @@ base class EnvironmentMap {
       ambientRadiance.y / sh0Basis,
       ambientRadiance.z / sh0Basis,
     );
-    return EnvironmentMap._(Material.getBlackPlaceholderTexture(), sh);
+    return EnvironmentMap._(
+      Material.getBlackPlaceholderTexture(),
+      sh,
+      ownsRadiance: false,
+    );
   }
 
   /// Whether newly built environments store their prefiltered roughness
@@ -227,11 +238,16 @@ base class EnvironmentMap {
       'Pass diffuseSphericalHarmonics or diffuseShTexture, not both.',
     );
     if (diffuseShTexture != null) {
-      return EnvironmentMap._fromGpuSh(prefilteredRadiance, diffuseShTexture);
+      return EnvironmentMap._fromGpuSh(
+        prefilteredRadiance,
+        diffuseShTexture,
+        owned: false,
+      );
     }
     return EnvironmentMap._(
       prefilteredRadiance,
       diffuseSphericalHarmonics ?? _zeroSphericalHarmonics(),
+      ownsRadiance: false,
     );
   }
 
@@ -556,7 +572,7 @@ base class EnvironmentMap {
       faceResolution: faceResolution,
       equirectWidth: equirectWidth,
     );
-    return EnvironmentMap._fromGpuSh(baked.atlas, baked.sh);
+    return EnvironmentMap._fromGpuSh(baked.atlas, baked.sh, owned: true);
   }
 
   /// Creates the radiance source equirect from linear float [pixels], with a
@@ -921,6 +937,38 @@ base class EnvironmentMap {
   // Not final: re-baked in place once the web GL context is warm (see
   // [markContextWarmAndRebakeRadiance]).
   gpu.Texture _prefilteredRadianceTexture;
+
+  // Whether this environment made [_prefilteredRadianceTexture] and
+  // [_diffuseShTexture], and so frees them at [dispose]; a placeholder and a
+  // texture the caller passed to [fromGpuTextures] stay with their owner.
+  final bool _ownsRadiance;
+  final bool _ownsDiffuseSh;
+  bool _disposed = false;
+
+  /// Frees the GPU textures this environment made: its prefiltered radiance,
+  /// its diffuse coefficient texture and its background source. Textures
+  /// passed to [fromGpuTextures] and the shared placeholders are left to
+  /// their owners. Work already submitted keeps them.
+  ///
+  /// The environment must not be drawn with afterwards, so dispose only one
+  /// this code alone holds, never a shared one such as the default
+  /// [studio] environment a scene falls back to. A second call does nothing.
+  /// {@category Lighting and environment}
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _radianceFill?.cancel();
+    _coldBuiltEnvironments.remove(this);
+    if (_ownsRadiance) {
+      gpu.gpuHost.releaseTexture(_prefilteredRadianceTexture);
+    }
+    if (_ownsDiffuseSh) gpu.gpuHost.releaseTexture(_diffuseShTexture);
+    final background = _backgroundTexture;
+    if (background != null) gpu.gpuHost.releaseTexture(background);
+    _backgroundTexture = null;
+    _rebakeSource = null;
+  }
+
   final List<Vector3> _diffuseSphericalHarmonics;
   final gpu.Texture _diffuseShTexture;
 

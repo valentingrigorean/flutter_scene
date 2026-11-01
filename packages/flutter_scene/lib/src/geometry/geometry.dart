@@ -150,6 +150,40 @@ abstract class Geometry with RenderSourceListeners {
   gpu.IndexType _indexType = gpu.IndexType.int16;
   int _indexCount = 0;
 
+  // The buffers the last upload made ([_uploadStreams]), which [dispose]
+  // frees. Buffers a caller bound or an arena lent stay with their owner.
+  List<gpu.DeviceBuffer> _ownedBuffers = const [];
+  bool _disposed = false;
+
+  /// Whether [dispose] has run.
+  bool get isDisposed => _disposed;
+
+  /// Frees the device buffers this geometry made: the vertex and index
+  /// storage of its last upload, its custom attribute streams and its debug
+  /// edge indices. Views a caller bound through [setVertices],
+  /// [setIndices] or a [GeometryBufferArena] stay with their owner. Where
+  /// the GPU backend can free memory at once (wgpu, WebGPU, WebGL) it does
+  /// so at this call, and work already submitted keeps what it reads.
+  ///
+  /// The geometry must not be drawn afterwards, so dispose only one no mesh
+  /// of a live scene still draws. A second call does nothing. A subclass
+  /// that makes buffers of its own frees them here too.
+  @mustCallSuper
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _ownedBuffers.forEach(gpu.gpuHost.releaseBuffer);
+    _ownedBuffers = const [];
+    for (final attribute in _customAttributes.values) {
+      gpu.gpuHost.releaseBuffer(attribute.view.buffer);
+    }
+    _customAttributes.clear();
+    _resolved.clear();
+    final edges = _debugEdges;
+    if (edges != null) gpu.gpuHost.releaseBuffer(edges.view.buffer);
+    _debugEdges = null;
+  }
+
   // The index (or vertex) range the next binds and draws use; see
   // [setDrawWindow].
   int _windowFirst = 0;
@@ -254,6 +288,7 @@ abstract class Geometry with RenderSourceListeners {
   /// turn-key path that allocates and uploads in one step, see
   /// [uploadVertexData].
   void setVertices(gpu.BufferView vertices, int vertexCount) {
+    _ownedBuffers = const [];
     _buffersChanged();
     _clearResolvedOnLayoutChange(1);
     _vertexStreams = [vertices];
@@ -783,6 +818,13 @@ abstract class Geometry with RenderSourceListeners {
         indexType,
       );
     }
+    // After the binds above, which forget the buffers of an earlier upload.
+    _ownedBuffers = split == null
+        ? const []
+        : [
+            split.vertex,
+            if (!identical(split.index, split.vertex)) split.index,
+          ];
     if (totalBytes > 0) {
       if (identical(deviceBuffer, indexBuffer)) {
         deviceBuffer.flush(
