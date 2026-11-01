@@ -936,6 +936,25 @@ base class Scene implements SceneGraph {
 
   bool _disposed = false;
 
+  // The timers that end with the scene: dispose cancels each and runs its
+  // callback, so a waiter resumes and nothing is left pending.
+  final Map<Timer, void Function()> _timers = {};
+
+  void _timer(Duration duration, void Function() callback) {
+    late final Timer timer;
+    timer = Timer(duration, () {
+      _timers.remove(timer);
+      callback();
+    });
+    _timers[timer] = callback;
+  }
+
+  Future<void> _pause(Duration duration) {
+    final paused = Completer<void>();
+    _timer(duration, paused.complete);
+    return paused.future;
+  }
+
   /// Whether [dispose] has run.
   bool get isDisposed => _disposed;
 
@@ -993,6 +1012,12 @@ base class Scene implements SceneGraph {
     _supersedeGraphCaptures(
       StateError('The scene was disposed before a frame was captured'),
     );
+    final timers = [..._timers.entries];
+    _timers.clear();
+    for (final MapEntry(key: timer, value: callback) in timers) {
+      timer.cancel();
+      callback();
+    }
   }
 
   /// The directional light's cached static shadow tile textures, by cascade;
@@ -1921,7 +1946,7 @@ base class Scene implements SceneGraph {
       completer: completer,
     );
     _pendingGraphCapture = armed;
-    Timer(timeout, () {
+    _timer(timeout, () {
       if (!identical(_pendingGraphCapture, armed)) return;
       _pendingGraphCapture = null;
       completer.completeError(
@@ -1962,7 +1987,7 @@ base class Scene implements SceneGraph {
     final completer = Completer<List<RenderGraphCaptureResult>>();
     final armed = (request: request, completer: completer);
     _pendingFrameGraphCapture = armed;
-    Timer(timeout, () {
+    _timer(timeout, () {
       if (completer.isCompleted) return;
       if (identical(_pendingFrameGraphCapture, armed)) {
         _pendingFrameGraphCapture = null;
@@ -2491,7 +2516,7 @@ base class Scene implements SceneGraph {
         return;
       }
       if (compiling > 0) await gpu.gpuHost.pipelinesReady();
-      await Future<void>.delayed(const Duration(milliseconds: 16));
+      await _pause(const Duration(milliseconds: 16));
     }
   }
 

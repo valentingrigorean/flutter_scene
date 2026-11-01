@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart'
     show PipelineOwner, RenderCustomPaint, SemanticsBuilderCallback;
@@ -359,6 +361,7 @@ class _SceneViewState extends State<SceneView>
   // Bumps on each reveal watch so a stale async wait (after the loading group
   // is swapped) cannot reveal the wrong generation.
   int _revealGeneration = 0;
+  Timer? _revealWait;
 
   // A view gates rendering only when it opts in with a `loading` group, a
   // `loadingBuilder`, or `warmUp`; otherwise it renders as soon as it can,
@@ -550,7 +553,11 @@ class _SceneViewState extends State<SceneView>
     final remaining =
         widget.revealMinDuration - DateTime.now().difference(start);
     if (remaining > Duration.zero) {
-      await Future<void>.delayed(remaining);
+      // Cancelled by dispose or a later reveal, which leaves this one waiting.
+      final waited = Completer<void>();
+      _revealWait?.cancel();
+      _revealWait = Timer(remaining, waited.complete);
+      await waited.future;
     }
     if (!mounted || generation != _revealGeneration) return;
     setState(() => _revealed = true);
@@ -707,6 +714,7 @@ class _SceneViewState extends State<SceneView>
       _onSemanticsChanged,
     );
     _scene.repaintRequested.removeListener(_onRepaintRequested);
+    _revealWait?.cancel();
     _ticker?.dispose();
     _repaint.dispose();
     _elapsed.dispose();
