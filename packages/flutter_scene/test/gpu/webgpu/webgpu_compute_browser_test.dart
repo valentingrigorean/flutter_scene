@@ -72,6 +72,16 @@ fn arguments() {
 }
 ''';
 
+const _copyWgsl = '''
+@group(0) @binding(0) var<storage, read_write> copiedFrom : array<u32, 4>;
+@group(0) @binding(1) var<storage, read_write> copiedTo : array<u32, 4>;
+
+@compute @workgroup_size(1)
+fn main() {
+  copiedTo = copiedFrom;
+}
+''';
+
 gpu.BufferView _view(gpu.DeviceBuffer buffer) =>
     gpu.BufferView(buffer, offsetInBytes: 0, lengthInBytes: buffer.sizeInBytes);
 
@@ -149,5 +159,34 @@ void main() {
     ]);
     final pixels = await webGpuReadTexture(color);
     expect(pixels.sublist(0, 4), [255, 0, 0, 255]);
+  });
+  test('a buffer released while an unsubmitted command buffer names it is '
+      'still read by that submit', () async {
+    await gpu.initializeGpuBackend();
+    final context = gpu.gpuContext;
+    final copy = context.createComputePipeline(_copyWgsl);
+    final source = context.createDeviceBufferWithCopy(
+      ByteData.sublistView(Uint32List.fromList([3, 5, 7, 9])),
+    );
+    final target = context.createDeviceBuffer(
+      gpu.StorageMode.devicePrivate,
+      16,
+    );
+
+    final commands = context.createCommandBuffer();
+    commands.createComputePass()
+      ..bindPipeline(copy)
+      ..bindBuffer(0, 0, _view(source))
+      ..bindBuffer(0, 1, _view(target))
+      ..dispatch(1);
+    gpu.gpuHost.releaseBuffer(source);
+    commands.submit();
+
+    expect(Uint32List.sublistView(await webGpuReadBuffer(target, length: 16)), [
+      3,
+      5,
+      7,
+      9,
+    ]);
   });
 }

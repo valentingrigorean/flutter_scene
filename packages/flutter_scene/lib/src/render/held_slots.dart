@@ -20,11 +20,11 @@ const int _slotsPerBlock = 256;
 /// drew with on every backend.
 ///
 /// A block whose every slot was given back is destroyed at the release of its
-/// last one, or at the end of the frame that encodes the release, once that
-/// frame's draws are submitted: work already submitted keeps the buffer it
-/// reads, and a later [take] makes the block again. No empty block is kept warm, so the pool of a
-/// process that draws no more scene holds no buffer. [take] fills the lowest
-/// block first, so the blocks above it empty as their holders leave.
+/// last one: the backend keeps the buffer for the work already recorded or
+/// submitted that reads it, and a later [take] makes the block again. No
+/// empty block is kept warm, so the pool of a process that draws no more
+/// scene holds no buffer. [take] fills the lowest block first, so the blocks
+/// above it empty as their holders leave.
 final class HeldSlots {
   HeldSlots._(this.slotBytes);
 
@@ -115,22 +115,7 @@ final class HeldSlots {
     final block = slot ~/ _slotsPerBlock;
     _cooling.add(slot);
     _coolingAfter.add(rendererSubmissions.latestSubmission);
-    if (--_taken[block] > 0) return;
-    if (rendererSubmissions.inFrame) {
-      final buffer = _blocks[block];
-      rendererSubmissions.onNextFrameEnd(() => _destroyEmpty(block, buffer));
-    } else {
-      _destroy(block);
-    }
-  }
-
-  // Destroys [block] if it still holds [buffer] with no slot taken.
-  void _destroyEmpty(int block, gpu.DeviceBuffer? buffer) {
-    if (block < _blocks.length &&
-        identical(_blocks[block], buffer) &&
-        _taken[block] == 0) {
-      _destroy(block);
-    }
+    if (--_taken[block] == 0) _destroy(block);
   }
 
   void _destroy(int block) {
