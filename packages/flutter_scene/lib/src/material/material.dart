@@ -843,9 +843,9 @@ abstract class Material with RenderSourceListeners {
   @internal
   bool drawsDebugViews(Lighting lighting) =>
       participatesInDebugViews &&
-      fragmentShaderForLighting(
-            lighting,
-          ).cachedUniformSlot('DebugViewInfo').sizeInBytes !=
+      fragmentShaderForLighting(lighting)
+              .cachedUniformSlot('DebugViewInfo')
+              .sizeInBytes !=
           null;
 
   /// Per-frame engine inputs this material samples, produced only when a

@@ -4,6 +4,8 @@ library;
 
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/frame_transients.dart';
 
@@ -18,8 +20,9 @@ const int _slotsPerBlock = 256;
 /// drew with on every backend.
 ///
 /// A block whose every slot was given back is destroyed at the release of its
-/// last one: work already submitted keeps the buffer it reads, and a later
-/// [take] makes the block again. No empty block is kept warm, so the pool of a
+/// last one, or at the end of the frame that encodes the release, once that
+/// frame's draws are submitted: work already submitted keeps the buffer it
+/// reads, and a later [take] makes the block again. No empty block is kept warm, so the pool of a
 /// process that draws no more scene holds no buffer. [take] fills the lowest
 /// block first, so the blocks above it empty as their holders leave.
 final class HeldSlots {
@@ -73,8 +76,16 @@ final class HeldSlots {
     }
     if (block == _blocks.length) block = _open();
     _taken[block]++;
+    _takenSlots++;
     return _free[block].removeLast();
   }
+
+  static int _takenSlots = 0;
+
+  /// The slots of every pool of the process that are taken and not given
+  /// back.
+  @visibleForTesting
+  static int get takenSlots => _takenSlots;
 
   // Makes a block in the lowest destroyed place, or after the last, with
   // every slot free.
@@ -100,12 +111,29 @@ final class HeldSlots {
   /// Gives [slot] back once the submissions made so far complete, and
   /// destroys its block when no other slot of it is taken.
   void release(int slot) {
+    _takenSlots--;
     final block = slot ~/ _slotsPerBlock;
-    if (--_taken[block] > 0) {
-      _cooling.add(slot);
-      _coolingAfter.add(rendererSubmissions.latestSubmission);
-      return;
+    _cooling.add(slot);
+    _coolingAfter.add(rendererSubmissions.latestSubmission);
+    if (--_taken[block] > 0) return;
+    if (rendererSubmissions.inFrame) {
+      final buffer = _blocks[block];
+      rendererSubmissions.onNextFrameEnd(() => _destroyEmpty(block, buffer));
+    } else {
+      _destroy(block);
     }
+  }
+
+  // Destroys [block] if it still holds [buffer] with no slot taken.
+  void _destroyEmpty(int block, gpu.DeviceBuffer? buffer) {
+    if (block < _blocks.length &&
+        identical(_blocks[block], buffer) &&
+        _taken[block] == 0) {
+      _destroy(block);
+    }
+  }
+
+  void _destroy(int block) {
     gpu.gpuHost.releaseBuffer(_blocks[block]!);
     _blocks[block] = null;
     _free[block] = [];

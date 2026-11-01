@@ -173,10 +173,9 @@ class RenderItem {
   Material get material => _material;
   set material(Material value) {
     if (identical(_material, value)) return;
-    final scene = _scene;
-    scene?._letGoMaterialsOf(this);
+    final drawn = _heldMaterials;
     _material = value;
-    scene?._holdMaterialsOf(this);
+    _scene?._holdMaterialsOf(this, letGo: drawn);
     materialIdentity = identityHashCode(value);
     _itemMaterialRevision++;
   }
@@ -203,10 +202,9 @@ class RenderItem {
   LodSelection? get lod => _lod;
   set lod(LodSelection? value) {
     if (identical(_lod, value)) return;
-    final scene = _scene;
-    scene?._letGoMaterialsOf(this);
+    final drawn = _heldMaterials;
     _lod = value;
-    scene?._holdMaterialsOf(this);
+    _scene?._holdMaterialsOf(this, letGo: drawn);
     _itemMaterialRevision++;
   }
 
@@ -1536,7 +1534,9 @@ class RenderScene {
   // How many items of this scene draw each material.
   final Map<Material, int> _materialItems = Map.identity();
 
-  void _holdMaterialsOf(RenderItem item) {
+  // Holds the materials [item] draws, then lets go of [letGo], so a material
+  // the item still draws is not given back between the two.
+  void _holdMaterialsOf(RenderItem item, {List<Material> letGo = const []}) {
     final materials = [
       item.material,
       if (item.lod case final lod?)
@@ -1548,10 +1548,16 @@ class RenderScene {
       _materialItems[material] = count + 1;
       if (count == 0) material.enterScene();
     }
+    _letGo(letGo);
   }
 
   void _letGoMaterialsOf(RenderItem item) {
-    for (final material in item._heldMaterials) {
+    _letGo(item._heldMaterials);
+    item._heldMaterials = const [];
+  }
+
+  void _letGo(List<Material> materials) {
+    for (final material in materials) {
       final count = _materialItems[material];
       if (count == null) continue;
       if (count > 1) {
@@ -1561,7 +1567,6 @@ class RenderScene {
         material.leaveScene();
       }
     }
-    item._heldMaterials = const [];
   }
 
   static void _releaseHeldOf(RenderItem item) {
