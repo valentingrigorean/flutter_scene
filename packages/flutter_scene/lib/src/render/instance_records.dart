@@ -59,11 +59,14 @@ void bindHeldInstanceRecord(
     final width = slots == null || slots.slotBytes < bytes
         ? bytes
         : slots.slotBytes;
-    held.release();
+    // Taken before the old slot goes back, so a moving item that is alone
+    // in its block keeps the block.
     slots = HeldSlots.of(width);
+    final taken = slots.take();
     held
+      ..release()
       .._slots = slots
-      .._slot = slots.take()
+      .._slot = taken
       .._transformRevision = item.worldTransformRevision;
     activeRenderCounters.instanceBytesUploaded += width;
     view = held._view = slots.write(

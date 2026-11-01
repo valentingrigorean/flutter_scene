@@ -266,6 +266,14 @@ class ShaderMaterial extends Material {
     for (final block in _held.values) block.held,
   ];
 
+  @override
+  void releaseHeldBlocks() {
+    super.releaseHeldBlocks();
+    for (final block in _held.values) {
+      block.held.release();
+    }
+  }
+
   /// Whether this material participates in the opaque pass.
   ///
   /// Returned from [isOpaque]. Set to `false` for translucent
