@@ -59,33 +59,11 @@ class GpuSubmissionTracker {
   /// key (several scenes painting in one vsync) end as one frame, and
   /// [priorFramesInFlight] leaves that frame out, so each of them makes the
   /// same pacing decision.
-  void beginFrame(Object? key) {
-    _displayFrame = key;
-    _inFrame = true;
-  }
-
-  bool _inFrame = false;
-  final List<void Function()> _onFrameEnd = [];
-
-  /// Whether a render is between [beginFrame] and [endFrame], so work it
-  /// encoded may not be submitted yet.
-  bool get inFrame => _inFrame;
-
-  /// Runs [listener] once, at the next [endFrame], once the frame's work is
-  /// submitted.
-  void onNextFrameEnd(void Function() listener) => _onFrameEnd.add(listener);
+  void beginFrame(Object? key) => _displayFrame = key;
 
   /// Marks the end of a frame's submissions, so [framesInFlight] can count
   /// whole frames the GPU has not finished.
   void endFrame() {
-    _inFrame = false;
-    if (_onFrameEnd.isNotEmpty) {
-      final listeners = List.of(_onFrameEnd);
-      _onFrameEnd.clear();
-      for (final listener in listeners) {
-        listener();
-      }
-    }
     if (_frameEnds.isNotEmpty && _frameEnds.last == _lastId) return;
     if (_pending.isEmpty && _frameEnds.isEmpty) return;
     if (_displayFrame != null &&

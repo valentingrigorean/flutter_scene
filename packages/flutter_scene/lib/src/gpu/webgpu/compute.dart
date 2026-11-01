@@ -178,10 +178,11 @@ final class _BoundTextureView extends _ComputeBound {
 /// A `GPUComputePassEncoder` that binds by group and binding, and builds
 /// each bind group the next dispatch needs from what is bound.
 final class _WebGpuComputePass extends ComputePass {
-  _WebGpuComputePass(this._context, GPUCommandEncoder encoder)
+  _WebGpuComputePass(this._context, this._commands, GPUCommandEncoder encoder)
     : _encoder = encoder.beginComputePass();
 
   final _WebGpuContext _context;
+  final _WebGpuCommandBuffer _commands;
   final GPUComputePassEncoder _encoder;
   final Map<(int, int), _ComputeBound> _bound = {};
   _WebGpuComputePipeline? _pipeline;
@@ -214,6 +215,7 @@ final class _WebGpuComputePass extends ComputePass {
 
   @override
   void bindBuffer(int group, int binding, BufferView view) {
+    _commands._name(view.buffer);
     _bound[(group, binding)] = _BoundBuffer(
       view.buffer as _WebGpuDeviceBuffer,
       view.offsetInBytes,
@@ -250,6 +252,7 @@ final class _WebGpuComputePass extends ComputePass {
 
   @override
   void dispatchIndirect(BufferView arguments) {
+    _commands._name(arguments.buffer);
     _flush();
     _encoder.dispatchWorkgroupsIndirect(
       (arguments.buffer as _WebGpuDeviceBuffer).buffer,
