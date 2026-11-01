@@ -19,6 +19,8 @@ import 'package:flutter_scene/src/render/punctual_lights.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:flutter_scene/src/render/depth_prepass.dart';
 import 'package:flutter_scene/src/render/display_referred_pass.dart';
+import 'package:flutter_scene/src/render/draw_recorder.dart'
+    show activeDrawRecorder;
 import 'package:flutter_scene/src/render/irradiance_field.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
@@ -513,13 +515,15 @@ class ScenePass extends RenderGraphPass {
       // Keep the still opaque draws as backend items on the plain primary
       // path, so a camera-only frame encodes none of them; the rest encode.
       // Only when nothing reshapes the opaque phase (no splits, capture, debug
-      // view or extra culling planes the item set's camera clip cannot apply).
+      // view or extra culling planes the item set's camera clip cannot apply)
+      // and no render graph capture records the frame's draws.
       final retained =
           _primaryView &&
               !splits &&
               !capture &&
               _debugView == null &&
-              _cullingPlanes.isEmpty
+              _cullingPlanes.isEmpty &&
+              activeDrawRecorder == null
           ? RetainedColorDraws.of(_renderScene)
           : null;
       if (retained != null) {

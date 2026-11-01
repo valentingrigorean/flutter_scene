@@ -40,7 +40,8 @@ class _Flat extends UnlitMaterial {
   bool get participatesInDebugViews => false;
 }
 
-Node _slab(UnlitMaterial material, double order) => Node(
+Node _slab(UnlitMaterial material, double order, {String name = ''}) => Node(
+  name: name,
   mesh: Mesh(CuboidGeometry(Vector3(200, 200, 0.01)), material),
   localTransform: Matrix4.translationValues(0, 0, -50),
 )..renderOrder = order;
@@ -145,5 +146,36 @@ void main() {
     expect(activeRenderCounters.colorItemsKept, 0);
     expect(activeRenderCounters.colorItemsEncoded, 1);
     expect(scene.cameraFrame([view(1)]), isNull);
+  });
+
+  test('a captured frame lists the opaque draws the backend keeps', () async {
+    final encoded = _Flat(1, 0);
+    final scene = Scene()
+      ..add(_slab(_Flat(0, 1), 0, name: 'kept'))
+      ..add(_slab(encoded, -1));
+    addTearDown(scene.dispose);
+    for (var frame = 0; frame < 4; frame++) {
+      encoded.baseColorFactor = Vector4(1, 0, frame / 100, 1);
+      activeRenderCounters.reset();
+      await _centre(scene);
+    }
+    expect(activeRenderCounters.colorItemsKept, 1);
+
+    Scene.debugAllowRenderGraphCapture = true;
+    addTearDown(() => Scene.debugAllowRenderGraphCapture = false);
+    final captured = scene.captureFrameRenderGraphs(
+      request: const RenderGraphCaptureRequest(captureImages: false),
+    );
+    encoded.baseColorFactor = Vector4(1, 0, 0.5, 1);
+    await _centre(scene);
+    final draws = [
+      for (final view in await captured)
+        for (final pass in view.passes) ...pass.draws,
+    ];
+
+    expect(
+      draws.where((draw) => draw.nodePath?.endsWith('kept') ?? false),
+      hasLength(1),
+    );
   });
 }
