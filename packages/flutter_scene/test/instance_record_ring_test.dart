@@ -55,10 +55,14 @@ final class _Buffer implements InstanceRecordBuffer {
       bytes: records.lengthInBytes,
     ));
   }
+
+  @override
+  void release() => device.released.add(this);
 }
 
 final class _Device implements InstanceRecordDevice {
   final List<_Buffer> buffers = [];
+  final List<_Buffer> released = [];
   final List<({int buffer, int offset, int bytes})> writes = [];
 
   @override
@@ -182,6 +186,40 @@ void main() {
     device.writes.clear();
     expect(uploaded(frame), 0);
     expect(device.writes, isEmpty);
+  });
+
+  test('a disposed mesh frees every buffer of its records, in flight or '
+      'not', () {
+    frame();
+    mesh.setInstanceRecords(7, _records(7, 1), bounds: _bounds(7, 1));
+    frame();
+    expect(device.buffers, hasLength(2));
+
+    mesh.dispose();
+
+    expect(device.released, device.buffers);
+  });
+
+  test('a disposed mesh of instances frees the records packed for the '
+      'meshes that share its rows', () {
+    final rows = InstancedMesh(
+      geometry: _StubGeometry(),
+      material: _StubMaterial(),
+      nodeSpaceInstances: true,
+    )..addInstance(Matrix4.identity());
+    final sharing = InstancedMesh.sharing(
+      rows,
+      geometry: _StubGeometry(),
+      material: _StubMaterial(),
+    );
+    beginRetainedInstanceFrame();
+    debugDrawInstanceRecords([sharing]);
+    final made = [...device.buffers];
+    expect(made, hasLength(1));
+
+    rows.dispose();
+
+    expect(device.released, made);
   });
 
   test('a row appended while a frame is in flight is written into the bound '

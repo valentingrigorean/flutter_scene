@@ -808,7 +808,8 @@ abstract base class RetainedDraws {
       _sameScale(kept.scale, item.worldTransform);
 
   // Whether the pass's draw of [item] changed only in the rows it holds as
-  // its instances: their records, their count and their bounds.
+  // its instances: their records, their count and their bounds. Not where
+  // the draw origin moved, which the recorded instance frame holds.
   bool _rowsOnly(
     RenderItem item,
     _Kept kept,
@@ -828,6 +829,7 @@ abstract base class RetainedDraws {
       kept.transform == item.worldTransformRevision &&
       kept.flipped == item.windingFlipped &&
       kept.rowsFlipped == _rowsFlipped(item) &&
+      _sameShift(item, kept) &&
       _sameHeldDraw(item, kept) &&
       identical(kept.spin, item.spin) &&
       kept.primitive == geometry.primitiveType.index &&

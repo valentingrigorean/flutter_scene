@@ -15,6 +15,9 @@ import 'package:flutter_scene/src/render/render_stats.dart';
 abstract interface class InstanceRecordBuffer {
   /// Writes [records] at [offsetInBytes].
   void write(ByteData records, int offsetInBytes);
+
+  /// Frees the buffer; work already submitted keeps what it reads.
+  void release();
 }
 
 /// Creates the buffers an [InstanceRecordRing] writes.
@@ -39,6 +42,9 @@ final class GpuInstanceRecordBuffer implements InstanceRecordBuffer {
         lengthInBytes: records.lengthInBytes,
       );
   }
+
+  @override
+  void release() => gpu.gpuHost.releaseBuffer(buffer);
 }
 
 final class _GpuInstanceRecordDevice implements InstanceRecordDevice {
@@ -212,6 +218,14 @@ final class InstanceRecordRing {
           !identical(buffer, current) &&
           _frame - buffer.boundFrame > _idleFrames,
     );
+  }
+
+  /// Frees every device copy. A later [sync] writes the store again.
+  void dispose() {
+    for (final buffer in _buffers) {
+      buffer.buffer.release();
+    }
+    reset();
   }
 
   /// Drops every device copy, after a change of the record layout.

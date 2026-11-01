@@ -182,6 +182,15 @@ final class SharedInstanceRows {
 
 final Expando<SharedInstanceRows> _sharedRows = Expando();
 
+/// Frees the device records of the rows of [rows], if any were made.
+void disposeSharedInstanceRows(InstancedMesh rows) {
+  final shared = _sharedRows[rows];
+  if (shared == null) return;
+  _sharedRows[rows] = null;
+  shared._packedRing.dispose();
+  shared._buffer = null;
+}
+
 /// The device records of the rows of [rows], up to date with its rows.
 SharedInstanceRows sharedInstanceRowsOf(InstancedMesh rows) {
   final shared = _sharedRows[rows] ??= SharedInstanceRows._(rows);

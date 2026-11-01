@@ -11,6 +11,7 @@ import 'package:flutter_scene/src/material/instance_attributes.dart';
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/render/instance_record_ring.dart';
+import 'package:flutter_scene/src/render/shared_instance_rows.dart';
 import 'package:flutter_scene/src/vertex_spin.dart';
 import 'package:vector_math/vector_math.dart';
 
@@ -203,6 +204,21 @@ class InstancedMesh implements MeshDrawSource {
 
   // The device copies of the records of a mesh that holds records, else null.
   final InstanceRecordRing? _ring;
+
+  /// Frees the device copies of the rows this mesh holds: its records, or
+  /// the records packed from its instances for the meshes that share them.
+  /// The records a node packs from its instances are freed as the node
+  /// leaves its scene. It frees neither [geometry], [material] nor the
+  /// [rows] of a sharing mesh, which stay with their owner. Where the GPU backend can free memory
+  /// at once (wgpu, WebGPU, WebGL) it does so at this call, and work already
+  /// submitted keeps what it reads.
+  ///
+  /// Dispose a mesh no node of a live scene still draws. A mesh drawn again
+  /// writes its rows to the device again.
+  void dispose() {
+    _ring?.dispose();
+    disposeSharedInstanceRows(this);
+  }
 
   /// The mesh whose records the device holds for the draws of this mesh: the
   /// mesh whose rows it shares, itself when it holds records, or null when
