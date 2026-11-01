@@ -173,10 +173,16 @@ class RenderItem {
   Material get material => _material;
   set material(Material value) {
     if (identical(_material, value)) return;
+    final drawn = _heldMaterials;
     _material = value;
+    _scene?._holdMaterialsOf(this, letGo: drawn);
     materialIdentity = identityHashCode(value);
     _itemMaterialRevision++;
   }
+
+  // The scene that holds this item, and the materials it counts for it.
+  RenderScene? _scene;
+  List<Material> _heldMaterials = const [];
 
   Material _material;
 
@@ -196,7 +202,9 @@ class RenderItem {
   LodSelection? get lod => _lod;
   set lod(LodSelection? value) {
     if (identical(_lod, value)) return;
+    final drawn = _heldMaterials;
     _lod = value;
+    _scene?._holdMaterialsOf(this, letGo: drawn);
     _itemMaterialRevision++;
   }
 
@@ -1516,6 +1524,55 @@ class RenderScene {
     ];
     uniformTransients.forgetDrawKeys(keys);
     instanceTransients.forgetDrawKeys(keys);
+    for (final item in items) {
+      _releaseHeldOf(item);
+      _letGoMaterialsOf(item);
+      item._scene = null;
+    }
+  }
+
+  // How many items of this scene draw each material.
+  final Map<Material, int> _materialItems = Map.identity();
+
+  // Holds the materials [item] draws, then lets go of [letGo], so a material
+  // the item still draws is not given back between the two.
+  void _holdMaterialsOf(RenderItem item, {List<Material> letGo = const []}) {
+    final materials = [
+      item.material,
+      if (item.lod case final lod?)
+        for (final level in lod.levels) level.material,
+    ];
+    item._heldMaterials = materials;
+    for (final material in materials) {
+      final count = _materialItems[material] ?? 0;
+      _materialItems[material] = count + 1;
+      if (count == 0) material.enterScene();
+    }
+    _letGo(letGo);
+  }
+
+  void _letGoMaterialsOf(RenderItem item) {
+    _letGo(item._heldMaterials);
+    item._heldMaterials = const [];
+  }
+
+  void _letGo(List<Material> materials) {
+    for (final material in materials) {
+      final count = _materialItems[material];
+      if (count == null) continue;
+      if (count > 1) {
+        _materialItems[material] = count - 1;
+      } else {
+        _materialItems.remove(material);
+        material.leaveScene();
+      }
+    }
+  }
+
+  static void _releaseHeldOf(RenderItem item) {
+    item.heldInstanceRecord.release();
+    item.heldItemInfo.release();
+    item.heldFragItem.release();
   }
 
   /// The nodes this scene ticks and refreshes before a frame.
@@ -1983,6 +2040,8 @@ class RenderScene {
     item.drawOrigin = drawOrigin;
     item.sceneSlot = items.length;
     items.add(item);
+    item._scene = this;
+    _holdMaterialsOf(item);
     _unplaced.add(item);
     _structureRevision++;
     logItemChange(item);
@@ -1998,9 +2057,9 @@ class RenderScene {
     }
     item.sceneSlot = -1;
     logItemChange(item);
-    item.heldInstanceRecord.release();
-    item.heldItemInfo.release();
-    item.heldFragItem.release();
+    _releaseHeldOf(item);
+    _letGoMaterialsOf(item);
+    item._scene = null;
     _displace(item);
     if (item._countedStaticCaster) {
       item._countedStaticCaster = false;

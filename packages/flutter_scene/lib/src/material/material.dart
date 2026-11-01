@@ -909,6 +909,29 @@ abstract class Material with RenderSourceListeners {
     if (clipVolume != null) heldClipInfo,
   ];
 
+  /// Gives back the held slots of the blocks this material alone holds, as
+  /// the last render scene that draws it lets it go; a later draw takes fresh
+  /// ones. A material that holds more blocks of its own releases them too,
+  /// and leaves a block it shares with other materials to its owner.
+  @mustCallSuper
+  void releaseHeldBlocks() {
+    heldMatInfo.release();
+    heldClipInfo.release();
+  }
+
+  int _scenes = 0;
+
+  /// Counts a render scene that draws this material.
+  @internal
+  void enterScene() => _scenes++;
+
+  /// Ends one [enterScene], releasing the held blocks once no render scene
+  /// draws this material.
+  @internal
+  void leaveScene() {
+    if (--_scenes == 0) releaseHeldBlocks();
+  }
+
   /// The planar reflection capture this material samples, or null when none
   /// is active. Refreshed each frame by the governing reflector; only read
   /// when [usesPlanarReflection] is true.

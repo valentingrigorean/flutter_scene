@@ -186,6 +186,13 @@ class UnlitMaterial extends Material {
   ];
 
   @override
+  void releaseHeldBlocks() {
+    super.releaseHeldBlocks();
+    _heldUnlitInfo.release();
+    _heldTextureTransform.release();
+  }
+
+  @override
   void bind(
     gpu.RenderPass pass,
     TransientWriter transientsBuffer,
