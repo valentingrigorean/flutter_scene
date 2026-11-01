@@ -3,6 +3,8 @@ import 'package:flutter_scene/src/node.dart';
 import 'package:flutter_scene/src/components/component.dart';
 import 'package:flutter_scene/src/light.dart' show ShadowCastingMode;
 import 'package:flutter_scene/src/instanced_mesh.dart';
+import 'package:flutter_scene/src/render/instance_packing.dart'
+    show releaseRetainedInstanceData;
 import 'package:flutter_scene/src/render/render_scene.dart';
 
 /// An engine [Component] that draws an [InstancedMesh].
@@ -64,6 +66,9 @@ class InstancedMeshComponent extends Component {
       );
       instancedMesh.rows?.removeRowListener(node.internalRenderSourcesChanged);
       node.internalRenderScene?.remove(item);
+      // The item is not drawn again: a later mount makes another.
+      final records = item.instanceWorldData;
+      if (records != null) releaseRetainedInstanceData(records);
       _renderItem = null;
       _worldTransformVersion = -1;
       _instanceRevision = -1;

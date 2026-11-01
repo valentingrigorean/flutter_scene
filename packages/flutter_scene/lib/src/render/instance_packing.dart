@@ -852,6 +852,14 @@ void beginRetainedInstanceFrame() {
   beginInstanceRecordFrame();
 }
 
+/// Frees the device copies of [packedWorldData], whose item draws no more.
+void releaseRetainedInstanceData(Float32List packedWorldData) {
+  final entry = _retainedInstances[packedWorldData];
+  if (entry == null) return;
+  _retainedInstances[packedWorldData] = null;
+  entry.ring?.dispose();
+}
+
 /// Drops the device copy of [packedWorldData] after its records change.
 void invalidateRetainedInstanceData(Float32List packedWorldData) {
   _retainedInstances[packedWorldData] = null;
