@@ -40,7 +40,7 @@ class _Flat extends UnlitMaterial {
   bool get participatesInDebugViews => false;
 }
 
-Node _slab(_Flat material, double order) => Node(
+Node _slab(UnlitMaterial material, double order) => Node(
   mesh: Mesh(CuboidGeometry(Vector3(200, 200, 0.01)), material),
   localTransform: Matrix4.translationValues(0, 0, -50),
 )..renderOrder = order;
@@ -117,4 +117,33 @@ void main() {
       );
     });
   }
+
+  test('a frame whose opaque draws are all encoded is not one another camera '
+      'replays', () async {
+    final target = RenderTexture(width: 64, height: 64, presents: true);
+    final scene = Scene()
+      ..add(_slab(UnlitMaterial()..baseColorFactor = Vector4(1, 0, 0, 1), 0));
+    addTearDown(scene.dispose);
+    RenderView view(double x) => RenderView(
+      camera: PerspectiveCamera(
+        position: Vector3(x, 0, 0),
+        target: Vector3(x, 0, -1),
+        up: Vector3(0, 1, 0),
+        fovNear: 0.1,
+        fovFar: 1000,
+      ),
+      target: target,
+    );
+
+    for (var frame = 0; frame < 3; frame++) {
+      activeRenderCounters.reset();
+      final recorder = ui.PictureRecorder();
+      scene.renderViews([view(0)], ui.Canvas(recorder));
+      recorder.endRecording().dispose();
+    }
+
+    expect(activeRenderCounters.colorItemsKept, 0);
+    expect(activeRenderCounters.colorItemsEncoded, 1);
+    expect(scene.cameraFrame([view(1)]), isNull);
+  });
 }

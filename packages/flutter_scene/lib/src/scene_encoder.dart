@@ -3495,6 +3495,9 @@ final class RetainedColorDraws extends RetainedDraws {
     activeRenderCounters
       ..colorItemsKept += keptCount
       ..colorItemsEncoded += encoded.length;
+    // A frame that encodes an opaque draw is not one another camera replays,
+    // whether or not the pass keeps any.
+    CameraReplay.recording?.refuseWhere(!keepsForAnyCamera);
     encoder.keptOpaque = _drawn.isEmpty ? null : this;
   }
 
