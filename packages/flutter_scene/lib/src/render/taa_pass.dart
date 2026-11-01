@@ -86,7 +86,10 @@ class TaaHistoryState {
     _hasHistory = false;
   }
 
+  /// Frees the history and previous-depth textures; work already submitted
+  /// keeps them.
   void dispose() {
+    heldTextures.forEach(gpu.gpuHost.releaseTexture);
     _historyA = null;
     _historyB = null;
     _previousLinearDepth = null;

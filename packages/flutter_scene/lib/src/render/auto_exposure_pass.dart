@@ -63,6 +63,13 @@ class AutoExposureState {
   /// The adapted-factor textures this state holds.
   Iterable<gpu.Texture> get heldTextures => [_a, _b].nonNulls;
 
+  /// Frees the adapted-factor textures; work already submitted keeps them.
+  void dispose() {
+    heldTextures.forEach(gpu.gpuHost.releaseTexture);
+    _a = null;
+    _b = null;
+  }
+
   /// Swaps [previous] and [next] after a metered frame.
   void flip() => _current = 1 - _current;
 

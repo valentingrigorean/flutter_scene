@@ -801,6 +801,30 @@ class MeshGeometry extends UnskinnedGeometry {
     setLocalBounds(Aabb3.minMax(min, max), Sphere.centerRadius(center, radius));
   }
 
+  /// Frees the attribute rings and the index buffer of an updatable mesh,
+  /// then what [Geometry.dispose] frees.
+  @override
+  void dispose() {
+    if (isDisposed) return;
+    if (storage == GeometryStorage.updatable) {
+      for (final ring in [
+        _positionRing,
+        _normalRing,
+        _texCoordRing,
+        _texCoord1Ring,
+        _colorRing,
+        _tangentRing,
+      ]) {
+        ring.dispose();
+      }
+      _streamViews = const [];
+    }
+    final indices = _indexBuffer;
+    if (indices != null) gpu.gpuHost.releaseBuffer(indices);
+    _indexBuffer = null;
+    super.dispose();
+  }
+
   void _ensureUpdatable(String operation) {
     if (storage != GeometryStorage.updatable) {
       throw StateError(
@@ -919,6 +943,14 @@ class _RingBufferStream {
   final List<({int start, int end})> _stale = [];
   int _capacityVertices = 0;
   int _cursor = 0;
+
+  // Frees the ring's buffers; work already submitted keeps them.
+  void dispose() {
+    _buffers.forEach(gpu.gpuHost.releaseBuffer);
+    _buffers.clear();
+    _stale.clear();
+    _capacityVertices = 0;
+  }
 
   /// Replaces every vertex (the full-stream write used at construction and
   /// on rebuild).

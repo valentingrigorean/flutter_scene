@@ -184,6 +184,20 @@ class ResourceRealizer {
     return byId;
   }
 
+  /// Frees the geometry and textures this realizer made, for a document no
+  /// realized node draws any more. Work already submitted keeps them. A
+  /// realizer that [adoptUnchanged] seeded owns what it adopted, so the one it
+  /// adopted from must not be disposed while this one lives.
+  void dispose() {
+    for (final geometry in _geometries.values) {
+      geometry.dispose();
+    }
+    _geometries.clear();
+    _materials.clear();
+    _textures.values.toSet().forEach(gpu.gpuHost.releaseTexture);
+    _textures.clear();
+  }
+
   /// The live geometry for resource [id], realized and memoized on first use.
   /// The result is stamped with its origin so the serializer can recover it.
   Geometry geometry(LocalId id) => _geometries[id] ??= tagResourceOrigin(

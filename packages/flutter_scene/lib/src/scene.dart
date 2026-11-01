@@ -934,15 +934,19 @@ base class Scene implements SceneGraph {
   /// Whether [dispose] has run.
   bool get isDisposed => _disposed;
 
-  /// Releases the render targets this scene keeps across frames: each view's
+  /// Frees the render targets this scene keeps across frames: each view's
   /// output ring and transient attachment pool, and the history textures of
   /// temporal anti-aliasing, global illumination, auto exposure,
   /// screen-space indirect light, cached shadows, punctual lights, probe
-  /// captures, and planar reflections.
+  /// captures, and planar reflections, plus the textures [skyEnvironment]
+  /// baked and the backend items [renderScene] keeps
+  /// ([RenderScene.dispose]).
   ///
-  /// The textures become unreachable from the scene at this call, even if the
-  /// scene object lives on. The GPU memory itself frees once those textures
-  /// are collected. The scene graph is left as it is.
+  /// Where the GPU backend can free memory at once (wgpu, WebGPU, WebGL) it
+  /// does so at this call, and work already submitted keeps what it reads;
+  /// elsewhere the memory frees once the textures are collected. The images
+  /// last handed to a canvas are kept, since they may still be on screen.
+  /// The scene graph is left as it is.
   ///
   /// A pending [captureRenderGraph] completes with a [StateError], and a
   /// [warmUp] in progress stops. A later [render], [renderViews], [warmUp],
@@ -960,9 +964,13 @@ base class Scene implements SceneGraph {
     _taaState?.dispose();
     _taaState = null;
     _irradianceField.dispose();
-    _punctualLightBuffer.releaseTextures();
+    _punctualLightBuffer.dispose();
+    _autoExposureState?.dispose();
     _autoExposureState = null;
+    _directionalShadowCache?.dispose();
     _directionalShadowCache = null;
+    final ssgiHistory = _ssgiHistoryColor;
+    if (ssgiHistory != null) gpu.gpuHost.releaseTexture(ssgiHistory);
     _ssgiHistoryColor = null;
     _ssgiHistoryViewProjection = null;
     _probeCapturePool?.clear();
@@ -970,7 +978,12 @@ base class Scene implements SceneGraph {
     for (final reflector in renderScene.planarReflectorComponents) {
       reflector.internalDistributeFrame(null);
     }
+    for (final resources in _planarCaptureResources.values) {
+      resources.dispose();
+    }
     _planarCaptureResources.clear();
+    skyEnvironment?.releaseBake();
+    renderScene.dispose();
     debugLastPlanarCapturePasses = const [];
     _supersedeGraphCaptures(
       StateError('The scene was disposed before a frame was captured'),
@@ -5569,6 +5582,14 @@ class _PlanarCaptureResources {
 
   Iterable<gpu.Texture> get heldTextures =>
       [?_texture].followedBy(pool.heldTextures);
+
+  // Frees the capture target and the pool; work already submitted keeps them.
+  void dispose() {
+    final texture = _texture;
+    if (texture != null) gpu.gpuHost.releaseTexture(texture);
+    _texture = null;
+    pool.clear();
+  }
 
   // The group's capture target at the requested size, reallocated when the
   // size changes (the old texture is released to finalizers; any in-flight

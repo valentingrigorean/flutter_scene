@@ -134,10 +134,26 @@ class TextureSampling {
 /// ```
 /// {@category Assets and loading}
 class Texture2D implements TextureSource {
-  Texture2D._(this._texture, this._sampler);
+  Texture2D._(this._texture, this._sampler, {bool owned = true})
+    : _owned = owned;
 
   final gpu.Texture _texture;
   final gpu.SamplerOptions _sampler;
+
+  // Whether this texture frees [_texture] at [dispose]; an image's wrapped
+  // texture is left to the image. A [withSampler] view shares the answer.
+  final bool _owned;
+
+  /// Frees the GPU texture this made. Where the GPU backend can free memory
+  /// at once (wgpu, WebGPU, WebGL) it does so at this call, and work already
+  /// submitted keeps what it reads. A texture that wraps a `ui.Image`'s own
+  /// texture leaves it to the image.
+  ///
+  /// The texture must not be drawn afterwards, so dispose only one no
+  /// material of a live scene still samples. A second call does nothing.
+  void dispose() {
+    if (_owned) gpu.gpuHost.releaseTexture(_texture);
+  }
 
   /// The underlying GPU texture, for advanced/interop use.
   gpu.Texture get gpuTexture => _texture;
@@ -169,10 +185,11 @@ class Texture2D implements TextureSource {
   );
 
   /// This texture's GPU image sampled with [sampler] instead (for example a
-  /// glTF sampler's wrap and filter modes). The GPU texture is shared.
+  /// glTF sampler's wrap and filter modes). The GPU texture is shared, and
+  /// disposing either frees it.
   @internal
   Texture2D withSampler(gpu.SamplerOptions sampler) =>
-      Texture2D._(_texture, sampler);
+      Texture2D._(_texture, sampler, owned: _owned);
 
   /// Builds a texture from a prebuilt mip chain ([levels], base level first,
   /// each level RGBA8888, straight alpha, row-major), sized by its base level.
@@ -234,6 +251,7 @@ class Texture2D implements TextureSource {
 
   /// Wraps an already-uploaded GPU [texture] with [sampling] (the KTX2 load
   /// paths, whose mip chains come from the file rather than the generator).
+  /// The result owns [texture] and frees it at [dispose].
   @internal
   static Texture2D fromGpuTexture(
     gpu.Texture texture, {
@@ -266,7 +284,7 @@ class Texture2D implements TextureSource {
         wrapped = null;
       }
       if (wrapped != null) {
-        return Texture2D._(wrapped, sampling.toSamplerOptions());
+        return Texture2D._(wrapped, sampling.toSamplerOptions(), owned: false);
       }
     }
     final bytes = await image.toByteData(

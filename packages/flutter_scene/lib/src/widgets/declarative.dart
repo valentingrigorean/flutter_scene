@@ -44,6 +44,8 @@ import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/mesh.dart';
 import 'package:flutter_scene/src/node.dart';
 import 'package:flutter_scene/src/resource_group.dart';
+import 'package:flutter_scene/src/runtime_importer/runtime_importer.dart'
+    show disposeImportedResources;
 import 'package:flutter_scene/src/widgets/scene_view.dart';
 
 /// The declarative scene layer, widgets that own and reconcile [Node]s in a
@@ -803,7 +805,8 @@ class SceneModelLoadGate {
 /// and imported once, and each [SceneModel] instance mounts a [Node.clone]
 /// of the shared template (geometry, textures, and materials stay shared;
 /// primitives, skins, and the variants component are per instance). The
-/// entry is evicted when the last user releases it.
+/// entry is evicted, and the GPU resources its import made are freed, when
+/// the last user releases it.
 ///
 /// [acquire] returns a lease tied to the specific entry it incremented, not
 /// just the cache key: after a hot-reload evict + reacquire, an older lease
@@ -844,19 +847,26 @@ class _ModelTemplateCache {
   }
 
   /// Drops the entry for [cacheKey] so the next acquire re-imports. Live
-  /// holders keep their clones; their later releases become no-ops.
+  /// holders keep their clones; the last of their releases frees the evicted
+  /// entry's resources.
   static void evict(String cacheKey) => _entries.remove(cacheKey);
 
   // TODO(model-cache-keepalive): eviction is immediate at refcount zero, so
   // an unmount/remount cycle (a list scrolling a model off and back)
   // re-imports from scratch; add a small keep-alive or unify with the
   // SceneRegistry template cache.
+  //
+  // The last release of an entry frees the GPU resources its import made,
+  // which every clone shares, whether or not a hot reload evicted it first:
+  // each lease belongs to one entry, so no clone of it is left.
   static void release(_ModelTemplateLease lease) {
     final entry = lease._entry;
     entry.refCount--;
-    if (entry.refCount <= 0 && identical(_entries[lease._cacheKey], entry)) {
+    if (entry.refCount > 0) return;
+    if (identical(_entries[lease._cacheKey], entry)) {
       _entries.remove(lease._cacheKey);
     }
+    entry.template.then(disposeImportedResources, onError: (Object _) {});
   }
 }
 

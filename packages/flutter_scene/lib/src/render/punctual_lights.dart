@@ -184,6 +184,14 @@ class _TextureRing {
 
   bool get isEmpty => _ring.every((texture) => texture == null);
 
+  /// Frees every texture; work already submitted keeps them.
+  void dispose() {
+    for (final texture in _ring) {
+      if (texture != null) gpu.gpuHost.releaseTexture(texture);
+    }
+    clear();
+  }
+
   /// Drops every texture, so the next [acquire] allocates again.
   void clear() {
     _ring.fillRange(0, _ring.length, null);
@@ -502,6 +510,15 @@ class PunctualLightBuffer {
     _froxelRing.clear();
     _cachedFroxels = null;
     _froxelCacheEpoch = -1;
+  }
+
+  /// Frees every texture the buffer keeps across frames; work already
+  /// submitted keeps them.
+  void dispose() {
+    _paramsRing.dispose();
+    _indexRing.dispose();
+    _froxelRing.dispose();
+    releaseTextures();
   }
 
   /// Whether any ring holds a texture.

@@ -171,6 +171,14 @@ class DirectionalShadowCache {
       .expand((entry) => [entry.tile, entry.tileColor])
       .nonNulls
       .followedBy([?tileDepth]);
+
+  /// Frees the tiles and their depth; work already submitted keeps them.
+  void dispose() {
+    heldTextures.toList().forEach(gpu.gpuHost.releaseTexture);
+    _entries.clear();
+    tileDepth = null;
+  }
+
   int _resolution = 0;
   ShadowCasterFaces _casterFaces = ShadowCasterFaces.front;
   int _casterChannelMask = 0xFF;

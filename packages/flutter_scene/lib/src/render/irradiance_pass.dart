@@ -132,8 +132,12 @@ class IrradianceFieldState {
     _resetPending = false;
   }
 
-  /// Frees every texture and buffer the field owns.
+  /// Frees every texture and buffer the field owns; work already submitted
+  /// keeps them.
   void dispose() {
+    heldTextures.forEach(gpu.gpuHost.releaseTexture);
+    final instances = _instanceBuffer;
+    if (instances != null) gpu.gpuHost.releaseBuffer(instances);
     _releaseTextures();
     _instanceBuffer = null;
     _instanceCapacity = 0;

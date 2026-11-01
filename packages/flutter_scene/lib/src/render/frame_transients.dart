@@ -253,6 +253,11 @@ abstract interface class FrameTransients implements TransientWriter {
   /// Recycles completed buffers and resets frame stats. Called once per
   /// frame from the render setup.
   void beginFrame();
+
+  /// Gives back the slots the draws of [keys] hold ([transientDrawKey]), for
+  /// draws that will not come again, such as a disposed scene's. Call it
+  /// between frames.
+  void forgetDrawKeys(Iterable<Object> keys);
 }
 
 /// Per-emplacement pooled transients for the immediate-execution WebGL2
@@ -272,6 +277,10 @@ class ImmediatePoolTransients implements FrameTransients {
   ImmediatePoolTransients(this._tracker) {
     _tracker.addBeforeSubmitListener(_onBeforeSubmit);
   }
+
+  // Every emplacement has a buffer of its own, so no draw holds a slot.
+  @override
+  void forgetDrawKeys(Iterable<Object> keys) {}
 
   /// The smallest pooled buffer size; tiny uniform blocks share this class.
   static const int kMinBufferLengthInBytes = 512;
@@ -518,6 +527,17 @@ class TransientArena implements FrameTransients {
     final completed = _tracker.completedThrough;
     _sealed.removeWhere((block) => block.retireIfIdle(completed, _frame));
     if (_frame % kSlotIdleFrames == 0) _releaseIdleSlots();
+  }
+
+  @override
+  void forgetDrawKeys(Iterable<Object> keys) {
+    for (final key in keys) {
+      final draw = _drawSlots.remove(key);
+      if (draw == null) continue;
+      for (final slot in draw.slots) {
+        if (slot != null) (_freeSlots[slot.capacity] ??= []).add(slot);
+      }
+    }
   }
 
   void _releaseIdleSlots() {

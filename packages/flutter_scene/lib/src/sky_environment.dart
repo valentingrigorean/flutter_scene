@@ -2,6 +2,7 @@
 library;
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter/foundation.dart' show internal;
 import 'package:flutter_scene/src/material/environment.dart';
 import 'package:flutter_scene/src/render/sky_bake.dart';
 import 'package:flutter_scene/src/skybox.dart';
@@ -74,6 +75,10 @@ class SkyEnvironment {
   DateTime? _lastBake;
   final SkyBakeJob _job = SkyBakeJob();
 
+  // The environment of the first bake, which this binding made and frees at
+  // [releaseBake]; dropped once a later bake replaces it.
+  EnvironmentMap? _firstBake;
+
   // The empty environment handed to the sky fragment's bind during a bake (a
   // sky baked into the environment cannot sample the environment it is
   // producing). Cached so per-frame bake steps allocate nothing.
@@ -99,7 +104,7 @@ class SkyEnvironment {
       _everBaked = true;
       _dirty = false;
       _lastBake = now;
-      return EnvironmentMap.fromSky(
+      return _firstBake = EnvironmentMap.fromSky(
         source,
         faceResolution: faceResolution,
         equirectWidth: equirectWidth,
@@ -113,10 +118,24 @@ class SkyEnvironment {
     }
     final done = _job.advance(source, _noEnvironment);
     if (done == null) return null;
+    _firstBake = null;
     return EnvironmentMap.fromGpuTextures(
       prefilteredRadiance: done.atlas,
       diffuseShTexture: done.sh,
     );
+  }
+
+  /// Frees the textures this binding baked, for a scene that is disposed;
+  /// work already submitted keeps them. The environments it returned must not
+  /// be drawn with afterwards. A later [bakeIfDue] bakes again from scratch.
+  @internal
+  void releaseBake() {
+    _firstBake?.dispose();
+    _firstBake = null;
+    _job.dispose();
+    _everBaked = false;
+    _dirty = true;
+    _lastBake = null;
   }
 
   bool _isDue(DateTime now) {

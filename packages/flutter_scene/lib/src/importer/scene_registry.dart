@@ -686,7 +686,10 @@ bool _releaseSceneTemplateClaim(String key) {
     return false;
   }
   _sceneTemplateHolders.remove(key);
-  return _sceneTemplates.remove(key) != null;
+  final template = _sceneTemplates.remove(key);
+  // A template that failed to load holds nothing.
+  template?.then((t) => t.resources.dispose(), onError: (Object _) {});
+  return template != null;
 }
 
 /// Releases one claim on the template [loadScene] built for [sourcePath],
@@ -696,10 +699,11 @@ bool _releaseSceneTemplateClaim(String key) {
 /// realized geometry, materials, and textures, shared by every instance loaded
 /// from it, so this is the lever for unloading a level.
 ///
-/// Dropping the template releases the engine's reference, not the memory.
-/// Nodes already realized from it keep their own references and stay resident
-/// until they are removed from the scene and collected. See
-/// `Scene.memoryReport` for what is actually resident.
+/// The last release frees the template's geometry and textures: where the GPU
+/// backend can free memory at once (wgpu, WebGPU, WebGL) it does so then, and
+/// work already submitted keeps what it reads. Every instance realized from
+/// the template shares them, so release only once no scene draws an instance
+/// of it. See `Scene.memoryReport` for what is actually resident.
 /// {@category Assets and loading}
 Future<bool> releaseScene(
   String sourcePath, {

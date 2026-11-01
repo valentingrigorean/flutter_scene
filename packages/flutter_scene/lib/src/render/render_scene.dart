@@ -37,7 +37,10 @@ import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/render/lod.dart';
 import 'package:flutter_scene/src/render/pre_pass.dart';
 import 'package:flutter_scene/src/render/render_stats.dart';
+import 'package:flutter_scene/src/render/frame_transients.dart'
+    show instanceTransients, uniformTransients;
 import 'package:flutter_scene/src/render/render_layers.dart';
+import 'package:flutter_scene/src/render/retained_draws.dart' show SceneItems;
 import 'package:flutter_scene/src/render_view.dart';
 
 // Changes when a render item takes another material or level-of-detail
@@ -1501,6 +1504,19 @@ class DrawOrigin {
 class RenderScene {
   /// Every registered render item, in no particular order.
   final List<RenderItem> items = [];
+
+  /// Drops what the backend keeps for this scene: the kept draws of every
+  /// pass and their item set ([SceneItems.dispose]), and the per-frame
+  /// transient slots its items and their materials hold. Call it between
+  /// frames, once the scene draws no more; `Scene.dispose` does.
+  void dispose() {
+    SceneItems.dispose(this);
+    final keys = [
+      for (final item in items) ...[item, item.material],
+    ];
+    uniformTransients.forgetDrawKeys(keys);
+    instanceTransients.forgetDrawKeys(keys);
+  }
 
   /// The nodes this scene ticks and refreshes before a frame.
   @internal
