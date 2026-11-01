@@ -25,6 +25,7 @@ import 'package:flutter_scene/src/render/near_fit.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/render/projection_params.dart';
 import 'package:flutter_scene/src/render/debug_view.dart';
+import 'package:flutter_scene/src/root_zone_load.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart'
     show beginRetainedInstanceFrame;
@@ -237,7 +238,7 @@ base class Scene implements SceneGraph {
     root.registerAsRoot(this);
   }
 
-  static Future<void>? _initializeStaticResources;
+  static RootZoneLoad<void>? _staticResources;
   static int _staticResourcesGeneration = 0;
   static bool _readyToRender = false;
 
@@ -562,15 +563,20 @@ base class Scene implements SceneGraph {
   /// misleading one from the first draw. `SceneView` reports it and stays on
   /// its loading builder.
   static Future<void> initializeStaticResources() {
-    if (_initializeStaticResources != null &&
+    final current = _staticResources;
+    if (current != null &&
         _staticResourcesGeneration == gpu.gpuContextGeneration) {
-      return _initializeStaticResources!;
+      return current.future;
     }
     // The resources of a context reopened on a new device load again there.
     _readyToRender = false;
     _staticResourcesGeneration = gpu.gpuContextGeneration;
     listenForMemoryPressure();
-    _initializeStaticResources = gpu
+    return (_staticResources = RootZoneLoad(_loadStaticResources)).future;
+  }
+
+  static Future<void> _loadStaticResources() {
+    return gpu
         .initializeGpuBackend()
         .then(
           (_) => Future.wait([
@@ -599,7 +605,7 @@ base class Scene implements SceneGraph {
             error: e,
             stackTrace: stacktrace,
           );
-          _initializeStaticResources = null;
+          _staticResources = null;
           // Rethrow so an awaiting caller sees the real cause. Completing
           // normally here left the failure visible only through
           // `dart:developer` log(), which web does not surface, and sent
@@ -607,7 +613,6 @@ base class Scene implements SceneGraph {
           // initializeStaticResources()" instead, the call they just made.
           Error.throwWithStackTrace(e, stacktrace);
         });
-    return _initializeStaticResources!;
   }
 
   static Future<void> _buildDefaultEnvironmentBetweenFrames() {

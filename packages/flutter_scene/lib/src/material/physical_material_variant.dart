@@ -20,6 +20,7 @@ import '../generated_assets/generated_asset_lookup.dart';
 import '../generated_assets/generated_assets.dart';
 import '../gpu/gpu.dart' as gpu;
 import '../render/frame_transients.dart';
+import '../root_zone_load.dart';
 import 'engine_lighting.dart';
 import 'physical_material.dart';
 import 'physically_based_material.dart' show AlphaMode, TextureTransform;
@@ -54,7 +55,7 @@ String physicalBundleUnusableMessage(String key) =>
     'which the bundle format is tied to. Both are fixed by rebuilding, so run '
     '`flutter clean`, delete $generatedAssetsEntry, and build again.';
 
-Future<_PhysicalAssets>? _physicalAssetsFuture;
+RootZoneLoad<_PhysicalAssets>? _physicalAssetsLoad;
 _PhysicalAssets? _physicalAssets;
 
 // Set when a load a material asked for fails, so the materials that keep
@@ -69,17 +70,19 @@ final class _PhysicalAssets {
   final Map<String, Object?> metadata;
 }
 
-Future<_PhysicalAssets> _loadPhysicalAssets() => _physicalAssetsFuture ??=
-    _loadPhysicalAssetsAndResetOnFailure().then((assets) {
-      markRenderSourcesChanged();
-      return _physicalAssets = assets;
-    });
+Future<_PhysicalAssets> _loadPhysicalAssets() =>
+    (_physicalAssetsLoad ??= RootZoneLoad(
+      () => _loadPhysicalAssetsAndResetOnFailure().then((assets) {
+        markRenderSourcesChanged();
+        return _physicalAssets = assets;
+      }),
+    )).future;
 
 Future<_PhysicalAssets> _loadPhysicalAssetsAndResetOnFailure() async {
   try {
     return await _loadPhysicalAssetsUncached();
   } catch (_) {
-    _physicalAssetsFuture = null;
+    _physicalAssetsLoad = null;
     _physicalAssets = null;
     rethrow;
   }
@@ -167,7 +170,7 @@ Future<void> initializePhysicalMaterialResources() async {
 @internal
 void requestPhysicalMaterialResources() {
   if (_physicalAssets != null ||
-      _physicalAssetsFuture != null ||
+      _physicalAssetsLoad != null ||
       _physicalAssetsFailed) {
     return;
   }
@@ -194,24 +197,15 @@ void requestPhysicalMaterialResources() {
 /// Whether the physical bundle is loading and has not arrived yet.
 @internal
 bool get physicalMaterialResourcesPending =>
-    _physicalAssetsFuture != null && _physicalAssets == null;
+    _physicalAssetsLoad != null && _physicalAssets == null;
 
 /// Completes when an in-flight physical bundle load settles, successfully or
 /// not, or null when none is in flight. Never completes with an error.
 @internal
 Future<void>? get physicalMaterialResourcesLoad {
   if (!physicalMaterialResourcesPending) return null;
-  final load = _physicalAssetsFuture!;
-  if (!identical(load, _settledLoadSource)) {
-    _settledLoadSource = load;
-    _settledLoad = load.then<void>((_) {}, onError: (Object _) {});
-  }
-  return _settledLoad;
+  return _physicalAssetsLoad!.settled;
 }
-
-// The same settled future for one load, so callers can tell repeat asks apart.
-Future<_PhysicalAssets>? _settledLoadSource;
-Future<void>? _settledLoad;
 
 /// Whether the physical bundle is loaded and materials can be prepared from
 /// it synchronously.
@@ -236,7 +230,7 @@ bool? _readyOverride;
 void resetPhysicalMaterialResourcesForTesting() {
   _readyOverride = null;
   markRenderSourcesChanged();
-  _physicalAssetsFuture = null;
+  _physicalAssetsLoad = null;
   _physicalAssets = null;
   _physicalAssetsFailed = false;
 }

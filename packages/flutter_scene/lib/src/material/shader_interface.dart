@@ -15,6 +15,8 @@
 // fragment shaders it meets in the depth prepass and shadow passes. That needs
 // the engine bundle's reflection, which costs too much to parse eagerly.
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_scene/src/generated_assets/runtime_target.dart'
     show runtimeOperatingSystem;
@@ -187,7 +189,10 @@ void requestStageInterfaces([Iterable<gpu.Shader?> shaders = const []]) {
   ];
   if (loads.isEmpty) return;
   final previous = _interfaceLoad;
-  final load = Future.wait([?previous, ...loads]).then<void>((_) {});
+  // Never fails, so it may answer a caller in any zone from the root zone.
+  final load = Zone.root.run(
+    () => Future.wait([?previous, ...loads]).then<void>((_) {}),
+  );
   _interfaceLoad = load;
   load.whenComplete(() {
     if (identical(_interfaceLoad, load)) _interfaceLoad = null;

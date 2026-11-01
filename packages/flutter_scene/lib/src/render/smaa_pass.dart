@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -13,6 +14,7 @@ import 'package:flutter_scene/src/scene_encoder.dart' show resolvePipeline;
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:vector_math/vector_math.dart' show Vector4;
 import 'package:flutter_scene/src/render/uniform_slots.dart';
+import 'package:flutter_scene/src/root_zone_load.dart';
 
 /// Quality settings for SMAA anti-aliasing. Active when
 /// `Scene.antiAliasingMode` is `AntiAliasingMode.smaa`. The defaults mirror
@@ -109,10 +111,13 @@ class SmaaPass extends RenderGraphPass {
   static Future<void> initializeStaticResources() {
     if (isInitialized) return Future<void>.value();
     _failed = false;
-    return _load ??= _loadTables().whenComplete(() => _load = null);
+    final load = _load ??= RootZoneLoad(
+      () => _loadTables().whenComplete(() => _load = null),
+    );
+    return load.future;
   }
 
-  static Future<void>? _load;
+  static RootZoneLoad<void>? _load;
   static Future<void>? _requested;
 
   // Set when a requested load fails, so frames that keep asking do not reload
@@ -125,15 +130,19 @@ class SmaaPass extends RenderGraphPass {
   /// [isInitialized] false, which keeps the pass out of the graph.
   static Future<void>? request() {
     if (isInitialized || _failed) return null;
-    return _requested ??= initializeStaticResources()
-        .then<void>(
-          (_) {},
-          onError: (Object error) {
-            _failed = true;
-            debugPrint('flutter_scene: could not load the SMAA tables: $error');
-          },
-        )
-        .whenComplete(() => _requested = null);
+    return _requested ??= Zone.root.run(
+      () => initializeStaticResources()
+          .then<void>(
+            (_) {},
+            onError: (Object error) {
+              _failed = true;
+              debugPrint(
+                'flutter_scene: could not load the SMAA tables: $error',
+              );
+            },
+          )
+          .whenComplete(() => _requested = null),
+    );
   }
 
   static Future<void> _loadTables() async {
