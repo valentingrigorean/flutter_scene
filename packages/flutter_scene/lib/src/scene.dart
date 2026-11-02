@@ -2724,6 +2724,52 @@ base class Scene implements SceneGraph {
     return draws;
   }
 
+  /// Visits each node whose items the color passes of [views] draw into a
+  /// surface of [size], with the draws they submit.
+  ///
+  /// An item counts as the color pass culls it: by the frustum, the view's
+  /// culling planes, its layer mask, its instance cells and its level of
+  /// detail, so a cross-fading level counts both of its levels. The count is
+  /// per item: an item that joins a merged instance batch counts its own
+  /// draw, and a dithered fade's coverage pre-draw is left out. The views
+  /// that render into a [RenderTexture] are not counted.
+  ///
+  /// It records nothing.
+  void viewDraws(
+    List<RenderView> views, {
+    required ui.Size size,
+    required void Function(Node node, int draws) visit,
+  }) {
+    _checkNotDisposed('viewDraws');
+    if (views.isEmpty || size.isEmpty) return;
+    renderScene.refreshChangedNodes();
+    renderScene.rebuildIfDirty();
+    for (final view in views) {
+      if (view.target != null) continue;
+      final viewSize = _viewDrawArea(ui.Offset.zero & size, view.viewport).size;
+      if (viewSize.isEmpty) continue;
+      final camera = ViewportBoundCamera(view.camera, viewSize);
+      final frustum = cullingFrustumOf(camera, viewSize);
+      final cameraPosition = camera.position;
+      final lodProjection = lodProjectionOf(camera, viewSize);
+      renderScene.cull(frustum, (item) {
+        final node = item.sourceNode;
+        if (node is! Node) return;
+        var draws = 0;
+        selectColorDraws(
+          item,
+          frustum: frustum,
+          layerMask: view.layerMask,
+          cullingPlanes: view.cullingPlanes,
+          cameraPosition: cameraPosition,
+          lodProjection: lodProjection,
+          draw: (_, _, _) => draws++,
+        );
+        if (draws > 0) visit(node, draws);
+      }, additionalPlanes: view.cullingPlanes);
+    }
+  }
+
   // Lists for [unbuiltPipelines] each caster of [view]'s shadow pass whose
   // shadow pipeline is unbuilt: an opaque caster inside a frustum the pass
   // draws, under that frustum's caster channels. A cached tile reaches up to
