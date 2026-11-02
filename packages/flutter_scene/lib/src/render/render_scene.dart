@@ -1056,6 +1056,31 @@ class RenderItem {
     return visible == null || visible.isNotEmpty;
   }
 
+  /// Whether a view through [frustum] and [additionalPlanes] may show this
+  /// item, by the test [RenderScene.cull] runs on the items its tree holds.
+  /// An item the tree does not hold, not [frustumCulled] or unbounded, may.
+  @internal
+  bool meetsView(Frustum frustum, List<Plane> additionalPlanes) {
+    if (!frustumCulled) return true;
+    final bounds = worldBounds;
+    if (bounds == null) return true;
+    if (!frustum.intersectsWithAabb3(bounds)) return false;
+    for (final plane in additionalPlanes) {
+      if (!_meetsPlane(bounds, plane)) return false;
+    }
+    return true;
+  }
+
+  // Whether [bounds] reaches the inner side of [plane]: its corner farthest
+  // along the normal is not below it, the tree's test.
+  static bool _meetsPlane(Aabb3 bounds, Plane plane) {
+    final normal = plane.normal;
+    final x = normal.x < 0 ? bounds.min.x : bounds.max.x;
+    final y = normal.y < 0 ? bounds.min.y : bounds.max.y;
+    final z = normal.z < 0 ? bounds.min.z : bounds.max.z;
+    return normal.x * x + normal.y * y + normal.z * z + plane.constant >= 0;
+  }
+
   /// Refreshes [shadowInstanceRanges] for a shadow map drawn through
   /// [frustum] and [additionalPlanes], and returns whether anything remains.
   ///

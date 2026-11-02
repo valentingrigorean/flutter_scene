@@ -1418,6 +1418,20 @@ base class SceneEncoder {
   /// instance so each can be depth-sorted independently.
   void submit(RenderItem item) => _submit(item, null, 0);
 
+  /// Queues [item], which reached this encoder past the view's cull (a draw a
+  /// kept pass encodes), as [submit] does when the view may show it.
+  @internal
+  void submitInView(RenderItem item) {
+    if (!_cullInstances || item.meetsView(frustum, _cullingPlanes)) {
+      _submit(item, null, 0);
+      return;
+    }
+    activeRenderCounters
+      ..submitted += 1
+      ..culled += 1;
+    activeDrawRecorder?.onSkip(item, DrawSkipReason.frustumCulled);
+  }
+
   /// Encodes [item]'s single color draw immediately onto this encoder's
   /// render pass, for recording into an item set ([RetainedColorDraws]): no
   /// sorting, coverage pre-draw or cross-fade. The caller guarantees [item]
@@ -3831,7 +3845,7 @@ final class RetainedTranslucentDraws extends RetainedDraws {
     _cursor = 0;
     _submitted = 0;
     for (final item in encoded) {
-      encoder.submit(item);
+      encoder.submitInView(item);
     }
     final encodedOrders = {for (final item in encoded) item.renderOrder};
     for (final MapEntry(key: order, value: members) in _members.entries) {
@@ -3845,7 +3859,7 @@ final class RetainedTranslucentDraws extends RetainedDraws {
         continue;
       }
       for (final item in members) {
-        encoder.submit(item);
+        encoder.submitInView(item);
       }
       _submitted += members.length;
     }

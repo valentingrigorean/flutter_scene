@@ -241,7 +241,9 @@ class DepthPrepass extends RenderGraphPass {
         })
         ..refuseWhere(!retained.keepsForAnyCamera || _cameraTransform != null);
       for (final item in retained.encoded) {
-        encoder.submit(item);
+        if (item.meetsView(encoder.frustum, encoder._cullingPlanes)) {
+          encoder.submit(item);
+        }
       }
     } else if (visible != null &&
         visible.cellsCulled &&
