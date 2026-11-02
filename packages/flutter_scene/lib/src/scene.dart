@@ -2725,17 +2725,19 @@ base class Scene implements SceneGraph {
   }
 
   /// Visits each node whose items the color passes of [views] draw into a
-  /// surface of [size], with the draws they submit.
+  /// surface of [size], with the items' draws.
   ///
-  /// An item counts as the color pass culls it: by the frustum, the view's
-  /// culling planes, its layer mask, its instance cells and its level of
-  /// detail, so a cross-fading level counts both of its levels; an instanced
-  /// item with no instances counts none. The count is
-  /// per item: an item that joins a merged instance batch counts its own
-  /// draw, and a dithered fade's coverage pre-draw is left out. The views
-  /// that render into a [RenderTexture] are not counted.
+  /// An item counts as the encoder's per-item test culls it: by the frustum,
+  /// the view's culling planes, its layer mask, its instance cells and its
+  /// level of detail, so a cross-fading level counts both of its levels; an
+  /// instanced item with no rows to draw counts none. The count is per item,
+  /// not per GPU draw: an item that joins a merged instance batch or a draw
+  /// the backend keeps and merges counts its own, the backend's own cull of
+  /// a kept draw is not applied, and a dithered fade's coverage pre-draw is
+  /// left out. The views that render into a [RenderTexture] are not counted.
   ///
-  /// It records nothing.
+  /// It records nothing; a level-of-detail node's level selection advances as
+  /// a frame's does, so query through the camera the next frame draws with.
   void viewDraws(
     List<RenderView> views, {
     required ui.Size size,
@@ -2755,7 +2757,12 @@ base class Scene implements SceneGraph {
       final lodProjection = lodProjectionOf(camera, viewSize);
       renderScene.cull(frustum, (item) {
         final node = item.sourceNode;
-        if (node is! Node || item.instanceSource?.instanceCount == 0) return;
+        if (node is! Node ||
+            item.instanceSource?.instanceCount == 0 ||
+            (item.sharedRows != null &&
+                (item.instanceRanges?.isEmpty ?? false))) {
+          return;
+        }
         var draws = 0;
         selectColorDraws(
           item,
