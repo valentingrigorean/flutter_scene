@@ -2729,7 +2729,8 @@ base class Scene implements SceneGraph {
   ///
   /// An item counts as the color pass culls it: by the frustum, the view's
   /// culling planes, its layer mask, its instance cells and its level of
-  /// detail, so a cross-fading level counts both of its levels. The count is
+  /// detail, so a cross-fading level counts both of its levels; an instanced
+  /// item with no instances counts none. The count is
   /// per item: an item that joins a merged instance batch counts its own
   /// draw, and a dithered fade's coverage pre-draw is left out. The views
   /// that render into a [RenderTexture] are not counted.
@@ -2754,7 +2755,7 @@ base class Scene implements SceneGraph {
       final lodProjection = lodProjectionOf(camera, viewSize);
       renderScene.cull(frustum, (item) {
         final node = item.sourceNode;
-        if (node is! Node) return;
+        if (node is! Node || item.instanceSource?.instanceCount == 0) return;
         var draws = 0;
         selectColorDraws(
           item,

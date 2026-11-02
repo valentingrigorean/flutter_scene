@@ -39,16 +39,15 @@ Node _box(String name, Vector3 at) => Node(
   localTransform: Matrix4.translation(at),
 );
 
-Node _instances(String name, Vector3 at) => Node(name: name)
-  ..addComponent(
-    InstancedMeshComponent(
-      InstancedMesh(
-        geometry: CuboidGeometry(Vector3.all(2)),
-        material: _Encoded(),
-        cullInstances: true,
-      )..addInstance(Matrix4.translation(at)),
-    ),
+Node _instances(String name, [Vector3? at]) {
+  final mesh = InstancedMesh(
+    geometry: CuboidGeometry(Vector3.all(2)),
+    material: _Encoded(),
+    cullInstances: true,
   );
+  if (at != null) mesh.addInstance(Matrix4.translation(at));
+  return Node(name: name)..addComponent(InstancedMeshComponent(mesh));
+}
 
 Map<String, int> _viewDraws(Scene scene, List<RenderView> views) {
   final draws = <String, int>{};
@@ -89,25 +88,31 @@ void main() {
 
   setUpAll(Scene.initializeStaticResources);
 
-  test('a view counts the nodes its color pass draws, leaving out a node '
-      'behind it, an instanced set whose cells it does not see and a node '
-      'outside its layer mask, as many as the pass submits', () async {
-    final scene = Scene()
-      ..add(_box('ahead', Vector3(0, 0, -10)))
-      ..add(_box('behind', Vector3(0, 0, 10)))
-      ..add(_instances('seen', Vector3(0, 0, -10)))
-      ..add(_instances('unseen', Vector3(0, 0, 10)))
-      ..add(_box('masked', Vector3(0, 0, -12))..layers = 2);
-    addTearDown(scene.dispose);
-    final views = [RenderView(camera: _camera, layerMask: 1)];
+  test(
+    'a view counts the nodes its color pass draws, leaving out a node '
+    'behind it, an instanced set whose cells it does not see or with no '
+    'instance and a node outside its layer mask, as many as the pass draws',
+    () async {
+      final scene = Scene()
+        ..add(_box('ahead', Vector3(0, 0, -10)))
+        ..add(_box('behind', Vector3(0, 0, 10)))
+        ..add(_instances('seen', Vector3(0, 0, -10)))
+        ..add(_instances('unseen', Vector3(0, 0, 10)))
+        ..add(_instances('empty'))
+        ..add(_box('masked', Vector3(0, 0, -12))..layers = 2);
+      addTearDown(scene.dispose);
+      final views = [RenderView(camera: _camera, layerMask: 1)];
 
-    final draws = _viewDraws(scene, views);
-    expect(draws, {'ahead': 1, 'seen': 1});
+      final draws = _viewDraws(scene, views);
+      expect(draws, {'ahead': 1, 'seen': 1});
 
-    final counters = await _colorPass(scene, views);
-    expect(
-      counters.submitted - counters.culled - counters.layerMasked,
-      draws.values.fold(0, (sum, count) => sum + count),
-    );
-  });
+      final counters = await _colorPass(scene, views);
+      expect(
+        counters.submitted - counters.culled - counters.layerMasked,
+        draws.values.fold(0, (sum, count) => sum + count) + 1,
+        reason: 'the pass submits the empty set and draws nothing of it',
+      );
+      expect(counters.draws, draws.values.fold(0, (sum, count) => sum + count));
+    },
+  );
 }
