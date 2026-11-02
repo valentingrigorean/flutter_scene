@@ -59,9 +59,7 @@ class GpuSubmissionTracker {
   /// key (several scenes painting in one vsync) end as one frame, and
   /// [priorFramesInFlight] leaves that frame out, so each of them makes the
   /// same pacing decision.
-  void beginFrame(Object? key) {
-    _displayFrame = key;
-  }
+  void beginFrame(Object? key) => _displayFrame = key;
 
   /// Marks the end of a frame's submissions, so [framesInFlight] can count
   /// whole frames the GPU has not finished.

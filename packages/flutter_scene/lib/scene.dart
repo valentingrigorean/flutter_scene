@@ -322,6 +322,7 @@ export 'src/render/render_scene.dart'
         currentDrawAnchor,
         currentDrawOrigin,
         currentDrawWorldTransform;
+export 'src/render/held_slots.dart' show HeldSlots;
 export 'src/render/view_info.dart'
     show HeldBlock, kMatInfoFloats, kItemFragInfoFloats, viewInfoOf;
 export 'src/render/shared_instance_rows.dart'

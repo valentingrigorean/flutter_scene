@@ -537,7 +537,7 @@ class ScenePass extends RenderGraphPass {
           keepsTranslucent: translucent != null,
         );
         for (final item in retained.encoded) {
-          encoder.submit(item);
+          encoder.submitInView(item);
         }
         translucent?.syncTranslucent(target: target, encoder: encoder);
       } else {

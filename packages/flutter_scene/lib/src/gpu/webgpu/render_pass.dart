@@ -2,7 +2,7 @@ part of 'webgpu_backend.dart';
 
 /// Records render and compute passes into one `GPUCommandEncoder` and
 /// submits them together. Starting a pass ends the previous one, as on
-/// WebGL2.
+/// WebGL2. A buffer it names is released only once it is submitted.
 final class _WebGpuCommandBuffer extends CommandBuffer {
   _WebGpuCommandBuffer(this._context, String? label)
     : _encoder = _context.device.device.createCommandEncoder(
@@ -14,6 +14,13 @@ final class _WebGpuCommandBuffer extends CommandBuffer {
   _WebGpuRenderPass? _active;
   _WebGpuComputePass? _activeCompute;
   bool _submitted = false;
+  final List<_WebGpuDeviceBuffer> _names = [];
+
+  void _name(DeviceBuffer buffer) {
+    final named = buffer as _WebGpuDeviceBuffer;
+    named._named++;
+    _names.add(named);
+  }
 
   void _endPass() {
     if (_submitted) {
@@ -30,6 +37,7 @@ final class _WebGpuCommandBuffer extends CommandBuffer {
     _endPass();
     return _active = _WebGpuRenderPass(
       _context,
+      this,
       _encoder,
       renderTarget,
       label ?? activeGpuPassLabel,
@@ -39,7 +47,7 @@ final class _WebGpuCommandBuffer extends CommandBuffer {
   @override
   ComputePass createComputePass() {
     _endPass();
-    return _activeCompute = _WebGpuComputePass(_context, _encoder);
+    return _activeCompute = _WebGpuComputePass(_context, this, _encoder);
   }
 
   /// Copies tightly packed rows of [source] into [destination]. WebGPU
@@ -97,6 +105,7 @@ final class _WebGpuCommandBuffer extends CommandBuffer {
         '${rowBytes * height})',
       );
     }
+    _name(source.buffer);
     final buffer = (source.buffer as _WebGpuDeviceBuffer).buffer;
     final aligned = rowBytes % 256 == 0;
     final rows = aligned ? 1 : height;
@@ -124,6 +133,10 @@ final class _WebGpuCommandBuffer extends CommandBuffer {
     _submitted = true;
     final queue = _context.device.device.queue;
     queue.submit([_encoder.finish()].toJS);
+    for (final buffer in _names) {
+      buffer._unname();
+    }
+    _names.clear();
     if (completionCallback == null) return;
     queue.onSubmittedWorkDone().toDart.then(
       (_) => completionCallback(CompletionStatus.successful),
@@ -141,6 +154,7 @@ typedef _BoundTexture = ({_WebGpuTexture texture, SamplerOptions? sampler});
 final class _WebGpuRenderPass extends RenderPass {
   _WebGpuRenderPass(
     this._context,
+    this._commands,
     GPUCommandEncoder encoder,
     this._target,
     String? label,
@@ -171,6 +185,7 @@ final class _WebGpuRenderPass extends RenderPass {
   }
 
   final _WebGpuContext _context;
+  final _WebGpuCommandBuffer _commands;
   final RenderTarget _target;
   late final GPURenderPassEncoder _encoder;
   late final _TargetShape _shape;
@@ -300,11 +315,13 @@ final class _WebGpuRenderPass extends RenderPass {
     while (_vertexBuffers.length <= slot) {
       _vertexBuffers.add(null);
     }
+    _commands._name(bufferView.buffer);
     _vertexBuffers[slot] = bufferView;
   }
 
   @override
   void bindIndexBuffer(BufferView bufferView, IndexType indexType) {
+    _commands._name(bufferView.buffer);
     _indexBuffer = bufferView;
     _indexType = indexType;
     _state.setStripIndexType(indexType);
@@ -333,6 +350,7 @@ final class _WebGpuRenderPass extends RenderPass {
         'and reflects as absent. $_staleBundleHint',
       );
     }
+    _commands._name(bufferView.buffer);
     final bound = (
       buffer: bufferView.buffer as _WebGpuDeviceBuffer,
       offset: bufferView.offsetInBytes,
@@ -491,6 +509,7 @@ final class _WebGpuRenderPass extends RenderPass {
     )) {
       return;
     }
+    _commands._name(arguments.buffer);
     _encoder.drawIndexedIndirect(
       (arguments.buffer as _WebGpuDeviceBuffer).buffer,
       arguments.offsetInBytes,

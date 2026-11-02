@@ -57,11 +57,31 @@ final class _WebGpuDeviceBuffer extends DeviceBuffer {
 
   bool _released = false;
 
+  // How many names of the buffer open command buffers hold, and whether a
+  // release waits for the last of them to be submitted, since a submit that
+  // reads a destroyed buffer fails.
+  int _named = 0;
+  bool _releaseWaits = false;
+
   void _release() {
     if (_released) return;
     _released = true;
+    if (_named > 0) {
+      _releaseWaits = true;
+      return;
+    }
+    _destroy();
+  }
+
+  void _destroy() {
     _bufferFinalizer.detach(this);
     buffer.destroy();
+  }
+
+  void _unname() {
+    if (--_named > 0 || !_releaseWaits) return;
+    _releaseWaits = false;
+    _destroy();
   }
 
   @override

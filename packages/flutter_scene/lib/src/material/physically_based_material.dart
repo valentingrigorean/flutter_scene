@@ -1843,6 +1843,13 @@ class PhysicallyBasedMaterial extends Material {
 
   final HeldBlock _heldTextureTransforms = HeldBlock(44);
 
+  @override
+  void releaseHeldBlocks() {
+    super.releaseHeldBlocks();
+    _heldTextureTransforms.release();
+    _preparedVariant?.releaseHeldBlocks();
+  }
+
   static final Float32List _textureTransformsScratch = Float32List(44);
 
   /// Writes the `TextureTransforms` block this material binds at [time]
