@@ -28,6 +28,13 @@ final _camera = PerspectiveCamera(
 const _size = ui.Size(64, 64);
 
 class _Encoded extends UnlitMaterial {
+  _Encoded({required this.blends});
+
+  final bool blends;
+
+  @override
+  bool isOpaque() => !blends;
+
   @override
   bool get colorRetainable => false;
 
@@ -35,18 +42,16 @@ class _Encoded extends UnlitMaterial {
   bool get participatesInDebugViews => false;
 }
 
-final _material = _Encoded();
-
-Node _box(Vector3 at) => Node(
-  mesh: Mesh(CuboidGeometry(Vector3.all(2)), _material),
+Node _box(_Encoded material, Vector3 at) => Node(
+  mesh: Mesh(CuboidGeometry(Vector3.all(2)), material),
   localTransform: Matrix4.translation(at),
 );
 
 // The color pass's draws in the last of four frames, each of which changes
-// the material so that it renders.
-Future<int> _colorDraws(Scene scene) async {
+// [material] so that it renders.
+Future<int> _colorDraws(Scene scene, _Encoded material) async {
   for (var frame = 0; frame < 4; frame++) {
-    _material.baseColorFactor = Vector4(1, 0, frame / 100, 1);
+    material.baseColorFactor = Vector4(1, 0, frame / 100, 0.5);
     activeRenderCounters.reset();
     final recorder = ui.PictureRecorder();
     scene.render(
@@ -84,16 +89,20 @@ void main() {
 
   setUpAll(Scene.initializeStaticResources);
 
-  test('a draw the backend does not keep is not encoded in a frame that does '
-      'not show it, and is in one that does', () async {
-    final behind = Scene()..add(_box(Vector3(0, 0, 10)));
-    addTearDown(behind.dispose);
-    expect(await _colorDraws(behind), 0);
-    expect(activeRenderCounters.colorItemsEncoded, 1);
+  for (final blends in [false, true]) {
+    final kind = blends ? 'a translucent' : 'an opaque';
+    test('$kind draw the backend does not keep is not encoded in a frame '
+        'that does not show it, and is in one that does', () async {
+      final material = _Encoded(blends: blends);
+      final behind = Scene()..add(_box(material, Vector3(0, 0, 10)));
+      addTearDown(behind.dispose);
+      expect(await _colorDraws(behind, material), 0);
+      expect(activeRenderCounters.colorItemsEncoded, 1);
 
-    final ahead = Scene()..add(_box(Vector3(0, 0, -10)));
-    addTearDown(ahead.dispose);
-    expect(await _colorDraws(ahead), 1);
-    expect(activeRenderCounters.colorItemsEncoded, 1);
-  });
+      final ahead = Scene()..add(_box(material, Vector3(0, 0, -10)));
+      addTearDown(ahead.dispose);
+      expect(await _colorDraws(ahead, material), 1);
+      expect(activeRenderCounters.colorItemsEncoded, 1);
+    });
+  }
 }

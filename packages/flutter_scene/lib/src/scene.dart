@@ -4765,6 +4765,7 @@ base class Scene implements SceneGraph {
             cameraTransform: currentJitteredViewProjection,
             primaryView: primary,
             visibleItems: visibleItems,
+            includeOffscreen: _warmUpIncludeOffscreen,
           ),
         );
       }

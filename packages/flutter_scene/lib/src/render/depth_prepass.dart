@@ -92,8 +92,10 @@ class DepthPrepass extends RenderGraphPass {
     Matrix4? cameraTransform,
     bool primaryView = false,
     ViewVisibleItems? visibleItems,
+    bool includeOffscreen = false,
   }) : _primaryView = primaryView,
        _visibleItems = visibleItems,
+       _includeOffscreen = includeOffscreen,
        _camera = camera,
        _renderScene = renderScene,
        _dimensions = dimensions,
@@ -112,6 +114,10 @@ class DepthPrepass extends RenderGraphPass {
 
   // The view's one cull, which the prepass draws from while it is current.
   final ViewVisibleItems? _visibleItems;
+
+  // Whether the prepass also draws the encoded draws outside the view, as a
+  // warm-up that encodes every render item does.
+  final bool _includeOffscreen;
 
   final Camera _camera;
   final RenderScene _renderScene;
@@ -241,7 +247,8 @@ class DepthPrepass extends RenderGraphPass {
         })
         ..refuseWhere(!retained.keepsForAnyCamera || _cameraTransform != null);
       for (final item in retained.encoded) {
-        if (item.meetsView(encoder.frustum, encoder._cullingPlanes)) {
+        if (_includeOffscreen ||
+            item.meetsView(encoder.frustum, encoder._cullingPlanes)) {
           encoder.submit(item);
         }
       }

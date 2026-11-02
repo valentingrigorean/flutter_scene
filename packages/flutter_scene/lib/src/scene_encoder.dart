@@ -1422,7 +1422,7 @@ base class SceneEncoder {
   /// kept pass encodes), as [submit] does when the view may show it.
   @internal
   void submitInView(RenderItem item) {
-    if (!_cullInstances || item.meetsView(frustum, _cullingPlanes)) {
+    if (_mayShow(item)) {
       _submit(item, null, 0);
       return;
     }
@@ -1431,6 +1431,9 @@ base class SceneEncoder {
       ..culled += 1;
     activeDrawRecorder?.onSkip(item, DrawSkipReason.frustumCulled);
   }
+
+  bool _mayShow(RenderItem item) =>
+      !_cullInstances || item.meetsView(frustum, _cullingPlanes);
 
   /// Encodes [item]'s single color draw immediately onto this encoder's
   /// render pass, for recording into an item set ([RetainedColorDraws]): no
@@ -3847,7 +3850,12 @@ final class RetainedTranslucentDraws extends RetainedDraws {
     for (final item in encoded) {
       encoder.submitInView(item);
     }
-    final encodedOrders = {for (final item in encoded) item.renderOrder};
+    // An order draws its kept members as kept unless the view may show one of
+    // its encoded draws.
+    final encodedOrders = {
+      for (final item in encoded)
+        if (encoder._mayShow(item)) item.renderOrder,
+    };
     for (final MapEntry(key: order, value: members) in _members.entries) {
       members.removeWhere(
         (item) =>
