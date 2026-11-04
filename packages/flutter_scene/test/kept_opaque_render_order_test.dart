@@ -102,7 +102,7 @@ void main() {
       addTearDown(scene.dispose);
 
       var centre = <int>[];
-      for (var frame = 0; frame < 4; frame++) {
+      for (var frame = 0; frame < 6; frame++) {
         encoded.baseColorFactor = Vector4(1, 0, frame / 100, 1);
         activeRenderCounters.reset();
         centre = await _centre(scene);
@@ -154,7 +154,7 @@ void main() {
       ..add(_slab(_Flat(0, 1), 0, name: 'kept'))
       ..add(_slab(encoded, -1));
     addTearDown(scene.dispose);
-    for (var frame = 0; frame < 4; frame++) {
+    for (var frame = 0; frame < 6; frame++) {
       encoded.baseColorFactor = Vector4(1, 0, frame / 100, 1);
       activeRenderCounters.reset();
       await _centre(scene);

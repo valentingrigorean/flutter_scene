@@ -25,14 +25,20 @@ import 'package:flutter_scene/src/render/shared_instance_rows.dart';
 import 'package:flutter_scene/src/render/view_info.dart';
 import 'package:flutter_scene/src/vertex_spin.dart';
 
-// The syncs an item that changed in two syncs in a row stays encoded each
-// frame before it is kept again.
+// The syncs in a row an item changes in before it is encoded each frame. A
+// tile or mesh that streams in changes in a few syncs and rests, and a frame
+// with an encoded draw leaves a render thread, so a pair is not enough.
+const int _hotSyncs = 5;
+
+// The syncs an item that went hot stays encoded each frame before it is kept
+// again.
 const int _coolSyncs = 30;
 
 /// What a kept draw was recorded from; a change records it again.
 final class _Kept {
   int id = 0;
   int changedAt = -1;
+  int changedSyncs = 0;
   bool encoded = false;
 
   // The level of detail the pass draws ([RetainedDraws.levelOf]).
@@ -338,7 +344,7 @@ final class SceneItems {
 /// draw changed. An item that only moves, through its instance record, keeps
 /// its draw: the set holds that record from its first move, and each move
 /// places it again ([gpu.ItemSet.place]) without recording the draw. Any
-/// other item that changes in two syncs in a row is encoded each frame like
+/// other item that changes in five syncs in a row is encoded each frame like
 /// every draw that cannot be kept, until it rests for a while. A mesh that
 /// turns ([VertexSpin]) reads the animation time from the pass's view
 /// block, so its kept draw holds until the time leaves the fold its phases
@@ -720,7 +726,11 @@ abstract base class RetainedDraws {
         return;
       }
     }
-    final hot = !moved && kept.changedAt >= 0 && _syncs - kept.changedAt <= 1;
+    kept.changedSyncs =
+        !moved && kept.changedAt >= 0 && _syncs - kept.changedAt <= 1
+        ? kept.changedSyncs + 1
+        : 1;
+    final hot = kept.changedSyncs >= _hotSyncs;
     kept
       ..changedAt = _syncs
       ..material = material
