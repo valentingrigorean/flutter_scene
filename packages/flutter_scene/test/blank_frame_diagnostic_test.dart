@@ -15,7 +15,6 @@ import 'package:flutter_test/flutter_test.dart';
   bool drewSomething = false,
   bool regionEmpty = false,
   bool noViews = false,
-  bool noScreenViews = false,
   int meshCount = 1,
   int visibleMeshCount = 1,
   bool anyLayerMaskZero = false,
@@ -27,7 +26,6 @@ import 'package:flutter_test/flutter_test.dart';
     drewSomething: drewSomething,
     regionEmpty: regionEmpty,
     noViews: noViews,
-    noScreenViews: noScreenViews,
     meshCount: meshCount,
     visibleMeshCount: visibleMeshCount,
     anyLayerMaskZero: anyLayerMaskZero,
@@ -46,11 +44,6 @@ void main() {
     test('empty draw region', () {
       final r = diagnose(regionEmpty: true);
       expect(r.message, contains('draw region is zero-sized'));
-    });
-
-    test('no on-screen views (every view has a target)', () {
-      final r = diagnose(noScreenViews: true);
-      expect(r.message, contains('Every RenderView has a target'));
     });
 
     test('scene holds no meshes', () {

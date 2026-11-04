@@ -3643,7 +3643,7 @@ base class Scene implements SceneGraph {
     if (frameCapture != null) frameCapture.completer.complete(frameCaptures);
 
     assert(() {
-      _reportBlankFrame(ordered, regionEmpty: false, noViews: false);
+      _reportBlankFrame(views, regionEmpty: false, noViews: false);
       _maybeReportCoplanarOverlaps();
       return true;
     }());
@@ -3745,22 +3745,23 @@ base class Scene implements SceneGraph {
   // it never runs in a release build; even in debug it stops at the first
   // visible on-layer node, doing no extra work on a frame that draws.
   void _reportBlankFrame(
-    List<RenderView> screenViews, {
+    List<RenderView> views, {
     required bool regionEmpty,
     required bool noViews,
   }) {
     // Cheap draw test. A skybox fills the frame; otherwise a frame draws when
-    // some on-screen view has a visible node on its layer mask. A blank frame
+    // some view has a visible node on its layer mask, on screen or into a
+    // target the app shows itself. A blank frame
     // from a degenerate camera basis or a frustum-excluded camera aim is left
     // to the camera asserts (a per-frame frustum cull here would tax the
     // drawing path), so this test intentionally ignores the frustum.
     var drewSomething = false;
-    if (!regionEmpty && !noViews && screenViews.isNotEmpty) {
+    if (!regionEmpty && !noViews) {
       if (skybox != null) {
         drewSomething = true;
       } else {
         outer:
-        for (final view in screenViews) {
+        for (final view in views) {
           if (view.layerMask == 0) continue;
           for (final item in renderScene.items) {
             if (item.visible && (item.layers & view.layerMask) != 0) {
@@ -3790,11 +3791,10 @@ base class Scene implements SceneGraph {
       drewSomething: drewSomething,
       regionEmpty: regionEmpty,
       noViews: noViews,
-      noScreenViews: !regionEmpty && !noViews && screenViews.isEmpty,
       meshCount: renderScene.items.length,
       visibleMeshCount: visibleMeshCount,
-      anyLayerMaskZero: screenViews.any((v) => v.layerMask == 0),
-      screenViewMasks: [for (final v in screenViews) v.layerMask],
+      anyLayerMaskZero: views.any((v) => v.layerMask == 0),
+      screenViewMasks: [for (final v in views) v.layerMask],
       visibleLayersUnion: visibleLayersUnion,
     );
     _warnedBlankFrame = result.warned;
@@ -3816,7 +3816,6 @@ base class Scene implements SceneGraph {
     required bool drewSomething,
     required bool regionEmpty,
     required bool noViews,
-    required bool noScreenViews,
     required int meshCount,
     required int visibleMeshCount,
     required bool anyLayerMaskZero,
@@ -3828,7 +3827,6 @@ base class Scene implements SceneGraph {
     final cause = _blankFrameCause(
       regionEmpty: regionEmpty,
       noViews: noViews,
-      noScreenViews: noScreenViews,
       meshCount: meshCount,
       visibleMeshCount: visibleMeshCount,
       anyLayerMaskZero: anyLayerMaskZero,
@@ -3848,7 +3846,6 @@ base class Scene implements SceneGraph {
   static String _blankFrameCause({
     required bool regionEmpty,
     required bool noViews,
-    required bool noScreenViews,
     required int meshCount,
     required int visibleMeshCount,
     required bool anyLayerMaskZero,
@@ -3863,11 +3860,6 @@ base class Scene implements SceneGraph {
       return 'The draw region is zero-sized, so there is nowhere to draw. Pass '
           'an explicit region to renderViews, or check the widget constraints '
           '(a collapsed or unconstrained layout gives an empty canvas clip).';
-    }
-    if (noScreenViews) {
-      return 'Every RenderView has a target, so nothing composites to the '
-          'screen. Add a RenderView whose target is null for the on-screen '
-          'view.';
     }
     if (meshCount == 0) {
       return 'The scene graph holds no meshes. Add a Node with a Mesh under '
