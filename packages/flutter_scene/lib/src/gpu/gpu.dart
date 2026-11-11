@@ -12,3 +12,4 @@ export 'shared/glsl_transpile.dart';
 export 'shared/gpu_capabilities.dart';
 export 'shared/item_instances.dart';
 export 'shared/item_sort.dart';
+export 'shared/kept_draw.dart';

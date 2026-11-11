@@ -1,5 +1,6 @@
 ## 0.24.4
 
+* A debug build records a kept draw again wherever its owner takes it as current (the signature compare, the rows-only and moved-only paths, a `KeptPassDraw` or `KeptPassItems` key) and throws a `KeptDrawError` naming the draw and the first field that differs, bytes of its uniform blocks included. `keptDrawHolds` gives the check to a caller that keeps items itself (`ItemSet.kept`, `ItemSet.recorded`); `debugChecksKeptDraws` turns it off, and `debugKeepsNoItems` makes `GpuContext.createItemSet` return null so every draw is encoded. A release build holds none of it.
 * A kept draw is encoded each frame only after it changes in five frames in a row, not two, so a tile or mesh that streams in stays kept.
 * A frame drawn only into a `RenderTexture` target no longer prints the blank frame warning.
 * `Scene.viewDraws` visits each node the color passes of the views draw, with its items' draws, culled by the encoder's per-item test: frustum, culling planes, layer mask, instance cells and level of detail, leaving out an instanced item with no rows to draw. It counts per item, not per GPU draw: a merged instance batch or a kept draw the backend merges counts each item, the backend's own cull of a kept draw is not applied, and a coverage pre-draw is left out.

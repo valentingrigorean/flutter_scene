@@ -136,10 +136,14 @@ final class GpuContext {
   /// Allocates host-visible GPU memory holding a copy of [data].
   DeviceBuffer createDeviceBufferWithCopy(ByteData data) {
     final impeller = _impeller;
-    if (impeller != null) {
-      return DeviceBuffer._impeller(impeller.createDeviceBufferWithCopy(data));
-    }
-    return DeviceBuffer._backend(_backend!.createDeviceBufferWithCopy(data));
+    final buffer = impeller != null
+        ? DeviceBuffer._impeller(impeller.createDeviceBufferWithCopy(data))
+        : DeviceBuffer._backend(_backend!.createDeviceBufferWithCopy(data));
+    assert(
+      data.lengthInBytes > DeviceBuffer._mirroredCopyBytes ||
+          buffer._mirror(data, 0),
+    );
+    return buffer;
   }
 
   /// Allocates host-visible GPU memory whose writes reach the GPU in order:
@@ -269,6 +273,12 @@ final class GpuContext {
     required int viewBlockLength,
     List<String> viewTextureNames = const [],
   }) {
+    var none = false;
+    assert(() {
+      none = debugKeepsNoItems;
+      return true;
+    }());
+    if (none) return null;
     final impeller = _impeller;
     if (impeller != null) {
       return ItemSet._impeller(

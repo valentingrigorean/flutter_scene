@@ -66,6 +66,50 @@ final class _ItemDrawState {
   ColorBlendEquation? equationAt(int index) =>
       index < (equations?.length ?? 0) ? equations![index] : null;
 
+  // The state by name, for [KeptDraw.state].
+  Map<String, Object?> values() {
+    List<Object?> stencil(StencilConfig? config) {
+      config ??= _defaultStencil;
+      return [
+        config.compareFunction,
+        config.stencilFailureOperation,
+        config.depthFailureOperation,
+        config.depthStencilPassOperation,
+        config.readMask,
+        config.writeMask,
+      ];
+    }
+
+    final values = <String, Object?>{
+      'depthWrite': depthWrite,
+      'depthCompare': depthCompare,
+      'cull': cull,
+      'winding': winding,
+      'primitive': primitive,
+      'polygon': polygon,
+      'stencilReference': stencilReference,
+      'stencilFront': stencil(front).join(' '),
+      'stencilBack': stencil(back).join(' '),
+    };
+    final count = (blends?.length ?? 0) > (equations?.length ?? 0)
+        ? blends!.length
+        : equations?.length ?? 0;
+    for (var index = 0; index < count; index++) {
+      final equation = equationAt(index);
+      if (blendAt(index)) values['blend $index'] = true;
+      if (equation == null) continue;
+      values['blendEquation $index'] = [
+        equation.colorBlendOperation,
+        equation.sourceColorBlendFactor,
+        equation.destinationColorBlendFactor,
+        equation.alphaBlendOperation,
+        equation.sourceAlphaBlendFactor,
+        equation.destinationAlphaBlendFactor,
+      ].join(' ');
+    }
+    return values;
+  }
+
   _ItemDrawState copy() {
     final copy = _ItemDrawState()
       ..depthWrite = depthWrite
