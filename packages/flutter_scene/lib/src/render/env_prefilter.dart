@@ -150,6 +150,7 @@ class RadiancePrefilterFill {
 
   final Completer<void> _done = Completer<void>();
   final FramePacer _pacer = FramePacer();
+  final int _generation = gpu.gpuContextGeneration;
   bool _cancelled = false;
   bool _counted = false;
 
@@ -195,6 +196,24 @@ class RadiancePrefilterFill {
     _counted = true;
     _pendingRadianceFills++;
   }
+
+  /// Submits one paced [pass], or ends the fill where its device is gone: the
+  /// context opened again on a new device, or the pass threw after the seed
+  /// passes of the same pipeline and textures ran.
+  bool _submit(void Function() pass) {
+    if (_cancelled) return false;
+    if (_generation != gpu.gpuContextGeneration) {
+      _settle();
+      return false;
+    }
+    try {
+      pass();
+      return true;
+    } on Object {
+      _settle();
+      return false;
+    }
+  }
 }
 
 int _pendingRadianceFills = 0;
@@ -238,7 +257,7 @@ RadiancePrefilterFill prefilterEquirectRadianceProgressive(
 }) {
   final fill = RadiancePrefilterFill._(
     createPrefilterAtlasTexture(mipLayout: mipLayout),
-  ).._track();
+  );
   // Seed every band with the mirror before returning. At roughness 0 the GGX
   // lobe is a delta, so a band costs one fetch instead of kPrefilterSamples,
   // and the whole seed is roughly 1/kPrefilterSamples of one real band. A
@@ -258,6 +277,7 @@ RadiancePrefilterFill prefilterEquirectRadianceProgressive(
       forceMirror: true,
     );
   }
+  fill._track();
   // Band 0 is the mirror, so its seed is already the final value.
   unawaited(
     _fillBands(
@@ -278,17 +298,17 @@ Future<void> _fillBands(
 }) async {
   for (var band = 1; band < kPrefilterBandCount; band++) {
     await fill._pacer.awaitFrame();
-    if (fill._cancelled) {
-      return;
-    }
-    _prefilterBand(
-      sourceEquirect,
-      fill.texture,
-      band,
-      mipLayout,
-      sourceIsLinear,
-      clear: mipLayout,
+    final submitted = fill._submit(
+      () => _prefilterBand(
+        sourceEquirect,
+        fill.texture,
+        band,
+        mipLayout,
+        sourceIsLinear,
+        clear: mipLayout,
+      ),
     );
+    if (!submitted) return;
   }
   await fill._finishAfterRaster();
 }
@@ -322,8 +342,7 @@ RadiancePrefilterFill prefilterEquirectRadianceToCubeProgressive(
   bool sourceIsLinear = false,
   int size = kRadianceCubeSize,
 }) {
-  final fill = RadiancePrefilterFill._(createRadianceCubeTexture(size: size))
-    .._track();
+  final fill = RadiancePrefilterFill._(createRadianceCubeTexture(size: size));
   // Seed every face of every band with the mirror before returning, for the
   // reason prefilterEquirectRadianceProgressive does. A cube is sampled in
   // every direction at once, so seeding one face would leave five directions
@@ -338,6 +357,7 @@ RadiancePrefilterFill prefilterEquirectRadianceToCubeProgressive(
       forceMirror: true,
     );
   }
+  fill._track();
   unawaited(_fillCubeBands(fill, sourceEquirect, sourceIsLinear));
   return fill;
 }
@@ -352,10 +372,15 @@ Future<void> _fillCubeBands(
   // roughness. Face-major would sharpen one direction at a time.
   for (var band = 1; band < kPrefilterBandCount; band++) {
     await fill._pacer.awaitFrame();
-    if (fill._cancelled) {
-      return;
-    }
-    _prefilterCubeBand(sourceEquirect, fill.texture, band, sourceIsLinear);
+    final submitted = fill._submit(
+      () => _prefilterCubeBand(
+        sourceEquirect,
+        fill.texture,
+        band,
+        sourceIsLinear,
+      ),
+    );
+    if (!submitted) return;
   }
   await fill._finishAfterRaster();
 }
