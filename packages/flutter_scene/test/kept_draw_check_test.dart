@@ -114,8 +114,9 @@ void main() {
     expect(checked, unchecked);
   });
 
-  test('a draw taken as the same, a moved member of a run and the changed '
-      'rows of an instanced draw are recorded again and hold', () async {
+  test('a draw taken as the same, a member of a run taken as the same or as '
+      'moved and the changed rows of an instanced draw are recorded again '
+      'and hold', () async {
     final mesh = Mesh(CuboidGeometry(Vector3(2, 2, 0.01)), _Flat());
     final first = Node(
       mesh: mesh,
@@ -156,6 +157,14 @@ void main() {
     first.markMaterialsChanged();
     await _render(scene);
     expect(records, greaterThan(still));
+
+    // A node hidden and shown between two frames is visited with nothing
+    // changed, in the depth prepass as a member of its run.
+    records = 0;
+    second.visible = false;
+    second.visible = true;
+    await _render(scene);
+    expect(records, greaterThan(still + 1));
 
     // The first move records a draw again as one it can place.
     for (var y = 1.0; y < 4; y++) {
