@@ -461,7 +461,8 @@ class TransientArena implements FrameTransients {
   final Map<Object, _DrawSlots> _drawSlots = HashMap.identity();
 
   /// Blocks the slots live in. They are written in place every frame and
-  /// never sealed.
+  /// never sealed. A block is released with the last slot a draw holds of
+  /// it, so an arena whose draws all left holds no slot block.
   final List<_TransientBlock> _slotBlocks = [];
 
   /// Released slots by capacity.
@@ -533,9 +534,22 @@ class TransientArena implements FrameTransients {
       final draw = _drawSlots.remove(key);
       if (draw == null) continue;
       for (final slot in draw.slots) {
-        if (slot != null) (_freeSlots[slot.capacity] ??= []).add(slot);
+        if (slot != null) _giveBack(slot);
       }
     }
+  }
+
+  void _giveBack(_Slot slot) {
+    final block = slot.block;
+    if (--block.slots > 0) {
+      (_freeSlots[slot.capacity] ??= []).add(slot);
+      return;
+    }
+    _slotBlocks.remove(block);
+    for (final free in _freeSlots.values) {
+      free.removeWhere((slot) => identical(slot.block, block));
+    }
+    gpu.gpuHost.releaseBuffer(block.device);
   }
 
   void _releaseIdleSlots() {
@@ -544,7 +558,7 @@ class TransientArena implements FrameTransients {
       for (var i = 0; i < slots.length; i++) {
         final slot = slots[i];
         if (slot == null || _frame - slot.lastUsed <= kSlotIdleFrames) continue;
-        (_freeSlots[slot.capacity] ??= []).add(slot);
+        _giveBack(slot);
         slots[i] = null;
       }
       while (slots.isNotEmpty && slots.last == null) {
@@ -553,6 +567,10 @@ class TransientArena implements FrameTransients {
       return slots.isEmpty;
     });
   }
+
+  /// Number of blocks the slots of keyed draws live in. For tests.
+  @visibleForTesting
+  int get slotBlockCount => _slotBlocks.length;
 
   /// Number of slots keyed draws hold. For tests.
   @visibleForTesting
@@ -587,8 +605,9 @@ class TransientArena implements FrameTransients {
     final index = draw.next++;
     var slot = index < slots.length ? slots[index] : null;
     if (slot != null && slot.capacity != capacity) {
-      (_freeSlots[slot.capacity] ??= []).add(slot);
-      slot = null;
+      final resized = _takeSlot(capacity);
+      _giveBack(slot);
+      slots[index] = slot = resized;
     }
     if (slot == null) {
       slot = _takeSlot(capacity);
@@ -620,7 +639,11 @@ class TransientArena implements FrameTransients {
 
   _Slot _takeSlot(int capacity) {
     final free = _freeSlots[capacity];
-    if (free != null && free.isNotEmpty) return free.removeLast();
+    if (free != null && free.isNotEmpty) {
+      final slot = free.removeLast();
+      slot.block.slots++;
+      return slot;
+    }
     var block = _slotBlocks.isEmpty ? null : _slotBlocks.last;
     if (block == null || block.cursor + capacity > block.length) {
       buffersCreated++;
@@ -639,6 +662,7 @@ class TransientArena implements FrameTransients {
     }
     final slot = _Slot(block, block.cursor, capacity);
     block.cursor += capacity;
+    block.slots++;
     return slot;
   }
 
@@ -869,6 +893,9 @@ class _TransientBlock {
 
   /// The owner's frame count when this block was last handed out.
   int lastUsed = 0;
+
+  /// The slots of a slot block that draws hold.
+  int slots = 0;
 
   /// The staged range of a slot block not yet uploaded.
   late int dirtyStart = length;

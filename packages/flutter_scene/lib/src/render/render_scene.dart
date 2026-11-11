@@ -2083,6 +2083,8 @@ class RenderScene {
     item.sceneSlot = -1;
     logItemChange(item);
     _releaseHeldOf(item);
+    uniformTransients.forgetDrawKeys([item]);
+    instanceTransients.forgetDrawKeys([item]);
     _letGoMaterialsOf(item);
     item._scene = null;
     _displace(item);

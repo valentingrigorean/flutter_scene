@@ -925,11 +925,14 @@ abstract class Material with RenderSourceListeners {
   @internal
   void enterScene() => _scenes++;
 
-  /// Ends one [enterScene], releasing the held blocks once no render scene
-  /// draws this material.
+  /// Ends one [enterScene], releasing the held blocks and the per-frame
+  /// transient slots once no render scene draws this material.
   @internal
   void leaveScene() {
-    if (--_scenes == 0) releaseHeldBlocks();
+    if (--_scenes > 0) return;
+    releaseHeldBlocks();
+    uniformTransients.forgetDrawKeys([this]);
+    instanceTransients.forgetDrawKeys([this]);
   }
 
   /// The planar reflection capture this material samples, or null when none
