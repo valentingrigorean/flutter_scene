@@ -908,9 +908,7 @@ abstract base class RetainedDraws {
     Float32List heldRecord,
     Float32List record,
   ) {
-    if (heldInfo == null || info == null) {
-      return heldInfo == info ? null : 'block ItemInfo';
-    }
+    if (heldInfo == null || info == null) return null;
     if (heldInfo.length != info.length) return 'block ItemInfo';
     const frame = 8;
     final was = Float32List.sublistView(heldInfo, 0, heldInfo.length & ~3);

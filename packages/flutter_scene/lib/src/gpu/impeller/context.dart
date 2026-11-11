@@ -139,10 +139,7 @@ final class GpuContext {
     final buffer = impeller != null
         ? DeviceBuffer._impeller(impeller.createDeviceBufferWithCopy(data))
         : DeviceBuffer._backend(_backend!.createDeviceBufferWithCopy(data));
-    assert(
-      data.lengthInBytes > DeviceBuffer._mirroredCopyBytes ||
-          buffer._mirror(data, 0),
-    );
+    assert(buffer._mirror(data, 0));
     return buffer;
   }
 

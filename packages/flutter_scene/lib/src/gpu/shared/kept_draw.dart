@@ -4,9 +4,10 @@ import 'item_instances.dart';
 
 /// Whether a debug build records a kept draw again where its owner takes it
 /// as current and fails where the two differ (`ItemSet.kept`,
-/// `ItemSet.recorded`). While set, a debug build mirrors the bytes written
-/// to each device buffer, and those a buffer of at most 64 KiB is made with;
-/// a uniform block written while it is off compares as zeros.
+/// `ItemSet.recorded`). While set, a debug build holds what each write of
+/// at most 4 KiB last wrote to a device buffer, by where it wrote, and
+/// compares a uniform block one such write wrote whole; a block written
+/// otherwise, or while it is off, is not compared.
 bool debugChecksKeptDraws = true;
 
 /// Whether `GpuContext.createItemSet` makes no set in a debug build, so
@@ -50,7 +51,7 @@ final class KeptDraw {
   final List<Object?>? indices;
 
   /// The bytes of each uniform block by shader and name, read when this was
-  /// made; null for a view block.
+  /// made; null for a view block and for a block no one held write wrote.
   final Map<(Object, String), Uint8List?> blocks;
 
   /// The texture and sampler values by shader and name; a null texture for
@@ -122,7 +123,9 @@ final class KeptDraw {
         'block ${key.$2}',
         blocks.containsKey(key) &&
             now.blocks.containsKey(key) &&
-            _same(blocks[key], now.blocks[key]),
+            (blocks[key] == null ||
+                now.blocks[key] == null ||
+                _same(blocks[key], now.blocks[key])),
       );
     }
     for (final key in {...textures.keys, ...now.textures.keys}) {
