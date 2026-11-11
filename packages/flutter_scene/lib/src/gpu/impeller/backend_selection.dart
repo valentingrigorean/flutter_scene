@@ -100,6 +100,18 @@ GpuBackendKind _useBackend() {
 @experimental
 GpuBackendTexture? gpuBackendTextureOf(Texture texture) => texture._backend;
 
+/// The registered backend's buffer behind [buffer], or null when [buffer] is
+/// an Impeller buffer.
+@experimental
+GpuBackendDeviceBuffer? gpuBackendDeviceBufferOf(DeviceBuffer buffer) =>
+    buffer._backend;
+
+/// The registered backend's host buffer behind [buffer], or null when
+/// [buffer] is an Impeller host buffer.
+@experimental
+GpuBackendHostBuffer? gpuBackendHostBufferOf(HostBuffer buffer) =>
+    buffer._backend;
+
 /// A shim texture over [texture], a texture of the registered backend, such
 /// as a buffer a [GpuBackendPresenter] lends; the shim texture does not own
 /// it.
