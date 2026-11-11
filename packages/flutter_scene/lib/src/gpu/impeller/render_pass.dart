@@ -159,6 +159,16 @@ final class RenderPass {
   // bindings.
   ItemPrologue? _prologue;
 
+  // What the draws of a pass made by [ItemSet.recorder] bind, in a debug
+  // build that checks kept draws.
+  static final Expando<_DrawLog> _logs = Expando('recorded draw');
+
+  bool _log(void Function(_DrawLog log) note) {
+    final log = _records == null ? null : _logs[this];
+    if (log != null) note(log);
+    return true;
+  }
+
   /// States that the draw this pass, made by [ItemSet.recorder], records
   /// next runs [prologue] before each draw of its pass once kept. A set
   /// whose backend runs no prologue keeps no such draw.
@@ -170,6 +180,7 @@ final class RenderPass {
   }
 
   void bindPipeline(RenderPipeline pipeline) {
+    assert(_log((log) => log.pipeline = pipeline));
     final impeller = _impeller;
     if (impeller != null) {
       impeller.bindPipeline(pipeline._impeller!);
@@ -184,6 +195,7 @@ final class RenderPass {
   }
 
   void bindVertexBuffer(BufferView bufferView, {int slot = 0}) {
+    assert(_log((log) => log.vertices[slot] = bufferView));
     final impeller = _impeller;
     if (impeller != null) {
       impeller.bindVertexBuffer(bufferView._impeller!, slot: slot);
@@ -205,6 +217,7 @@ final class RenderPass {
   }
 
   void bindIndexBuffer(BufferView bufferView, IndexType indexType) {
+    assert(_log((log) => log.indices = (bufferView, indexType)));
     final impeller = _impeller;
     if (impeller != null) {
       impeller.bindIndexBuffer(bufferView._impeller!, indexType);
@@ -226,6 +239,9 @@ final class RenderPass {
   }
 
   void bindUniform(UniformSlot slot, BufferView bufferView) {
+    assert(
+      _log((log) => log.blocks[(slot.shader, slot.uniformName)] = bufferView),
+    );
     final impeller = _impeller;
     if (impeller != null) {
       impeller.bindUniform(slot._impeller!, bufferView._impeller!);
@@ -255,6 +271,14 @@ final class RenderPass {
     Texture texture, {
     SamplerOptions? sampler,
   }) {
+    assert(
+      _log(
+        (log) => log.textures[(slot.shader, slot.uniformName)] = (
+          texture,
+          sampler ?? SamplerOptions(),
+        ),
+      ),
+    );
     final impeller = _impeller;
     if (impeller != null) {
       impeller.bindTexture(
@@ -288,6 +312,7 @@ final class RenderPass {
   }
 
   void clearBindings() {
+    assert(_log((log) => log.clear()));
     _prologue = null;
     final impeller = _impeller;
     if (impeller != null) {
@@ -303,6 +328,7 @@ final class RenderPass {
   }
 
   void setColorBlendEnable(bool enable, {int colorAttachmentIndex = 0}) {
+    assert(_log((log) => log.state.setBlend(colorAttachmentIndex, enable)));
     _impeller?.setColorBlendEnable(
       enable,
       colorAttachmentIndex: colorAttachmentIndex,
@@ -322,6 +348,9 @@ final class RenderPass {
     ColorBlendEquation equation, {
     int colorAttachmentIndex = 0,
   }) {
+    assert(
+      _log((log) => log.state.setEquation(colorAttachmentIndex, equation)),
+    );
     _impeller?.setColorBlendEquation(
       equation,
       colorAttachmentIndex: colorAttachmentIndex,
@@ -338,6 +367,7 @@ final class RenderPass {
   }
 
   void setDepthWriteEnable(bool enable) {
+    assert(_log((log) => log.state.depthWrite = enable));
     _impeller?.setDepthWriteEnable(enable);
     final state = _state;
     if (state != null) {
@@ -348,6 +378,7 @@ final class RenderPass {
   }
 
   void setDepthCompareOperation(CompareFunction compareFunction) {
+    assert(_log((log) => log.state.depthCompare = compareFunction));
     _impeller?.setDepthCompareOperation(compareFunction);
     final state = _state;
     if (state != null) {
@@ -358,6 +389,7 @@ final class RenderPass {
   }
 
   void setStencilReference(int referenceValue) {
+    assert(_log((log) => log.state.stencilReference = referenceValue));
     _impeller?.setStencilReference(referenceValue);
     final state = _state;
     if (state != null) {
@@ -371,6 +403,7 @@ final class RenderPass {
     StencilConfig configuration, {
     StencilFace targetFace = StencilFace.both,
   }) {
+    assert(_log((log) => log.state.setStencil(configuration, targetFace)));
     _impeller?.setStencilConfig(configuration, targetFace: targetFace);
     final state = _state;
     if (state != null) {
@@ -381,6 +414,7 @@ final class RenderPass {
   }
 
   void setCullMode(CullMode cullMode) {
+    assert(_log((log) => log.state.cull = cullMode));
     _impeller?.setCullMode(cullMode);
     final state = _state;
     if (state != null) {
@@ -391,6 +425,7 @@ final class RenderPass {
   }
 
   void setPolygonMode(PolygonMode polygonMode) {
+    assert(_log((log) => log.state.polygon = polygonMode));
     _impeller?.setPolygonMode(polygonMode);
     final state = _state;
     if (state != null) {
@@ -401,6 +436,7 @@ final class RenderPass {
   }
 
   void setPrimitiveType(PrimitiveType primitiveType) {
+    assert(_log((log) => log.state.primitive = primitiveType));
     _impeller?.setPrimitiveType(primitiveType);
     final state = _state;
     if (state != null) {
@@ -411,6 +447,7 @@ final class RenderPass {
   }
 
   void setWindingOrder(WindingOrder windingOrder) {
+    assert(_log((log) => log.state.winding = windingOrder));
     _impeller?.setWindingOrder(windingOrder);
     final state = _state;
     if (state != null) {
@@ -445,6 +482,7 @@ final class RenderPass {
   }
 
   void draw(int vertexCount, {int instanceCount = 1}) {
+    assert(_log((log) => log.draw([vertexCount, instanceCount, false])));
     final impeller = _impeller;
     if (impeller != null) {
       impeller.draw(vertexCount, instanceCount: instanceCount);
@@ -459,6 +497,7 @@ final class RenderPass {
   }
 
   void drawIndexed(int indexCount, {int instanceCount = 1}) {
+    assert(_log((log) => log.draw([indexCount, instanceCount, true])));
     final impeller = _impeller;
     if (impeller != null) {
       impeller.drawIndexed(indexCount, instanceCount: instanceCount);
@@ -479,6 +518,9 @@ final class RenderPass {
   /// Throws an [UnsupportedError] on Impeller, which draws no indirect
   /// arguments; check `gpuHost.capabilities.indirectDraw` first.
   void drawIndexedIndirect(BufferView arguments) {
+    assert(
+      _log((log) => log.draw([arguments.buffer, arguments.offsetInBytes])),
+    );
     final backend =
         _backend ??
         (throw UnsupportedError('Impeller draws no indirect arguments.'));

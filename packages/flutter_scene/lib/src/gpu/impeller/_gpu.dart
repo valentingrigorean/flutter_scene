@@ -46,6 +46,7 @@ import '../shared/gpu_capabilities.dart';
 import '../shared/gpu_labels.dart';
 import '../shared/item_instances.dart';
 import '../shared/item_sort.dart';
+import '../shared/kept_draw.dart';
 import '../backend/gpu_backend.dart';
 
 export 'package:flutter_gpu/gpu.dart'

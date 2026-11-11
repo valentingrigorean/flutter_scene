@@ -17,6 +17,7 @@ import 'package:flutter_scene/src/material/material.dart' show Material;
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/instance_records.dart';
+import 'package:flutter_scene/src/render/kept_draw_check.dart';
 import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
@@ -699,6 +700,7 @@ abstract base class RetainedDraws {
         _sameHeldDraw(item, kept) &&
         _sameBounds(kept, bounds) &&
         _sameShift(item, kept)) {
+      assert(_recordsAsKept(item, kept, bounds, 'the same'));
       return;
     }
     if (kept.id != 0 &&
@@ -713,6 +715,7 @@ abstract base class RetainedDraws {
         bounds: kept.bounded ? kept.bounds : null,
         instances: _rowInstances(item, geometry),
       )) {
+        assert(_recordsAsKept(item, kept, bounds, 'changed in its rows only'));
         return;
       }
     }
@@ -723,6 +726,7 @@ abstract base class RetainedDraws {
     if (moved) {
       kept.moves = true;
       if ((kept.id != 0 || kept.run != null) && _place(item, kept, bounds)) {
+        assert(_recordsAsKept(item, kept, bounds, 'moved only'));
         return;
       }
     }
@@ -784,6 +788,166 @@ abstract base class RetainedDraws {
     _encode(item, kept, false);
     activeRenderCounters.drawsKept++;
     if (key != null) _join(item, kept, _runs[key] ??= _Run(key));
+  }
+
+  // In a debug build that checks kept draws: records the draw of [item]
+  // again and throws where it differs from the item kept from it, which the
+  // visit took as [taken]. A draw that stands in the records of its item, a
+  // member of a run or a draw placed since, is compared in the place the
+  // frame of its `ItemInfo` and its record add up to, which a move splits
+  // between the two.
+  bool _recordsAsKept(
+    RenderItem item,
+    _Kept kept,
+    Aabb3? bounds,
+    String taken,
+  ) {
+    final run = kept.run;
+    if (run != null && _changedRuns.contains(run)) return true;
+    final ofRun = run != null && run.id != 0;
+    final held = items.kept(ofRun ? run.id : kept.id);
+    if (held == null) return true;
+    ({int slot, int floats})? stream;
+    recordKeptDrawAgain(() {
+      forgetRecorded();
+      heldInstanceBinding = null;
+      recordKeptDraw(() => record(item));
+      stream = heldInstanceBinding;
+      heldInstanceBinding = null;
+    });
+    final rows = item.instanceTransforms != null;
+    final stands = ofRun || (kept.placed && !rows);
+    final at = bounds == null
+        ? null
+        : Float32List.fromList([
+            bounds.min.x,
+            bounds.min.y,
+            bounds.min.z,
+            bounds.max.x,
+            bounds.max.y,
+            bounds.max.z,
+          ]);
+    final now = items.recorded(
+      recorder,
+      passes: passesOf(item),
+      bounds: stands ? held.bounds : at,
+      instances: stands
+          ? held.instances
+          : rows
+          ? _rowInstances(item, geometryOf(item))
+          : null,
+    );
+    forgetRecorded();
+    if (now == null) return true;
+    final pending = ofRun && _movedRuns.contains(run);
+    var field = held.differs(
+      now,
+      but: (field) =>
+          stands && field == 'block ItemInfo' ||
+          rows && field == 'transient' && taken != 'the same',
+    );
+    if (field == null && stands) {
+      final floats = ofRun ? run.key.rest.floats : kept.floats;
+      final slot = ofRun ? run.key.rest.slot : kept.slot;
+      var member = ofRun ? -1 : 0;
+      if (ofRun) {
+        var index = 0;
+        for (final other in run.members) {
+          if (identical(other, item)) member = index;
+          index++;
+        }
+      }
+      final records = held.instances?.records;
+      final each = held.instances?.bounds;
+      if (stream?.slot != slot ||
+          stream?.floats != floats ||
+          records == null ||
+          member < 0) {
+        field = 'instances';
+      } else if (!pending) {
+        field = _standsAsKept(
+          held.block('ItemInfo'),
+          now.block('ItemInfo'),
+          Float32List.sublistView(
+            records,
+            member * floats * Float32List.bytesPerElement,
+            (member + 1) * floats * Float32List.bytesPerElement,
+          ),
+          packSingleInstanceData(
+            item.worldTransform,
+            attributeFloats: floats - kInstanceRecordFloats,
+          ),
+        );
+        if (field == null && ofRun) {
+          final own = each == null
+              ? null
+              : Float32List.sublistView(each, member * 6, member * 6 + 6);
+          if ((own == null) != (at == null) ||
+              own != null && !_sameFloats(own, at!, 0, 6)) {
+            field = 'instance bounds';
+          }
+        }
+      }
+    }
+    if (field == null) return true;
+    throw KeptDrawError(
+      'the draw of ${geometryOf(item).runtimeType} with '
+      '${materialOf(item).runtimeType} that $runtimeType took as $taken',
+      field,
+    );
+  }
+
+  // The first field in which a draw that stands at [record] under the
+  // `ItemInfo` [info] differs from the kept one, at [heldRecord] under
+  // [heldInfo]: the blocks but the translation of a frame that only
+  // translates, the records but their translation, and the sum of the two
+  // translations, to the rounding of adding them in another order.
+  static String? _standsAsKept(
+    Uint8List? heldInfo,
+    Uint8List? info,
+    Float32List heldRecord,
+    Float32List record,
+  ) {
+    if (heldInfo == null || info == null) {
+      return heldInfo == info ? null : 'block ItemInfo';
+    }
+    if (heldInfo.length != info.length) return 'block ItemInfo';
+    const frame = 8;
+    final was = Float32List.sublistView(heldInfo, 0, heldInfo.length & ~3);
+    final now = Float32List.sublistView(info, 0, info.length & ~3);
+    final shifts = _translatesOnly(was, frame) && _translatesOnly(now, frame);
+    if (!shifts) {
+      return !_sameFloats(was, now, 0, was.length)
+          ? 'block ItemInfo'
+          : _sameFloats(heldRecord, record, 0, record.length)
+          ? null
+          : 'instance records';
+    }
+    if (!_sameFloats(was, now, 0, frame + 12) ||
+        !_sameFloats(was, now, frame + 15, was.length)) {
+      return 'block ItemInfo';
+    }
+    if (!_sameFloats(heldRecord, record, 0, 12) ||
+        !_sameFloats(heldRecord, record, 15, record.length)) {
+      return 'instance records';
+    }
+    for (var axis = 0; axis < 3; axis++) {
+      final a = was[frame + 12 + axis];
+      final b = heldRecord[12 + axis];
+      final c = now[frame + 12 + axis];
+      final d = record[12 + axis];
+      final reach = [a, b, c, d].fold(1.0, (m, v) => math.max(m, v.abs()));
+      if (((a + b) - (c + d)).abs() > reach * 1e-6) return 'instance records';
+    }
+    return null;
+  }
+
+  static bool _sameFloats(Float32List a, Float32List b, int from, int to) {
+    if (a.length < to || b.length < to) return false;
+    for (var at = from; at < to; at++) {
+      if (a[at] != b[at]) return false;
+    }
+    return true;
   }
 
   // Whether the pass's draw of [item] changed only where it stands since it

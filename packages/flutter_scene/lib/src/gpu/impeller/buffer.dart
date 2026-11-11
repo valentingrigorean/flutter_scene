@@ -101,16 +101,54 @@ final class DeviceBuffer {
 
   /// Copies [sourceBytes] into the buffer from [destinationOffsetInBytes].
   /// Returns false when the copy did not happen.
-  bool overwrite(ByteData sourceBytes, {int destinationOffsetInBytes = 0}) =>
-      _ordered?.overwrite(sourceBytes, destinationOffsetInBytes) ??
-      _impeller?.overwrite(
-        sourceBytes,
-        destinationOffsetInBytes: destinationOffsetInBytes,
-      ) ??
-      _backend!.overwrite(
-        sourceBytes,
-        destinationOffsetInBytes: destinationOffsetInBytes,
-      );
+  bool overwrite(ByteData sourceBytes, {int destinationOffsetInBytes = 0}) {
+    assert(_mirror(sourceBytes, destinationOffsetInBytes));
+    return _ordered?.overwrite(sourceBytes, destinationOffsetInBytes) ??
+        _impeller?.overwrite(
+          sourceBytes,
+          destinationOffsetInBytes: destinationOffsetInBytes,
+        ) ??
+        _backend!.overwrite(
+          sourceBytes,
+          destinationOffsetInBytes: destinationOffsetInBytes,
+        );
+  }
+
+  // The bytes [overwrite] wrote to each buffer of a debug build that checks
+  // kept draws, zero where it wrote none. A buffer made with its contents
+  // holds them where a uniform block can bind it whole, and one written
+  // while the check is off holds none.
+  static final Expando<Uint8List> _mirrors = Expando('buffer mirror');
+  static const int _mirroredCopyBytes = 1 << 16;
+
+  bool _mirror(ByteData bytes, int at) {
+    final end = at + bytes.lengthInBytes;
+    if (!debugChecksKeptDraws) {
+      _mirrors[this] = null;
+      return true;
+    }
+    if (at < 0 || end > sizeInBytes) return true;
+    (_mirrors[this] ??= Uint8List(sizeInBytes)).setRange(
+      at,
+      end,
+      bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
+    );
+    return true;
+  }
+
+  // What the mirror holds of [view].
+  static Uint8List _mirrored(BufferView view) {
+    final bytes = Uint8List(view.lengthInBytes);
+    final mirror = _mirrors[view.buffer];
+    if (mirror == null || view.offsetInBytes >= mirror.length) return bytes;
+    final end = view.offsetInBytes + view.lengthInBytes;
+    return bytes..setRange(
+      0,
+      (end < mirror.length ? end : mirror.length) - view.offsetInBytes,
+      mirror,
+      view.offsetInBytes,
+    );
+  }
 
   /// Makes host writes to the range visible to the GPU.
   void flush({int offsetInBytes = 0, int lengthInBytes = -1}) {

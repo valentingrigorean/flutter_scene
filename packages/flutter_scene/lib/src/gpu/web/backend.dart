@@ -362,6 +362,14 @@ abstract final class ItemSet {
     int? order,
   });
   void discard(RenderPass recorder);
+  KeptDraw? kept(int id) => null;
+  KeptDraw? recorded(
+    RenderPass recorder, {
+    required int passes,
+    Float32List? bounds,
+    ItemInstances? instances,
+    int? order,
+  }) => null;
   bool place(int id, {Float32List? bounds, required ItemInstances instances});
   void remove(int id);
   void draw(

@@ -8,6 +8,7 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/render/camera_replay.dart';
 import 'package:flutter_scene/src/render/draw_recorder.dart';
+import 'package:flutter_scene/src/render/kept_draw_check.dart';
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/retained_draws.dart';
@@ -114,6 +115,16 @@ final class KeptPassDraw {
       final id = _items.keep(recorder, id: _id, passes: 1 << _index);
       _id = id ?? 0;
       _refused = id == null;
+    } else {
+      assert(
+        keptDrawHolds(
+          _items,
+          _id,
+          () => _recordedOn(_items, target, record),
+          kind: 'the draw of pass $_index, taken as kept by its key',
+          passes: 1 << _index,
+        ),
+      );
     }
     if (_refused) return false;
     final recording = CameraReplay.recording;
@@ -223,6 +234,16 @@ final class KeptPassItems {
       final key = held.containsKey(draw.key) ? (draw.key, order) : draw.key;
       final was = _held.remove(key);
       if (was != null && was.order == order) {
+        assert(
+          keptDrawHolds(
+            _items,
+            was.id,
+            () => _recordedOn(_items, target, draw.record),
+            kind: 'draw $order of pass $_index, taken as kept by its key',
+            passes: 1 << _index,
+            order: order,
+          ),
+        );
         held[key] = was;
         continue;
       }
@@ -285,4 +306,14 @@ final class KeptPassItems {
     }
     _held = {};
   }
+}
+
+gpu.RenderPass _recordedOn(
+  gpu.ItemSet items,
+  gpu.RenderTarget target,
+  void Function(gpu.RenderPass recorder) record,
+) {
+  final recorder = createTrackedRecorder(items, target);
+  record(recorder);
+  return recorder;
 }
