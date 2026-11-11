@@ -407,6 +407,58 @@ double sceneSortDepth(
       bias;
 }
 
+// Scratch: placed() writes and reads it within one call.
+final Aabb3 _translucentBounds = Aabb3();
+
+// The culling frustum and forward axis of the last perspective camera
+// sceneTranslucentDraws read, kept while its values and the size stay.
+final class _TranslucentView {
+  _TranslucentView(this.forward, this.frustum);
+
+  final Vector3 forward;
+  final Frustum frustum;
+
+  static final Float64List _key = Float64List(14);
+  static _TranslucentView? _held;
+
+  static _TranslucentView of(Camera camera, ui.Size dimensions) {
+    if (camera is! PerspectiveCamera) {
+      return _TranslucentView(
+        camera.forward,
+        cullingFrustumOf(camera, dimensions),
+      );
+    }
+    final p = camera.position, t = camera.target, u = camera.up;
+    final k = _key;
+    var at = 0;
+    var same = _held != null;
+    void key(double value) {
+      same = same && k[at] == value;
+      k[at++] = value;
+    }
+
+    key(p.x);
+    key(p.y);
+    key(p.z);
+    key(t.x);
+    key(t.y);
+    key(t.z);
+    key(u.x);
+    key(u.y);
+    key(u.z);
+    key(camera.fovRadiansY);
+    key(camera.fovNear);
+    key(camera.fovFar);
+    key(dimensions.width);
+    key(dimensions.height);
+    if (same) return _held!;
+    return _held = _TranslucentView(
+      camera.forward,
+      cullingFrustumOf(camera, dimensions),
+    );
+  }
+}
+
 /// One translucent draw of a scene, as [sceneTranslucentDraws] reads it.
 final class SceneTranslucentDraw {
   SceneTranslucentDraw._(
@@ -461,10 +513,11 @@ List<SceneTranslucentDraw> sceneTranslucentDraws(
   int layerMask = kRenderLayerAll,
 }) {
   final eye = camera.position;
-  final forward = camera.forward;
-  final frustum = cullingFrustumOf(camera, dimensions);
+  final view = _TranslucentView.of(camera, dimensions);
+  final forward = view.forward;
+  final frustum = view.frustum;
   final draws = <SceneTranslucentDraw>[];
-  final world = Aabb3();
+  final world = _translucentBounds;
 
   bool placed(Node node, Aabb3? bounds) {
     if (bounds == null) return true;
