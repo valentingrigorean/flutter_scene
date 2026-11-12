@@ -22,6 +22,7 @@ import 'package:vector_math/vector_math.dart' as vm;
 
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
+import 'package:flutter_scene/src/render/draw_serial.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/uniform_slots.dart';
 import 'package:flutter_scene/src/render/view_info.dart';
@@ -138,6 +139,11 @@ class _GeometryBufferBlock {
 /// arrays without packing vertex bytes by hand.
 /// {@category Geometry}
 abstract class Geometry with RenderSourceListeners {
+  /// Where this geometry falls among the geometries made, which orders the
+  /// encoded opaque draws of one material.
+  @internal
+  final int drawSerial = nextDrawSerial();
+
   // One or more vertex buffer streams, bound to consecutive slots (0, 1, ...)
   // in order. Most geometry has a single interleaved stream; unskinned
   // geometry uploaded through [uploadVertexData] is de-interleaved into a

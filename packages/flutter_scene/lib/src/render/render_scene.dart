@@ -5,6 +5,7 @@ import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter/foundation.dart' show ValueNotifier, internal;
 import 'package:flutter_scene/src/render/debug_view.dart';
+import 'package:flutter_scene/src/render/draw_serial.dart';
 import 'package:flutter_scene/src/skin.dart';
 import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/components/camera_component.dart';
@@ -161,6 +162,11 @@ class RenderItem {
     : _material = material,
       geometryIdentity = identityHashCode(geometry),
       materialIdentity = identityHashCode(material);
+
+  /// Where this item falls among the items made, the last tie the encoder's
+  /// opaque sort breaks.
+  @internal
+  final int drawSerial = nextDrawSerial();
 
   /// Vertex and index data for this primitive.
   final Geometry geometry;
