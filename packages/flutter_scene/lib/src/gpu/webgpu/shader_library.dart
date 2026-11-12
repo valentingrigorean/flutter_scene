@@ -298,6 +298,10 @@ final class _WebGpuShaderLibrary extends ShaderLibrary {
   static final Map<String, Map<String, WeakReference<_WebGpuShader>>>
   _shadersByAsset = {};
 
+  /// The sidecar entries of each loaded asset, which hot reload replaces so a
+  /// shader first looked up after it compiles the new source.
+  static final Map<String, Map<String, Map>> _entriesByAsset = {};
+
   @override
   Shader? operator [](String shaderName) =>
       _shaders[shaderName] ?? _compiled(shaderName);
@@ -323,7 +327,7 @@ final class _WebGpuShaderLibrary extends ShaderLibrary {
     final sidecar = _checkedSidecar(sidecarJson, source: source);
     return _WebGpuShaderLibrary._(
       device,
-      (sidecar['shaders']! as Map).cast<String, Map>(),
+      Map.of((sidecar['shaders']! as Map).cast<String, Map>()),
       live,
     );
   }
@@ -377,6 +381,7 @@ Future<ShaderLibrary?> _loadShaderLibraryAsync(
     live: live,
   );
   _WebGpuShaderLibrary._shadersByAsset[assetKey] = live;
+  _WebGpuShaderLibrary._entriesByAsset[assetKey] = library._entries;
   registerShaderLibrarySource(library, ShaderLibrarySource(assetKey: assetKey));
   return library;
 }
@@ -394,16 +399,17 @@ Future<void> _reinitializeShaderLibraryAsync(
     );
     return;
   }
+  // A library whose shaders were never looked up still tracks into [tracked],
+  // so it stays registered even when empty.
   tracked.removeWhere((_, shader) => shader.target == null);
-  if (tracked.isEmpty) {
-    _WebGpuShaderLibrary._shadersByAsset.remove(assetKey);
-    return;
-  }
   final sidecar = _WebGpuShaderLibrary._checkedSidecar(
     await _loadSidecar(assetKey),
     source: assetKey,
   );
   final entries = (sidecar['shaders']! as Map).cast<String, Map>();
+  _WebGpuShaderLibrary._entriesByAsset[assetKey]
+    ?..clear()
+    ..addAll(entries);
   for (final MapEntry(:key, :value) in tracked.entries) {
     final entry = entries[key];
     final shader = value.target;
@@ -447,8 +453,10 @@ Future<void> webGpuReloadShaderLibrary(
     source: 'test',
   );
   final entries = (sidecar['shaders']! as Map).cast<String, Map>();
-  for (final MapEntry(:key, :value)
-      in (library as _WebGpuShaderLibrary)._shaders.entries) {
+  (library as _WebGpuShaderLibrary)._entries
+    ..clear()
+    ..addAll(entries);
+  for (final MapEntry(:key, :value) in library._shaders.entries) {
     final entry = entries[key];
     if (entry != null) {
       await value._populate(device, key, entry.cast<String, Object?>());

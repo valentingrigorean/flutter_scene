@@ -60,6 +60,23 @@ class MeshComponent extends Component {
     return true;
   }
 
+  // A primitive's geometry or material assignment queues this node's refresh
+  // through its render source listener; the refresh compares the two here.
+  void _applyPrimitiveAssignments() {
+    final primitives = _mesh.primitives;
+    var itemsMatch = _renderItems.length == primitives.length;
+    for (var i = 0; itemsMatch && i < primitives.length; i++) {
+      itemsMatch = identical(_renderItems[i].geometry, primitives[i].geometry);
+    }
+    if (itemsMatch) {
+      _refreshRetainedMaterials();
+      return;
+    }
+    _unregisterRenderItems();
+    _registerRenderItems();
+    node.markBoundsDirty();
+  }
+
   void _refreshRetainedMaterials() {
     if (_renderItems.length != _mesh.primitives.length) return;
     for (var i = 0; i < _renderItems.length; i++) {
@@ -195,6 +212,7 @@ class MeshComponent extends Component {
   @internal
   void refreshRenderItems({bool uploadSkin = true}) {
     if (_renderItems.isEmpty) return;
+    _applyPrimitiveAssignments();
     _logRenderItems();
     // The debug view override is a plain per-frame copy; it never touches the
     // shadow or bounds state below, and the walk is skipped while no node

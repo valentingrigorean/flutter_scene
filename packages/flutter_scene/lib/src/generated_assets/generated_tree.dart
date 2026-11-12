@@ -8,6 +8,7 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:hooks/hooks.dart';
 import 'package:yaml/yaml.dart';
@@ -94,13 +95,17 @@ T guardGeneratedWrite<T>(Uri target, T Function() write) {
 /// Two builds can share one generated tree (the same pub cache backs every
 /// project), so a file must never be visible half-written. The rename is
 /// last-writer-wins, and the loser's next build finds a stamp that does not
-/// match and rewrites it.
+/// match and rewrites it. The sibling's name is random as well as per process,
+/// since isolates of one process write concurrently too.
 void writeGeneratedBytes(Uri uri, List<int> bytes) =>
     guardGeneratedWrite(uri, () {
-      final temp = File.fromUri(Uri.file('${uri.toFilePath()}.$pid.tmp'))
+      final tag = '$pid.${_tempNames.nextInt(1 << 32).toRadixString(36)}';
+      final temp = File.fromUri(Uri.file('${uri.toFilePath()}.$tag.tmp'))
         ..writeAsBytesSync(bytes);
       temp.renameSync(uri.toFilePath());
     });
+
+final Random _tempNames = Random.secure();
 
 /// [writeGeneratedBytes] for text.
 void writeGeneratedString(Uri uri, String contents) =>
@@ -207,9 +212,12 @@ final class GeneratedAssetTree {
   final GeneratedAssetManifest _manifest;
   final HookOptions options;
 
-  // The entries this instance wrote or removed. [save] takes every other entry
-  // from the manifest on disk, which another build may have changed since.
-  final Set<(GeneratedAssetFamily, String, String?)> _touched = {};
+  /// The entries this tree recorded or dropped since it was opened, the only
+  /// ones [save] writes over what another build saved in the meantime.
+  final Set<(GeneratedAssetFamily, String, String?)> _changed = {};
+
+  void _touch(GeneratedAssetEntry entry) =>
+      _changed.add((entry.family, entry.id, entry.target));
 
   Uri get _root => packageRoot.resolve('$generatedAssetsDirectory/');
 
@@ -306,26 +314,25 @@ final class GeneratedAssetTree {
     String? source,
     String? target,
   }) {
-    _touched.add((family, id, target));
-    _manifest.put(
-      GeneratedAssetEntry(
-        family: family,
-        id: id,
-        owner: owner ?? packageName,
-        file: file,
-        // Digested, not stored verbatim: a stamp naming every input runs to
-        // kilobytes, and the manifest ships in the app bundle.
-        stamp: _digest(stamp),
-        source: source,
-        target: target,
-      ),
+    final entry = GeneratedAssetEntry(
+      family: family,
+      id: id,
+      owner: owner ?? packageName,
+      file: file,
+      // Digested, not stored verbatim: a stamp naming every input runs to
+      // kilobytes, and the manifest ships in the app bundle.
+      stamp: _digest(stamp),
+      source: source,
+      target: target,
     );
+    _touch(entry);
+    _manifest.put(entry);
   }
 
   /// Drops the [family]/[id] entry for [target] and deletes its output, for an
   /// output a build stopped producing (a sidecar whose switch was turned off).
   void drop(GeneratedAssetFamily family, String id, {String? target}) {
-    _touched.add((family, id, target));
+    _changed.add((family, id, target));
     final entry = _manifest.remove(family, id, target: target);
     if (entry != null) _deleteIfPresent(_root.resolve(entry.file));
   }
@@ -374,7 +381,7 @@ final class GeneratedAssetTree {
       final source = entry.source;
       if (source == null || entry.owner != packageName) continue;
       if (File.fromUri(packageRoot.resolve(source)).existsSync()) continue;
-      _touched.add((entry.family, entry.id, entry.target));
+      _touch(entry);
       _manifest.entries.remove(entry);
       _deleteIfPresent(_root.resolve(entry.file));
       stdout.writeln(
@@ -391,7 +398,7 @@ final class GeneratedAssetTree {
     var dropped = 0;
     for (final entry in _manifest.ofFamily(family).toList()) {
       if (entry.owner != owner) continue;
-      _touched.add((entry.family, entry.id, entry.target));
+      _touch(entry);
       _manifest.entries.remove(entry);
       _deleteIfPresent(_root.resolve(entry.file));
       dropped++;
@@ -415,28 +422,13 @@ final class GeneratedAssetTree {
   /// is only weight in a directory that ships, survives `flutter clean`, and
   /// for a pub-cache consumer is shared with every project on the machine.
   ///
-  /// Builds sharing the tree save one at a time, each into the manifest the
-  /// last one wrote: an entry this instance did not record or drop is kept as
-  /// the disk has it, so two builds for different targets cannot drop each
-  /// other's entries, and the sweep spares every file the merged manifest names.
+  /// Builds sharing the tree save one at a time under a lock beside it, each
+  /// into the manifest the last one wrote, so the sweep spares every file the
+  /// merged manifest names.
   void save() => _locked(_saveLocked);
 
   void _saveLocked() {
-    final onDisk = _readManifest(packageRoot, packageName);
-    if (onDisk != null) {
-      final ours = [
-        for (final entry in _manifest.entries)
-          if (_touched.contains((entry.family, entry.id, entry.target))) entry,
-      ];
-      _manifest.entries
-        ..clear()
-        ..addAll([
-          for (final entry in onDisk.entries)
-            if (!_touched.contains((entry.family, entry.id, entry.target)))
-              entry,
-        ])
-        ..addAll(ours);
-    }
+    _mergeSavedSinceOpen();
     // Entry files are relative to the tree, so a target directory's outputs
     // carry the directory name.
     final referenced = {for (final entry in _manifest.entries) entry.file};
@@ -466,13 +458,23 @@ final class GeneratedAssetTree {
           if (!isGeneratedFileName(name)) continue;
           final relative = '$prefix$name';
           if (referenced.contains(relative)) continue;
-          // The change time, since [dependOnOutputs] moves the modification
-          // time of a fresh output back to its sources'.
-          if (variantsOfReferenced.contains(generatedNameWithoutTag(name)) &&
+          // A temporary file is another build's write in flight, unless it is
+          // old enough to be left by a build that died. The change time, since
+          // [dependOnOutputs] moves the modification time of a fresh output
+          // back to its sources'.
+          final inFlight = name.endsWith('.tmp');
+          if ((inFlight ||
+                  variantsOfReferenced.contains(
+                    generatedNameWithoutTag(name),
+                  )) &&
               file.statSync().changed.isAfter(keepAfter)) {
             continue;
           }
-          file.deleteSync();
+          try {
+            file.deleteSync();
+          } on PathNotFoundException {
+            // Another build's sweep got there first.
+          }
         }
       }
     }
@@ -536,6 +538,19 @@ final class GeneratedAssetTree {
   }
 
   static const String _lockPath = '.dart_tool/flutter_scene/generated.lock';
+
+  /// Takes every entry this tree did not change from the manifest on disk, so
+  /// a build saving after another one that ran alongside it keeps that build's
+  /// entries rather than writing back what it read when it opened.
+  void _mergeSavedSinceOpen() {
+    final saved = _readManifest(packageRoot, packageName);
+    if (saved == null) return;
+    bool changed(GeneratedAssetEntry e) =>
+        _changed.contains((e.family, e.id, e.target));
+    _manifest.entries
+      ..removeWhere((entry) => !changed(entry))
+      ..addAll(saved.entries.where((entry) => !changed(entry)));
+  }
 
   static String _digest(String stamp) => fnv1aHex(utf8.encode(stamp));
 
@@ -656,9 +671,10 @@ PubspecEditResult ensureGeneratedAssetsEntry(File pubspec) {
         'its target directories to pubspec.yaml.',
       );
     } else if (editor.parseAt(<Object>[
-      'flutter',
-      'assets',
-    ], orElse: () => wrapAsYamlNode(null)) is YamlList) {
+          'flutter',
+          'assets',
+        ], orElse: () => wrapAsYamlNode(null))
+        is YamlList) {
       // Inserted in reverse at one index, so each lands after a plain entry.
       // Appending after a mapping entry that a sibling key follows makes
       // yaml_edit write into that sibling.

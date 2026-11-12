@@ -256,6 +256,11 @@ abstract interface class FrameTransients implements TransientWriter {
   /// draws that will not come again, such as a disposed scene's. Call it
   /// between frames.
   void forgetDrawKeys(Iterable<Object> keys);
+
+  /// [emplace] for [data] kept in its own element type. The web backends
+  /// upload by element type, so this skips the byte-wise copy a `ByteData`
+  /// view of a `Float32List` costs under dart2wasm.
+  gpu.BufferView emplaceTyped(TypedData data);
 }
 
 /// Per-emplacement pooled transients for the immediate-execution WebGL2
@@ -271,10 +276,16 @@ abstract interface class FrameTransients implements TransientWriter {
 /// flight. Buffers recycle through a completion-gated pool per size class
 /// and are released after [kTransientIdleFrames] unused frames, the same
 /// policies as [TransientArena].
+///
+/// With [vertexData], buffers are geometry buffers, which the web backends
+/// create as typed vertex buffers whose uploads skip the staging mirror.
+/// The pool is then only for vertex-rate data, such as instance transforms.
 class ImmediatePoolTransients implements FrameTransients {
-  ImmediatePoolTransients(this._tracker) {
+  ImmediatePoolTransients(this._tracker, {this.vertexData = false}) {
     _tracker.addBeforeSubmitListener(_onBeforeSubmit);
   }
+
+  final bool vertexData;
 
   // Every emplacement has a buffer of its own, so no draw holds a slot.
   @override
@@ -311,9 +322,12 @@ class ImmediatePoolTransients implements FrameTransients {
   }
 
   @override
-  gpu.BufferView emplace(ByteData bytes) {
+  gpu.BufferView emplace(ByteData bytes) => emplaceTyped(bytes);
+
+  @override
+  gpu.BufferView emplaceTyped(TypedData data) {
     _forgetLost();
-    final length = bytes.lengthInBytes;
+    final length = data.lengthInBytes;
     final sizeClass = _sizeClassFor(length);
     final completed = _tracker.completedThrough;
 
@@ -338,7 +352,12 @@ class ImmediatePoolTransients implements FrameTransients {
 
     // Device-resident before the view is returned: the immediate backend
     // consumes it as soon as the caller binds and draws.
-    if (!block.device.overwrite(bytes)) {
+    final uploaded = vertexData
+        ? gpu.writeGeometryData(block.device, data, destinationOffsetInBytes: 0)
+        : block.device.overwrite(
+            data is ByteData ? data : ByteData.sublistView(data),
+          );
+    if (!uploaded) {
       debugPrint(
         'ImmediatePoolTransients: failed to upload $length bytes to a '
         '$sizeClass-byte transient buffer.',
@@ -351,12 +370,14 @@ class ImmediatePoolTransients implements FrameTransients {
     );
   }
 
-  static gpu.DeviceBuffer _createBuffer(int length) {
+  gpu.DeviceBuffer _createBuffer(int length) {
     buffersCreated++;
-    final buffer = gpu.gpuContext.createDeviceBuffer(
-      gpu.StorageMode.hostVisible,
-      length,
-    );
+    final buffer = vertexData
+        ? gpu.createGeometryBuffers(length, 0).vertex
+        : gpu.gpuContext.createDeviceBuffer(
+            gpu.StorageMode.hostVisible,
+            length,
+          );
     gpu.markTransientBuffer(buffer);
     return buffer;
   }
@@ -394,12 +415,14 @@ class ImmediatePoolTransients implements FrameTransients {
 /// Creates the platform-default [FrameTransients]: a staged, block-based
 /// [TransientArena] where GPU work executes after submission, and a
 /// per-emplacement [ImmediatePoolTransients] where GL commands execute at
-/// encode time and a bound buffer can never be written again.
+/// encode time and a bound buffer can never be written again. [vertexData]
+/// marks a pool that only ever holds vertex-rate data.
 FrameTransients createFrameTransients(
   GpuSubmissionTracker tracker, {
   int? alignment,
+  bool vertexData = false,
 }) => immediateGpuExecution
-    ? ImmediatePoolTransients(tracker)
+    ? ImmediatePoolTransients(tracker, vertexData: vertexData)
     : TransientArena(tracker, alignment: alignment);
 
 /// A completion-aware bump allocator for per-frame transient GPU data.
@@ -689,6 +712,21 @@ class TransientArena implements FrameTransients {
   }
 
   @override
+  gpu.BufferView emplaceTyped(TypedData data) => emplace(_bytesOf(data));
+
+  // A byte view of [data], memoized for the last list. Non-instanced draws
+  // pack into one reused scratch list, so consecutive draws share the view.
+  ByteData _bytesOf(TypedData data) {
+    if (data is ByteData) return data;
+    if (identical(data, _lastTyped)) return _lastTypedBytes!;
+    _lastTyped = data;
+    return _lastTypedBytes = ByteData.sublistView(data);
+  }
+
+  TypedData? _lastTyped;
+  ByteData? _lastTypedBytes;
+
+  @override
   gpu.BufferView emplace(ByteData bytes) {
     _forgetLost();
     final length = bytes.lengthInBytes;
@@ -951,4 +989,5 @@ final FrameTransients uniformTransients = createFrameTransients(
 final FrameTransients instanceTransients = createFrameTransients(
   rendererSubmissions,
   alignment: 16,
+  vertexData: true,
 );

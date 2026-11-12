@@ -19,17 +19,34 @@ import 'package:vector_math/vector_math.dart' as vm;
 /// {@category Geometry}
 base class MeshPrimitive with RenderSourceListeners implements MeshDrawSource {
   /// Pairs [geometry] with the [material] used to shade it.
-  MeshPrimitive(this.geometry, Material material) : _material = material;
+  MeshPrimitive(Geometry geometry, Material material)
+    : _geometry = geometry,
+      _material = material;
 
   /// The vertex/index data drawn by this primitive.
-  Geometry geometry;
+  ///
+  /// Assigning a new geometry while the owning node is in a scene takes effect
+  /// on the next frame.
+  Geometry get geometry => _geometry;
+  set geometry(Geometry value) {
+    if (identical(value, _geometry)) return;
+    _geometry = value;
+    markSceneDrawChanged();
+    tellRenderSourceListeners();
+  }
+
+  Geometry _geometry;
 
   /// The shader and per-material parameters used to render [geometry].
+  ///
+  /// Assigning a new material while the owning node is in a scene takes effect
+  /// on the next frame.
   Material get material => _material;
   set material(Material value) {
     if (identical(value, _material)) return;
     _material = value;
     markSceneDrawChanged();
+    tellRenderSourceListeners();
   }
 
   Material _material;

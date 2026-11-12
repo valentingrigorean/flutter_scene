@@ -1,5 +1,7 @@
 ## 0.24.4
 
+* A shader library on the WebGPU web backend loads its WGSL sidecar alone, without downloading the shader bundle.
+* A shader library on the WebGPU web backend compiles each shader when it is first used, so a page no longer waits at load on shaders it never draws.
 * A debug build records a kept draw again wherever its owner takes it as current (the signature compare, the rows-only and moved-only paths, a `KeptPassDraw` or `KeptPassItems` key) and throws a `KeptDrawError` naming the draw and the first field that differs, the bytes of a uniform block one write of at most 4 KiB wrote whole included. `keptDrawHolds` gives the check to a caller that keeps items itself (`ItemSet.kept`, `ItemSet.recorded`); `debugChecksKeptDraws` turns it off, and `debugKeepsNoItems` makes `GpuContext.createItemSet` return null so every draw is encoded. A release build holds none of it.
 * A kept draw is encoded each frame only after it changes in five frames in a row, not two, so a tile or mesh that streams in stays kept.
 * An item removed from its scene and a material no scene draws any more give back their per-frame transient slots at once, not at the arena's next idle sweep, and a slot block no draw holds a slot of is released. Before, a process whose scenes had left kept those slots and their blocks.
@@ -40,7 +42,6 @@
 * The debug near-plane advisory no longer prints for a scene with reversed float depth, whose precision the near plane leaves alone.
 * On the WebGPU web backend, `gpuHost.skipCompilingDraws` skips a draw whose pipeline variant is unbuilt and builds it with `createRenderPipelineAsync`, off the GPU process's main thread, and `gpuHost.pipelinesReady` completes once those builds finish, so a warm-up builds pipelines without stalling the page's frames.
 * A generated asset read as text on the web is decoded by the browser.
-* A shader library on the WebGPU web backend loads its WGSL sidecar alone and never fetches the bundle it sits next to, which only the WebGL2 backend reads.
 * A shader library on the WebGL2 web backend compiles a shader when it is first looked up, not every shader of its bundle at load. Where the browser offers `KHR_parallel_shader_compile`, a pipeline links off the page thread, `gpuHost.skipCompilingDraws` skips the draws of a pipeline still linking, and `gpuHost.pipelinesReady` completes once every link has finished; a compile or link error surfaces where the pipeline is bound.
 * A shader library on the WebGPU web backend compiles a shader when it is first looked up, not every shader of its bundle at load, so the first frame of a page waits on the shaders it draws with alone. A WGSL compile error reaches `FlutterError.reportError` once the browser has checked the shader.
 * `gpuHost.releaseBuffer` and `gpuHost.releaseTexture` free a buffer or texture of a registered native GPU backend at once, through the new `GpuBackendDeviceBuffer.destroy` and `GpuBackendTexture.destroy`, rather than when it is collected; on Impeller they still wait for the collector.
@@ -78,6 +79,10 @@
 * A skinned mesh loaded at runtime is culled when off screen instead of always drawing.
 * Blended double-sided materials, such as glass, leaves, and cloth, show their back faces, and their near side draws over their far side.
 * A `ShaderMaterial` or `.fmat` material with a vertex shader no longer breaks the line segments, billboards, and Gaussian splats it draws.
+* Builds that share one flutter_scene in the pub cache (two projects, worktrees, or an app and its tests) no longer fail with `errno = 1224` on Windows or ship each other's half-written shaders. The build hook writes its intermediates into the building app's `.dart_tool/` and only its generated assets into the package.
+* Two builds for different platforms saving flutter_scene's generated assets at once no longer drop each other's manifest entries or delete each other's files mid-write.
+* Assigning `MeshPrimitive.material` or `MeshPrimitive.geometry` on a node already in a scene changes what it draws from the next frame. The assignment was ignored until the node left and rejoined a scene or got a new `Mesh`.
+* Instanced draws and billboards on the WebGL2 backend no longer copy their instance data byte by byte in WebAssembly builds.
 
 ## 0.24.3
 
