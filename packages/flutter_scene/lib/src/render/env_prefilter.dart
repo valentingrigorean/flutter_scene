@@ -197,22 +197,16 @@ class RadiancePrefilterFill {
     _pendingRadianceFills++;
   }
 
-  /// Submits one paced [pass], or ends the fill where its device is gone: the
-  /// context opened again on a new device, or the pass threw after the seed
-  /// passes of the same pipeline and textures ran.
+  /// Submits one paced [pass], or ends the fill where the context opened
+  /// again on a new device: a pass on a lost device draws nothing.
   bool _submit(void Function() pass) {
     if (_cancelled) return false;
     if (_generation != gpu.gpuContextGeneration) {
       _settle();
       return false;
     }
-    try {
-      pass();
-      return true;
-    } on Object {
-      _settle();
-      return false;
-    }
+    pass();
+    return true;
   }
 }
 
