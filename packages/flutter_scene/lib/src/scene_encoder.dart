@@ -49,6 +49,7 @@ import 'package:flutter_scene/src/render/render_stats.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/shaders.dart';
+import 'package:flutter_scene/src/render/draw_serial.dart';
 import 'package:flutter_scene/src/render/uniform_slots.dart';
 import 'package:flutter_scene/src/render/view_info.dart';
 import 'package:flutter_scene/src/render/camera_replay.dart';
@@ -70,8 +71,8 @@ base class _OpaqueRecord {
       _geometry = geometry,
       _material = material,
       _pipeline = pipeline,
-      geometryKey = identityHashCode(geometry),
-      materialKey = identityHashCode(material) {
+      geometryKey = geometry.drawSerial,
+      materialKey = material.drawSerial {
     _keyBatch(item, geometry, material);
   }
   RenderItem? _item;
@@ -116,8 +117,8 @@ base class _OpaqueRecord {
     this.pipelineKey = pipelineKey;
     depth = double.nan;
     this.windingFlipped = windingFlipped;
-    geometryKey = identityHashCode(geometry);
-    materialKey = identityHashCode(material);
+    geometryKey = geometry.drawSerial;
+    materialKey = material.drawSerial;
     _keyBatch(item, geometry, material);
   }
 
@@ -140,11 +141,7 @@ base class _OpaqueRecord {
     batchHash = key?.hashCode ?? 0;
   }
 
-  // Identity sort keys, cached at submit time rather than recomputed per
-  // comparison. The opaque sort reads them O(n log n) times, and
-  // identityHashCode is a runtime call that installs a hash in the object
-  // header on first use, so computing them once per record keeps the
-  // comparator to plain integer compares.
+  // The serials of the geometry and the material ([nextDrawSerial]).
   late int geometryKey;
   late int materialKey;
 
@@ -770,6 +767,7 @@ gpu.RenderPipeline resolvePipeline(
   _pipelineNames[pipeline] = name;
   (_pipelineIndex[vertexShader] ??= HashMap.identity())[fragmentShader] ??= {};
   _pipelineIndex[vertexShader]![fragmentShader]![layoutId] = pipeline;
+  pipelineSerialOf(pipeline);
   return _pipelineCache[key] = pipeline;
 }
 
@@ -1663,7 +1661,7 @@ base class SceneEncoder {
           fade,
           pipeline,
           coveragePipeline,
-          identityHashCode(pipeline),
+          pipelineSerialOf(pipeline),
           item.windingFor(geometry),
         ),
       );
@@ -2760,7 +2758,9 @@ base class SceneEncoder {
       if (byChannels != 0) return byChannels;
       final byFade = a.fade.compareTo(b.fade);
       if (byFade != 0) return byFade;
-      return _opaqueDepth(a).compareTo(_opaqueDepth(b));
+      final byDepth = _opaqueDepth(a).compareTo(_opaqueDepth(b));
+      if (byDepth != 0) return byDepth;
+      return a.item.drawSerial.compareTo(b.item.drawSerial);
     });
     _opaqueSorted = true;
   }
@@ -3506,6 +3506,12 @@ final class RetainedColorDraws extends RetainedDraws {
   static final Expando<RetainedColorDraws> _byScene = Expando(
     'retained color draws',
   );
+
+  @override
+  int? orderOf(Object pipeline, Material material) =>
+      gpu.gpuHost.capabilities.itemsOrderedByPipeline
+      ? opaqueDrawOrderOf(pipeline, material.drawSerial)
+      : null;
 
   /// The kept color draws of [renderScene], or null where the backend keeps no
   /// items.

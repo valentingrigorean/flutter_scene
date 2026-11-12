@@ -503,6 +503,12 @@ abstract base class RetainedDraws {
   @protected
   Object? pipelineOf(RenderItem item);
 
+  /// Where the pass's kept draw of [pipeline] and [material] falls among
+  /// its kept draws ([gpu.ItemSet.keep]'s order), or null for the backend's
+  /// own order, for draws whose order does not change what they draw.
+  @protected
+  int? orderOf(Object pipeline, Material material) => null;
+
   /// The rest of what the pass's draw of [item] depends on that its item
   /// does not count: its cull mode, depth offsets and the like, as one
   /// comparable value.
@@ -836,6 +842,7 @@ abstract base class RetainedDraws {
           : rows
           ? _rowInstances(item, geometryOf(item))
           : null,
+      order: _orderOf(kept.pipeline, kept.material),
     );
     forgetRecorded();
     if (now == null) return true;
@@ -1149,8 +1156,14 @@ abstract base class RetainedDraws {
       passes: passesOf(item),
       bounds: kept.bounded ? kept.bounds : null,
       instances: instances,
+      order: _orderOf(kept.pipeline, kept.material),
     );
   }
+
+  int? _orderOf(Object? pipeline, Object? material) =>
+      pipeline == null || material is! Material
+      ? null
+      : orderOf(pipeline, material);
 
   // The one instance record of [item]'s lone kept draw, relative to the
   // instance frame its recorded draw adds.
@@ -1351,6 +1364,7 @@ abstract base class RetainedDraws {
       passes: passesOf(ref),
       bounds: all,
       instances: instances,
+      order: _orderOf(run.key.pipeline, run.key.material),
     );
     if (id == null) {
       // The backend refused the run's draw: every member is encoded.

@@ -8,6 +8,7 @@ import 'package:vector_math/vector_math.dart' show Matrix4, Vector3;
 
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
+import 'package:flutter_scene/src/render/draw_serial.dart';
 import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/fmat/fmat_ast.dart' show DepthSurfaceKind;
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
@@ -94,6 +95,11 @@ enum MaskedDepthPass {
 /// winding.
 /// {@category Materials}
 abstract class Material with RenderSourceListeners {
+  /// Where this material falls among the materials made, which orders the
+  /// opaque draws of one pipeline.
+  @internal
+  final int drawSerial = nextDrawSerial();
+
   static final gpu.DeviceLocal<gpu.Texture> _whitePlaceholderTexture =
       gpu.DeviceLocal(
         () => gpu.gpuContext.createTexture(gpu.StorageMode.hostVisible, 1, 1)
@@ -843,9 +849,9 @@ abstract class Material with RenderSourceListeners {
   @internal
   bool drawsDebugViews(Lighting lighting) =>
       participatesInDebugViews &&
-      fragmentShaderForLighting(lighting)
-              .cachedUniformSlot('DebugViewInfo')
-              .sizeInBytes !=
+      fragmentShaderForLighting(
+            lighting,
+          ).cachedUniformSlot('DebugViewInfo').sizeInBytes !=
           null;
 
   /// Per-frame engine inputs this material samples, produced only when a
