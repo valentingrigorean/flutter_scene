@@ -1,6 +1,6 @@
 // Two opaque draws that cover the same pixels at the same depth draw in one
 // order from scene to scene, and kept as render items in the order they are
-// encoded in where the backend orders kept items by pipeline.
+// encoded in.
 
 import 'dart:ui' as ui;
 
@@ -88,8 +88,7 @@ void main() {
   });
 
   test('two opaque draws at one depth show the material made last in every '
-      'scene encoded, and one material in every scene kept: the same one '
-      'where the backend orders kept items by pipeline', () async {
+      'scene, encoded or kept', () async {
     final kept = [for (var scene = 0; scene < 8; scene++) await _overlap()];
     gpu.debugKeepsNoItems = true;
     addTearDown(() => gpu.debugKeepsNoItems = false);
@@ -100,13 +99,6 @@ void main() {
     final red = encoded.first.color;
     expect(red[0], greaterThan(red[1]));
     expect([for (final drawn in encoded) drawn.color], everyElement(red));
-    expect(
-      [for (final drawn in kept) drawn.color],
-      everyElement(
-        gpu.gpuHost.capabilities.itemsOrderedByPipeline
-            ? red
-            : kept.first.color,
-      ),
-    );
+    expect([for (final drawn in kept) drawn.color], everyElement(red));
   });
 }

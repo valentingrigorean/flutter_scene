@@ -40,7 +40,7 @@ class _Flat extends UnlitMaterial {
   bool get participatesInDebugViews => false;
 }
 
-Node _slab(UnlitMaterial material, double order, {String name = ''}) => Node(
+Node _slab(Material material, double order, {String name = ''}) => Node(
   name: name,
   mesh: Mesh(CuboidGeometry(Vector3(200, 200, 0.01)), material),
   localTransform: Matrix4.translationValues(0, 0, -50),
@@ -118,6 +118,30 @@ void main() {
       );
     });
   }
+
+  test('an opaque draw encoded after a kept draw of another pipeline draws '
+      'with its own, though the draw encoded before the kept one bound the '
+      'same', () async {
+    final before = PhysicallyBasedMaterial();
+    final after = PhysicallyBasedMaterial();
+    final scene = Scene()
+      ..add(_slab(before, -1))
+      ..add(_slab(_Flat(0, 1), -1))
+      ..add(_slab(after, 0));
+    addTearDown(scene.dispose);
+
+    var centre = <int>[];
+    for (var frame = 0; frame < 6; frame++) {
+      before.baseColorFactor = Vector4(0, 1, frame / 100, 1);
+      after.baseColorFactor = Vector4(1, 0, frame / 100, 1);
+      activeRenderCounters.reset();
+      centre = await _centre(scene);
+    }
+
+    expect(activeRenderCounters.colorItemsKept, 1);
+    expect(activeRenderCounters.colorItemsEncoded, 2);
+    expect(centre[0], greaterThan(centre[2] + 100), reason: '$centre');
+  });
 
   test('a frame whose opaque draws are all encoded is not one another camera '
       'replays', () async {
