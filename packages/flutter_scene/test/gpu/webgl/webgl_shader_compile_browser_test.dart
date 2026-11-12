@@ -21,7 +21,7 @@ import 'package:web/web.dart' as web;
 
 const int _completionStatus = 0x91B1;
 
-Uint8List _bundle() {
+Uint8List _bundle({String color = '1.0'}) {
   fb.ShaderObjectBuilder shader(
     String name,
     fb.ShaderStage stage,
@@ -43,9 +43,9 @@ Uint8List _bundle() {
   const vertex =
       '#version 100\nattribute vec2 position;\n'
       'void main() { gl_Position = vec4(position, 0.0, 1.0); }\n';
-  const fragment =
+  final fragment =
       '#version 100\nprecision mediump float;\n'
-      'void main() { gl_FragColor = vec4(1.0); }\n';
+      'void main() { gl_FragColor = vec4($color); }\n';
   return fb.ShaderBundleObjectBuilder(
     formatVersion: 2,
     shaders: [
@@ -136,6 +136,38 @@ void main() {
       expect(drawSkipped(), 0);
       expect(asked, contains(web.WebGL2RenderingContext.LINK_STATUS));
       gl.delete('getProgramParameter'.toJS);
+    },
+  );
+
+  test(
+    'a shader first looked up after a reload compiles the new source',
+    () async {
+      final window = web.window as JSObject;
+      final fetch = window['fetch']! as JSFunction;
+      var bundle = _bundle(color: '0.25');
+      window['fetch'] = ((JSAny? _, JSAny? _) => Future<JSAny?>.value(
+        web.Response(bundle.toJS),
+      ).toJS).toJS;
+      final gl = (gpu.gpuContext as WebGlContext).gl as JSObject;
+      final shaderSource = gl['shaderSource']! as JSFunction;
+      final sources = <String>[];
+      gl['shaderSource'] = ((JSAny? shader, JSString source) {
+        sources.add(source.toDart);
+        shaderSource.callAsFunction(gl, shader, source);
+      }).toJS;
+      try {
+        final library = (await gpu.loadShaderLibraryAsync(
+          'reload_test.shaderbundle',
+        ))!;
+        bundle = _bundle(color: '0.75');
+        await gpu.reinitializeShaderLibraryAsync('reload_test.shaderbundle');
+        library['UnusedFragment'];
+        expect(sources, hasLength(1));
+        expect(sources.single, contains('0.75'));
+      } finally {
+        window['fetch'] = fetch;
+        gl.delete('shaderSource'.toJS);
+      }
     },
   );
 }

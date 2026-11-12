@@ -33,6 +33,10 @@ final class WebGlShaderLibrary extends ShaderLibrary {
   static final Map<String, List<({String name, WeakReference<Shader> shader})>>
   _shadersByAsset = {};
 
+  /// The bundle entries of each loaded asset, which hot reload replaces so a
+  /// shader first looked up after it compiles the new source.
+  static final Map<String, Map<String, fb.BackendShader>> _entriesByAsset = {};
+
   /// Look up a shader by the name it was given in the bundle (or in the
   /// inline map), compiling it on its first lookup.
   @override
@@ -56,10 +60,13 @@ final class WebGlShaderLibrary extends ShaderLibrary {
   /// never pairs an old bundle with new Dart code.
   static Future<ShaderLibrary?> _loadFromAsset(String assetName) async {
     final data = await loadGeneratedAsset(assetName);
-    return _loadFromBytes(data, assetName: assetName);
+    final library = _loadFromBytes(data, assetName: assetName);
+    _entriesByAsset[assetName] = library._entries;
+    _shadersByAsset.putIfAbsent(assetName, () => []);
+    return library;
   }
 
-  static ShaderLibrary _loadFromBytes(ByteData data, {String? assetName}) {
+  static WebGlShaderLibrary _loadFromBytes(ByteData data, {String? assetName}) {
     final bytes = data.buffer.asUint8List(
       data.offsetInBytes,
       data.lengthInBytes,
@@ -228,16 +235,21 @@ Future<void> _reinitializeShaderLibraryAsync(String assetKey) async {
     );
     return;
   }
+  // A library whose shaders were never looked up still tracks into [tracked],
+  // so it stays registered even when empty.
   tracked.removeWhere((entry) => entry.shader.target == null);
-  if (tracked.isEmpty) {
-    WebGlShaderLibrary._shadersByAsset.remove(assetKey);
-    return;
-  }
 
   final data = await loadGeneratedAsset(assetKey);
   final bundle = fb.ShaderBundle(
     data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
   );
+  WebGlShaderLibrary._entriesByAsset[assetKey]
+    ?..clear()
+    ..addAll({
+      for (final entry in bundle.shaders ?? const <fb.Shader>[])
+        if ((entry.name, entry.openglEs) case (final name?, final backend?))
+          name: backend,
+    });
   var recompiled = 0;
   for (final entry in bundle.shaders ?? const <fb.Shader>[]) {
     final name = entry.name;
