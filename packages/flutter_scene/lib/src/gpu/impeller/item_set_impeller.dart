@@ -1,9 +1,35 @@
 part of '_gpu.dart';
 
-// How many turns of view-block storage a pass index rotates through, so a
-// block a frame wrote is not overwritten while the GPU still reads it. Matches
-// the frames `fg.HostBuffer` rotates.
+// How many turns of storage a pass index keeps once no command buffer holds
+// them.
 const int _itemViewTurns = 4;
+
+// Storage the kept draws of a pass index read, written once and then held by
+// each command buffer that drew with it until the GPU is done with that
+// command buffer, so no write lands under a draw still to run.
+base class _Turn {
+  int _open = 0;
+  int _readThrough = 0;
+
+  bool get _free => _open == 0 && _readThrough <= _impellerCompletedThrough;
+
+  // A turn of [turns] no command buffer holds, made by [make] where each is
+  // held. The others none holds are dropped down to [_itemViewTurns] turns.
+  static T free<T extends _Turn>(List<T> turns, T Function() make) {
+    T? free;
+    for (var at = turns.length - 1; at >= 0; at--) {
+      final turn = turns[at];
+      if (!turn._free) continue;
+      if (free == null) {
+        free = turn;
+      } else if (turns.length > _itemViewTurns) {
+        turns.removeAt(at);
+      }
+    }
+    if (free == null) turns.add(free = make());
+    return free;
+  }
+}
 
 // The fixed-function state a draw holds on Impeller, where the render pipeline
 // bakes none of it and the pass keeps it until a setter changes it. A kept item
@@ -296,16 +322,15 @@ final class _ItemInstances {
 }
 
 // The instances one pass index last showed of a kept item, compacted into a
-// buffer of [_itemViewTurns] turns, so a draw still on the GPU keeps reading
-// the turn it drew with while a later frame shows another subset.
+// turn of their own, so a draw still on the GPU keeps reading the turn it
+// drew with while a later frame shows another subset.
 final class _ShownInstances {
-  _ShownInstances(this.buffer, int count) : at = Int32List(count);
+  _ShownInstances(int count) : at = Int32List(count);
 
-  final fg.DeviceBuffer buffer;
+  final List<_ShownTurn> turns = [];
   final Int32List at;
   int length = -1;
-  int turn = -1;
-  fg.BufferView? view;
+  _ShownTurn? current;
 
   bool holds(Int32List shown, int length) {
     if (length != this.length) return false;
@@ -314,6 +339,29 @@ final class _ShownInstances {
     }
     return true;
   }
+}
+
+final class _ShownTurn extends _Turn {
+  _ShownTurn(this.buffer);
+
+  final fg.DeviceBuffer buffer;
+  late fg.BufferView view;
+}
+
+// The view blocks one pass index wrote, each a view of one buffer.
+final class _ViewTurn extends _Turn {
+  _ViewTurn(this.buffer, int count, int stride)
+    : views = [
+        for (var block = 0; block < count; block++)
+          fg.BufferView(
+            buffer,
+            offsetInBytes: block * stride,
+            lengthInBytes: stride,
+          ),
+      ];
+
+  final fg.DeviceBuffer buffer;
+  final List<fg.BufferView> views;
 }
 
 // The pass an [ItemSet] hands out to record draws on Impeller: it binds
@@ -459,11 +507,9 @@ final class _ItemSet {
   final Map<fg.UniformSlot, fg.BufferView> _boundUniforms = {};
   final Map<fg.UniformSlot, (fg.Texture, SamplerOptions)> _boundTextures = {};
 
-  // One buffer per pass index, holding [_itemViewTurns] turns of the pass's
-  // view blocks, and the views onto each turn.
-  final Map<int, fg.DeviceBuffer> _blocks = {};
-  final Map<int, List<List<fg.BufferView>>> _blockViews = {};
-  final Map<int, int> _turns = {};
+  // The turns of view blocks each pass index wrote, and the one it wrote last.
+  final Map<int, List<_ViewTurn>> _blocks = {};
+  final Map<int, _ViewTurn> _current = {};
 
   // The view blocks each pass index last wrote, so a [draw] given the same
   // ones again reads the turn that holds them and writes nothing.
@@ -526,7 +572,7 @@ final class _ItemSet {
     for (final MapEntry(key: index, value: shown) in held.shown.entries) {
       placed.shown[index] = shown
         ..length = -1
-        ..view = null;
+        ..current = null;
     }
     draw
       ..bounds = bounds == null ? null : Float32List.fromList(bounds)
@@ -616,27 +662,25 @@ final class _ItemSet {
 
   // The view of the records of [instances] that pass [index] shows, the
   // first [length] of [shown]: every record when none is culled and none is
-  // [ordered], else the subset compacted into the pass index's next turn,
+  // [ordered], else the subset compacted into a turn [commands] holds,
   // written only when it differs from the subset the pass index showed last.
   fg.BufferView _shownOf(
     _ItemInstances instances,
     int index,
     Int32List shown,
-    int length, {
+    int length,
+    CommandBuffer commands, {
     required bool ordered,
   }) {
     final count = instances.count;
     if (length == count && !ordered) return instances.all;
     final stride = instances.stride;
-    final held = instances.shown[index] ??= _ShownInstances(
-      _context.createDeviceBuffer(
-        StorageMode.hostVisible,
-        stride * count * _itemViewTurns,
-      ),
-      count,
-    );
-    final view = held.view;
-    if (view != null && held.holds(shown, length)) return view;
+    final held = instances.shown[index] ??= _ShownInstances(count);
+    final current = held.current;
+    if (current != null && held.holds(shown, length)) {
+      commands._reads(current);
+      return current.view;
+    }
     var staging = _staging;
     if (staging.length < length * stride) {
       staging = _staging = Uint8List(length * stride * 2);
@@ -646,24 +690,26 @@ final class _ItemSet {
       final from = shown[at] * stride;
       staging.setRange(at * stride, (at + 1) * stride, records, from);
     }
-    held
-      ..turn = (held.turn + 1) % _itemViewTurns
-      ..length = length;
-    held.at.setRange(0, length, shown);
-    final offset = held.turn * count * stride;
-    held.buffer.overwrite(
-      ByteData.sublistView(staging, 0, length * stride),
-      destinationOffsetInBytes: offset,
+    final turn = held.current = _Turn.free(
+      held.turns,
+      () => _ShownTurn(
+        _context.createDeviceBuffer(StorageMode.hostVisible, stride * count),
+      ),
     );
-    return held.view = fg.BufferView(
-      held.buffer,
-      offsetInBytes: offset,
+    held.length = length;
+    held.at.setRange(0, length, shown);
+    turn.buffer.overwrite(ByteData.sublistView(staging, 0, length * stride));
+    commands._reads(turn);
+    return turn.view = fg.BufferView(
+      turn.buffer,
+      offsetInBytes: 0,
       lengthInBytes: length * stride,
     );
   }
 
   void draw(
     fg.RenderPass pass,
+    CommandBuffer commands,
     _ItemDrawState live,
     int index, {
     required List<ByteData> viewBlocks,
@@ -715,10 +761,17 @@ final class _ItemSet {
             reversed: sort == ItemSort.farthestFirstReversedDepth,
           );
         }
-        shownView = _shownOf(instances, index, shown, length, ordered: ordered);
+        shownView = _shownOf(
+          instances,
+          index,
+          shown,
+          length,
+          commands,
+          ordered: ordered,
+        );
         instanceCount = length;
       }
-      views ??= _viewsOf(index, viewBlocks);
+      views ??= _viewsOf(index, viewBlocks, commands);
       saved ??= live.copy();
       // A pass keeps one set of bindings for every shader, so another
       // pipeline starts from none, lest a slot the last one bound linger.
@@ -826,59 +879,49 @@ final class _ItemSet {
     _items.clear();
     _drawOrder = null;
     _blocks.clear();
-    _blockViews.clear();
-    _turns.clear();
+    _current.clear();
     _written.clear();
     _boundUniforms.clear();
     _boundTextures.clear();
   }
 
-  // Writes [viewBlocks] into this pass index's next turn and returns the
-  // views onto it, built once per turn; the views onto the turn that holds
-  // them already when the pass index last wrote the same blocks, such as a
-  // second draw of the pass in a frame or a frame whose view did not move.
-  List<fg.BufferView> _viewsOf(int index, List<ByteData> viewBlocks) {
+  // Writes [viewBlocks] into a turn of this pass index that [commands] holds
+  // and returns the views onto it; the views onto the turn that holds them
+  // already when the pass index last wrote the same blocks, such as a second
+  // draw of the pass in a frame or a frame whose view did not move.
+  List<fg.BufferView> _viewsOf(
+    int index,
+    List<ByteData> viewBlocks,
+    CommandBuffer commands,
+  ) {
     final count = _viewBlocks.values.fold(0, (a, b) => a > b ? a : b) + 1;
-    var buffer = _blocks[index];
-    List<List<fg.BufferView>> turns;
-    if (buffer == null) {
-      buffer = _context.createDeviceBuffer(
-        StorageMode.hostVisible,
-        _blockStride * count * _itemViewTurns,
-      );
-      _blocks[index] = buffer;
-      turns = _blockViews[index] = [
-        for (var turn = 0; turn < _itemViewTurns; turn++)
-          [
-            for (var block = 0; block < count; block++)
-              fg.BufferView(
-                buffer,
-                offsetInBytes: (turn * count + block) * _blockStride,
-                lengthInBytes: _blockStride,
-              ),
-          ],
-      ];
-    } else {
-      turns = _blockViews[index]!;
-    }
     final blocks = count < viewBlocks.length ? count : viewBlocks.length;
-    final written = _written[index];
-    final last = _turns[index];
-    if (last != null && _holds(written!, viewBlocks, blocks)) {
-      return turns[last];
+    final current = _current[index];
+    if (current != null && _holds(_written[index]!, viewBlocks, blocks)) {
+      commands._reads(current);
+      return current.views;
     }
-    final turn = ((last ?? -1) + 1) % _itemViewTurns;
-    _turns[index] = turn;
-    final views = turns[turn];
+    final turn = _current[index] = _Turn.free(
+      _blocks[index] ??= [],
+      () => _ViewTurn(
+        _context.createDeviceBuffer(
+          StorageMode.hostVisible,
+          _blockStride * count,
+        ),
+        count,
+        _blockStride,
+      ),
+    );
     for (var block = 0; block < blocks; block++) {
       assert(viewBlocks[block].lengthInBytes <= _blockStride);
-      buffer.overwrite(
+      turn.buffer.overwrite(
         viewBlocks[block],
-        destinationOffsetInBytes: views[block].offsetInBytes,
+        destinationOffsetInBytes: turn.views[block].offsetInBytes,
       );
     }
     _keepWritten(index, viewBlocks, blocks);
-    return views;
+    commands._reads(turn);
+    return turn.views;
   }
 
   static bool _holds(

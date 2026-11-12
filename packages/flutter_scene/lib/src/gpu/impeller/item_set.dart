@@ -263,6 +263,7 @@ final class ItemSet {
     if (impeller != null) {
       impeller.draw(
         pass._impeller!,
+        pass._commands!,
         pass._state!,
         index,
         viewBlocks: viewBlocks,

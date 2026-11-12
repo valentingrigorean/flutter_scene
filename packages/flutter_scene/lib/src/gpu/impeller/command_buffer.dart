@@ -70,6 +70,14 @@ final class CommandBuffer {
   final GpuBackendCommandBuffer? _backend;
   bool _backendSubmitted = false;
 
+  // The turns of kept draws its passes drew with on Impeller, which it holds
+  // until the GPU is done with it.
+  Set<_Turn>? _turns;
+
+  void _reads(_Turn turn) {
+    if ((_turns ??= {}).add(turn)) turn._open++;
+  }
+
   /// Whether [submit] has run.
   bool get submitted => _impeller?.submitted ?? _backendSubmitted;
 
@@ -80,6 +88,7 @@ final class CommandBuffer {
     if (impeller != null) {
       return RenderPass._impeller(
         impeller.createRenderPass(renderTarget._toImpeller()),
+        this,
       );
     }
     return RenderPass._backend(
@@ -165,6 +174,15 @@ final class CommandBuffer {
       );
       _impellerSubmitted = id;
       _impellerPending.add(id);
+      final turns = _turns;
+      if (turns != null) {
+        _turns = null;
+        for (final turn in turns) {
+          turn
+            .._open -= 1
+            .._readThrough = id;
+        }
+      }
       return;
     }
     if (_backendSubmitted) {
