@@ -45,7 +45,6 @@ class GpuCapabilities {
     this.float32Blending = true,
     this.orderedTextureReuse = false,
     this.orderedBufferWrites = false,
-    this.itemsOrderedByPipeline = false,
   });
 
   /// A rendered texture can be handed to Flutter as a `ui.Image` without a
@@ -103,15 +102,6 @@ class GpuCapabilities {
   /// offsets from frame to frame (see `transientDrawKey`).
   final bool orderedBufferWrites;
 
-  /// An item set draws the items kept with no order in the order their
-  /// pipelines were made, so an order that states the pipeline first changes
-  /// nothing between the draws of two pipelines.
-  ///
-  /// Where this is true, the color pass keeps an opaque draw at the place
-  /// the encoder sorts it to, so a draw falls where it did whether it is
-  /// kept or encoded.
-  final bool itemsOrderedByPipeline;
-
   /// The tier these capabilities add up to.
   GpuHostTier get hostTier {
     if (!textureToImage && !presentAsImage) return GpuHostTier.headless;
@@ -128,8 +118,7 @@ class GpuCapabilities {
       'aheadOfTimePipelines: $aheadOfTimePipelines, '
       'float32Blending: $float32Blending, '
       'orderedTextureReuse: $orderedTextureReuse, '
-      'orderedBufferWrites: $orderedBufferWrites, '
-      'itemsOrderedByPipeline: $itemsOrderedByPipeline)';
+      'orderedBufferWrites: $orderedBufferWrites)';
 }
 
 /// A native GPU backend the shim can render through.

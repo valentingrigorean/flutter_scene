@@ -3318,8 +3318,10 @@ base class SceneEncoder {
     if (kept == null || !kept.drawsBelow(order)) return;
     kept.drawBelow(order, _renderPass, this);
     // The kept items bound their own pipeline and blocks on the pass, so what
-    // the encoder holds of its bindings no longer stands.
+    // the encoder holds of its bindings no longer stands, the pipeline
+    // included: the next draw encoded binds its own again.
     _clearBindings();
+    _boundPipeline = null;
   }
 
   /// The color pass's kept translucent draws, which [flushTranslucent] draws
@@ -3509,9 +3511,7 @@ final class RetainedColorDraws extends RetainedDraws {
 
   @override
   int? orderOf(Object pipeline, Material material) =>
-      gpu.gpuHost.capabilities.itemsOrderedByPipeline
-      ? opaqueDrawOrderOf(pipeline, material.drawSerial)
-      : null;
+      opaqueDrawOrderOf(pipeline, material.drawSerial);
 
   /// The kept color draws of [renderScene], or null where the backend keeps no
   /// items.
