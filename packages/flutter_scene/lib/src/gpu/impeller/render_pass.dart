@@ -122,20 +122,25 @@ final class RenderTarget {
 
 /// Draws into a [RenderTarget]; created by [CommandBuffer.createRenderPass].
 final class RenderPass {
-  RenderPass._impeller(fg.RenderPass this._impeller)
+  RenderPass._impeller(fg.RenderPass this._impeller, this._commands)
     : _backend = null,
       _recording = null,
       _state = _ItemDrawState();
   RenderPass._backend(GpuBackendRenderPass this._backend)
     : _impeller = null,
+      _commands = null,
       _recording = null,
       _state = null;
   RenderPass._recording(_ItemRecorder this._recording)
     : _impeller = null,
+      _commands = null,
       _backend = null,
       _state = _recording.state;
 
   final fg.RenderPass? _impeller;
+
+  // The command buffer of a pass that encodes on Impeller.
+  final CommandBuffer? _commands;
   final GpuBackendRenderPass? _backend;
 
   // The recorder a pass made by [ItemSet.recorder] on Impeller records its
