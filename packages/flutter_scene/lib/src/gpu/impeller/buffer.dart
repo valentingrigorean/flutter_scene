@@ -114,40 +114,31 @@ final class DeviceBuffer {
         );
   }
 
-  // The bytes [overwrite] wrote to each buffer of a debug build that checks
-  // kept draws, zero where it wrote none. A buffer made with its contents
-  // holds them where a uniform block can bind it whole, and one written
-  // while the check is off holds none.
-  static final Expando<Uint8List> _mirrors = Expando('buffer mirror');
-  static const int _mirroredCopyBytes = 1 << 16;
+  // What each [overwrite] of at most [_mirroredBytes] last wrote to a buffer
+  // of a debug build that checks kept draws, by where it wrote: a uniform
+  // block is written whole. A buffer made with such contents holds them at
+  // zero.
+  static final Expando<Map<int, Uint8List>> _mirrors = Expando('buffer mirror');
+  static const int _mirroredBytes = 1 << 12;
 
   bool _mirror(ByteData bytes, int at) {
-    final end = at + bytes.lengthInBytes;
     if (!debugChecksKeptDraws) {
       _mirrors[this] = null;
-      return true;
+    } else if (bytes.lengthInBytes <= _mirroredBytes) {
+      (_mirrors[this] ??= {})[at] = Uint8List.fromList(
+        bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
+      );
+    } else {
+      _mirrors[this]?.remove(at);
     }
-    if (at < 0 || end > sizeInBytes) return true;
-    (_mirrors[this] ??= Uint8List(sizeInBytes)).setRange(
-      at,
-      end,
-      bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
-    );
     return true;
   }
 
-  // What the mirror holds of [view].
-  static Uint8List _mirrored(BufferView view) {
-    final bytes = Uint8List(view.lengthInBytes);
-    final mirror = _mirrors[view.buffer];
-    if (mirror == null || view.offsetInBytes >= mirror.length) return bytes;
-    final end = view.offsetInBytes + view.lengthInBytes;
-    return bytes..setRange(
-      0,
-      (end < mirror.length ? end : mirror.length) - view.offsetInBytes,
-      mirror,
-      view.offsetInBytes,
-    );
+  // What was last written to [view], or null where no one write the mirror
+  // holds wrote it whole.
+  static Uint8List? _mirrored(BufferView view) {
+    final bytes = _mirrors[view.buffer]?[view.offsetInBytes];
+    return bytes?.length == view.lengthInBytes ? bytes : null;
   }
 
   /// Makes host writes to the range visible to the GPU.
