@@ -443,6 +443,46 @@ void main() {
       },
     );
 
+    test('a slot block is released with the last slot a draw holds of it', () {
+      final tracker = GpuSubmissionTracker();
+      final arena = TransientArena(
+        tracker,
+        alignment: 256,
+        blockLengthInBytes: 1024,
+        keepsDrawSlots: true,
+      );
+      final draws = [for (var i = 0; i < 6; i++) Object()];
+      void frame(List<Object> drawn) {
+        arena.beginFrame();
+        for (final draw in drawn) {
+          transientDrawKey = draw;
+          arena.emplace(_bytes(100));
+        }
+        transientDrawKey = null;
+        tracker.record();
+      }
+
+      frame(draws);
+      expect(arena.slotBlockCount, 2);
+      final created = TransientArena.buffersCreated;
+
+      arena.forgetDrawKeys(draws.sublist(1));
+      expect(arena.slotBlockCount, 1, reason: 'the first draw holds a slot');
+      frame(draws);
+      expect(arena.slotBlockCount, 2);
+      expect(TransientArena.buffersCreated, created + 1);
+
+      arena.forgetDrawKeys(draws);
+      expect(arena.slotBlockCount, 0);
+      expect(arena.drawSlotCount, 0);
+
+      frame(draws.sublist(0, 1));
+      for (var i = 0; i <= TransientArena.kSlotIdleFrames * 2; i++) {
+        frame(const []);
+      }
+      expect(arena.slotBlockCount, 0, reason: 'a draw idle past the sweep');
+    });
+
     test('a keyed draw takes the bump arena where writes are not ordered', () {
       final tracker = GpuSubmissionTracker();
       final arena = TransientArena(
