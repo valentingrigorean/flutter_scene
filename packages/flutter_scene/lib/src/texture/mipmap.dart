@@ -204,7 +204,7 @@ void _downsampleColorWithPow(
                 _linearOfByte[src[c + ch]] +
                 _linearOfByte[src[d + ch]]) *
             0.25;
-        dst[o + ch] = _linearToSrgb(avg);
+        dst[o + ch] = _srgbByteOfLinear(avg);
       }
       dst[o + 3] =
           ((src[a + 3] + src[b + 3] + src[c + 3] + src[d + 3]) + 2) ~/ 4;
@@ -311,8 +311,8 @@ int _srgbByteOfLinear(double linear) {
 }
 
 /// The linear values bounding the band around each sRGB rounding edge where
-/// the table chain falls back to `pow`: entry `byte - 1` holds the band below
-/// and above the edge between `byte - 1` and `byte`.
+/// the color chain falls back to `pow`, for tests: entry `byte - 1` holds the
+/// band around the edge between `byte - 1` and `byte`.
 @visibleForTesting
 List<({double below, double above})> get srgbEdgeFallbackBands => [
   for (var byte = 1; byte < 256; byte++)

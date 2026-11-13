@@ -1,6 +1,6 @@
 ---
 name: flutter_scene-performance
-version: 3
+version: 4
 description: Make a flutter_scene app hit frame budget. Use whenever a scene janks, stutters, or drops frames, or when the ask is to make it faster or run on mobile or web, because code-driven scenes are reliably slow and the fix depends on which thread is over budget, not on a guessed poly count.
 ---
 
@@ -57,6 +57,7 @@ Percentiles clean but the **worst** frame is tens to hundreds of milliseconds, a
 - **Warm through the real builders.** The pipeline key includes the vertex layout, so a placeholder sphere warms a different pipeline than the real mesh. Build the actual tower/effect/overlay through its normal code path.
 - **Keep warmup draws brief.** One frame compiles the pipeline. A material that samples scene depth also forces the full-resolution depth prepass while it is live, so a lingering warmup shows up as raster cost.
 - **Do not trust repeat measurements.** GPU drivers cache compiled shaders across runs, so the second profiling session hits caches the first did not. First-run cost is what a fresh install pays.
+- **Mind `fxc` on Windows.** Windows (native and WebGL2) compiles each shader through ANGLE and Direct3D's `fxc` on its first draw, and a `lit` `.fmat` looping over `<noise.glsl>` table noise can stall for seconds. Use `shading_model: unlit` for effect materials, and `NoiseValue*`/`NoiseHash*` or a baked texture in loops.
 
 ## More depth
 
