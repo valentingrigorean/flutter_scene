@@ -149,7 +149,9 @@ final class RetainedShadowCasters extends RetainedDraws {
     items.draw(
       pass,
       SceneItems.casterPass + cascade,
-      viewBlocks: [viewInfoBytesOf(lightSpaceMatrix, cameraPosition)],
+      viewBlocks: SceneItems.withAppBlocks(renderScene, [
+        viewInfoBytesOf(lightSpaceMatrix, cameraPosition),
+      ]),
       clip: lightSpaceMatrix.storage,
     );
   }

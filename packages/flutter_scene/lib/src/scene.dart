@@ -11,7 +11,6 @@ import 'package:flutter_scene/src/hot_reload/hot_reload_coordinator.dart';
 import 'package:flutter_scene/src/coplanar_overlaps.dart'
     as coplanar
     show CoplanarOverlap, CoplanarOverlapScan, describeCoplanarOverlaps;
-import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/depth_conflicts.dart'
     as depth_conflicts
     show DepthConflictReport, probeDepthConflicts;
@@ -656,9 +655,8 @@ base class Scene implements SceneGraph {
   Float64List get drawOrigin => Float64List.fromList(renderScene.drawOrigin.at);
 
   /// Moves [drawOrigin].
-  void setDrawOrigin(double x, double y, double z) {
-    if (renderScene.drawOrigin.moveTo(x, y, z)) markSceneDrawChanged();
-  }
+  void setDrawOrigin(double x, double y, double z) =>
+      renderScene.drawOrigin.moveTo(x, y, z);
 
   /// Has every draw the backend keeps as a render item checked against its
   /// material on the next frame, and recorded again where what it binds
@@ -669,14 +667,16 @@ base class Scene implements SceneGraph {
   void markKeptDrawsChanged() => renderScene.relogItems();
 
   /// Supplies the bytes [bytes] gives, each frame, as the uniform block
-  /// [name] to every color-pass draw the backend keeps as a render item, or
+  /// [name] to every draw of the color pass, the depth prepass and the
+  /// directional shadow cascades the backend keeps as a render item, or
   /// stops when [bytes] is null.
   ///
   /// For a block an app shader reads whose bytes follow the frame rather than
-  /// the draw, such as an animation clock. The material binds the same bytes
-  /// itself on a draw the pass encodes; a kept draw reads them like the
-  /// engine's `ViewInfo`, so it stays kept while the value changes. A block is
-  /// at most as long as the engine's `FragInfo`.
+  /// the draw, such as an animation clock or the draw origin
+  /// (`Geometry.drawsFromViewOrigin`). The material or the geometry binds the
+  /// same bytes itself on a draw the pass encodes; a kept draw reads them
+  /// like the engine's `ViewInfo`, so it stays kept while the value changes.
+  /// A block is at most as long as the engine's `FragInfo`.
   void setViewBlock(String name, ByteData Function()? bytes) {
     final blocks = renderScene.viewBlocks;
     if (bytes == null) {

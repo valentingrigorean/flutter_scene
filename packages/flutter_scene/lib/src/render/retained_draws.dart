@@ -185,8 +185,10 @@ final class _RunKey {
 /// the passes in the order they draw, so an index does not order them.
 ///
 /// Each pass states its own view blocks: `ViewInfo` first, then `DepthInfo`
-/// for the prepass, or `FragInfo`, `FogInfo`, `SceneInputInfo` and the app's
-/// blocks (`Scene.setViewBlock`) for the color pass and its translucent draws;
+/// for the prepass, or `FragInfo`, `FogInfo` and `SceneInputInfo` for the
+/// color pass and its translucent draws, and the app's blocks
+/// (`Scene.setViewBlock`) after them in every pass that draws the scene's
+/// items ([withAppBlocks]);
 /// `SkyboxFrameInfo` and `SkyboxInfo` for the sky, `ResolveInfo` for the
 /// resolve, `FxaaInfo` for the anti-aliasing, and a custom render pass's
 /// `CustomRenderPass.keptViewBlocks` for its draw.
@@ -206,6 +208,29 @@ final class SceneItems {
   /// the set: a kept draw that reads it in a pass of its own is supplied it
   /// there (`KeptPassItems.sceneInputBlock`).
   static const int sceneInputBlock = 3;
+
+  /// The index of the first of the app's view blocks (`Scene.setViewBlock`)
+  /// among the view blocks of the shadow cascades, the depth prepass and the
+  /// color pass.
+  static const int appBlock = sceneInputBlock + 1;
+
+  static final ByteData _noBlock = ByteData(0);
+
+  /// [engine], the view blocks a pass states of its own, with the app's
+  /// blocks of [renderScene] after them at the indices the set gives them;
+  /// [engine] itself for a scene with none.
+  static List<ByteData> withAppBlocks(
+    RenderScene renderScene,
+    List<ByteData> engine,
+  ) {
+    final app = renderScene.viewBlocks.values;
+    if (app.isEmpty) return engine;
+    return [
+      ...engine,
+      for (var index = engine.length; index < appBlock; index++) _noBlock,
+      for (final bytes in app) bytes(),
+    ];
+  }
 
   /// The sky's pass index, drawn in the color pass's render pass.
   static const int skyPass = 6;
@@ -272,7 +297,7 @@ final class SceneItems {
         'FragInfo': 1,
         'FogInfo': 2,
         'SceneInputInfo': sceneInputBlock,
-        for (final (index, name) in appBlocks.indexed) name: 4 + index,
+        for (final (index, name) in appBlocks.indexed) name: appBlock + index,
         'SkyboxFrameInfo': 0,
         'SkyboxInfo': 1,
         'ResolveInfo': 0,
@@ -418,6 +443,7 @@ abstract base class RetainedDraws {
   gpu.RenderPass? _recorder;
   Object? _key;
   int _epoch = -1;
+  int _origin = -1;
   int _read = 0;
   int _syncs = 0;
 
@@ -570,7 +596,6 @@ abstract base class RetainedDraws {
       [for (final color in colors) color.texture.format],
       (colors.isEmpty ? depth!.texture : colors.first.texture).sampleCount,
       depth?.texture.format,
-      scene.drawOrigin.revision,
     );
     final changed = !_sameKey(fullKey, _key);
     if (changed) _recorder = null;
@@ -580,9 +605,12 @@ abstract base class RetainedDraws {
     final newFold = spinEpoch != _spinEpoch;
     _spinEpoch = spinEpoch;
     final log = scene.changeLog;
-    if (changed || _epoch != scene.changeLogEpoch) {
+    // A draw origin that moved restates the bounds of every anchored item.
+    final origin = scene.drawOrigin.revision;
+    if (changed || _epoch != scene.changeLogEpoch || _origin != origin) {
       _key = fullKey;
       _epoch = scene.changeLogEpoch;
+      _origin = origin;
       for (final item in [..._kept.keys]) {
         if (item.sceneSlot < 0) _drop(item);
       }
@@ -633,15 +661,13 @@ abstract base class RetainedDraws {
   }
 
   static bool _sameKey(
-    (Object?, List<gpu.PixelFormat>, int, gpu.PixelFormat?, int) a,
+    (Object?, List<gpu.PixelFormat>, int, gpu.PixelFormat?) a,
     Object? b,
   ) {
-    if (b is! (Object?, List<gpu.PixelFormat>, int, gpu.PixelFormat?, int)) {
+    if (b is! (Object?, List<gpu.PixelFormat>, int, gpu.PixelFormat?)) {
       return false;
     }
-    if (a.$1 != b.$1 || a.$3 != b.$3 || a.$4 != b.$4 || a.$5 != b.$5) {
-      return false;
-    }
+    if (a.$1 != b.$1 || a.$3 != b.$3 || a.$4 != b.$4) return false;
     if (a.$2.length != b.$2.length) return false;
     for (var index = 0; index < a.$2.length; index++) {
       if (a.$2[index] != b.$2[index]) return false;
@@ -704,10 +730,18 @@ abstract base class RetainedDraws {
         kept.spinEpoch == spinEpoch &&
         _sameRows(item, kept) &&
         _sameHeldDraw(item, kept) &&
-        _sameBounds(kept, bounds) &&
-        _sameShift(item, kept)) {
-      assert(_recordsAsKept(item, kept, bounds, 'the same'));
-      return;
+        _sameShift(item, kept, geometry)) {
+      if (_sameBounds(kept, bounds)) {
+        assert(_recordsAsKept(item, kept, bounds, 'the same'));
+        return;
+      }
+      if (kept.id != 0 && !kept.placed && kept.rows < 0) {
+        _takeBounds(kept, bounds);
+        if (items.place(kept.id, bounds: kept.bounded ? kept.bounds : null)) {
+          assert(_recordsAsKept(item, kept, bounds, 'the same but its bounds'));
+          return;
+        }
+      }
     }
     if (kept.id != 0 &&
         kept.rows >= 0 &&
@@ -972,7 +1006,7 @@ abstract base class RetainedDraws {
       pipeline != null &&
       !geometry.keepsItsDraw &&
       (kept.transform != item.worldTransformRevision ||
-          !_sameShift(item, kept)) &&
+          !_sameShift(item, kept, geometry)) &&
       identical(kept.material, material) &&
       kept.materialRevision == material.keptRevision &&
       identical(kept.geometry, geometry) &&
@@ -1008,7 +1042,7 @@ abstract base class RetainedDraws {
       kept.transform == item.worldTransformRevision &&
       kept.flipped == item.windingFlipped &&
       kept.rowsFlipped == _rowsFlipped(item) &&
-      _sameShift(item, kept) &&
+      _sameShift(item, kept, geometry) &&
       _sameHeldDraw(item, kept) &&
       identical(kept.spin, item.spin) &&
       kept.primitive == geometry.primitiveType.index &&
@@ -1195,12 +1229,14 @@ abstract base class RetainedDraws {
 
   // Whether [transform] scales as [scale] does, to the rounding a rotation
   // leaves in its basis lengths.
-  // Whether [item] draws at the translation its kept draw was last recorded
-  // or placed at: a draw origin that moved shifts every anchored draw.
-  static bool _sameShift(RenderItem item, _Kept kept) =>
+  // Whether [item] draws at the translation its kept draw of [geometry] was
+  // last recorded or placed at: a draw origin that moved shifts every
+  // anchored draw but one whose vertex stage reads the origin from the view.
+  static bool _sameShift(RenderItem item, _Kept kept, Geometry geometry) =>
+      geometry.drawsFromViewOrigin ||
       kept.shift[0] == item.drawShift(0) &&
-      kept.shift[1] == item.drawShift(1) &&
-      kept.shift[2] == item.drawShift(2);
+          kept.shift[1] == item.drawShift(1) &&
+          kept.shift[2] == item.drawShift(2);
 
   static bool _sameScale(Float64List scale, Matrix4 transform) {
     final s = transform.storage;
