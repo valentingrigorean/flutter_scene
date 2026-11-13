@@ -57,6 +57,8 @@
 * `package:flutter_scene/build_hooks.dart` exports the WGSL sidecar step, `buildWgslSidecar` with `TintProcessTranslator`, `wgslSidecarsForBuild`, `wgslSidecarPathFor` and `sidecarBundleHash`, so a hook that runs `impellerc` itself writes the sidecar its bundle loads with on the WebGPU web backend.
 * Lit, unlit and physical materials with a clip volume translate to WGSL, so they load on the WebGPU web backend; Tint failed on every one of them.
 * glTF imports read `EXT_texture_webp` textures, so a model whose textures are only WebP loads instead of failing.
+* The debug near-plane advisory no longer prints on reversed float depth (Metal and web), whose precision the near plane leaves alone.
+* A shader library on the WebGL2 web backend compiles each shader when it is first used, so a page no longer waits at load on shaders it never draws.
 * glTF imports honor `KHR_node_visibility`, so a node marked hidden imports hidden along with its subtree.
 * glTF imports play `KHR_animation_pointer` animations of node visibility, light color, intensity, range, and cone angles, material factors, and texture transforms. A pointer the engine can't drive warns and is skipped.
 * Normal maps on meshes without tangents no longer read their green channel inverted, and anisotropy directions on them are no longer mirrored. The tangent frame derived from screen-space derivatives now matches the one supplied tangents give.
@@ -84,6 +86,10 @@
 * Two builds for different platforms saving flutter_scene's generated assets at once no longer drop each other's manifest entries or delete each other's files mid-write.
 * Assigning `MeshPrimitive.material` or `MeshPrimitive.geometry` on a node already in a scene changes what it draws from the next frame. The assignment was ignored until the node left and rejoined a scene or got a new `Mesh`.
 * Instanced draws and billboards on the WebGL2 backend no longer copy their instance data byte by byte in WebAssembly builds.
+* `Scene.maxGpuFramesInFlight` defaults to 2 on iOS and macOS, so a scene the GPU has room for no longer drops to half its frame rate there. Other platforms keep 1, where a second frame slows the rest of the app.
+* A color texture's CPU mip chain builds in about a third less time, through sRGB lookup tables that give the same bytes.
+* `RenderTexture.dispose` releases the render targets it holds and clears `texture`; they stayed until the target was collected.
+* On native, the render targets of a scene or `RenderTexture` count toward the Dart VM's external memory, so a scene dropped without `dispose` is collected as its GPU memory piles up. The collector saw only small wrappers and could leave gigabytes of dropped targets alive.
 
 ## 0.24.3
 

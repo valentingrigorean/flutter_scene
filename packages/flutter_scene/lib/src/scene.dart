@@ -213,6 +213,19 @@ enum AntiAliasingMode {
   auto,
 }
 
+/// The default [Scene.maxGpuFramesInFlight] for this platform, 2 on iOS and
+/// macOS (where Impeller always runs on Metal) and 1 elsewhere.
+// TODO(gpu-pacing): Re-measure Android Vulkan once Flutter GPU submits off the
+// calling thread (flutter/flutter#194882), and measure Windows.
+@visibleForTesting
+int get defaultMaxGpuFramesInFlight {
+  if (kIsWeb) return 1;
+  return switch (defaultTargetPlatform) {
+    TargetPlatform.iOS || TargetPlatform.macOS => 2,
+    _ => 1,
+  };
+}
+
 /// Represents a 3D scene, which is a collection of nodes that can be rendered onto the screen.
 ///
 /// `Scene` manages the scene graph and handles rendering operations.
@@ -768,20 +781,26 @@ base class Scene implements SceneGraph {
   /// presents its previous image again instead of encoding a new frame.
   ///
   /// The Vulkan and Metal backends encode and queue GPU work on the thread
-  /// that calls [render]; when the GPU falls behind, queuing more work blocks
-  /// that thread for the backlog (the queue is serialized with the raster
-  /// thread's own submissions), so a GPU-bound scene stalls the UI thread
-  /// and everything else on it. Pacing instead re-presents the last frame
+  /// that calls [render]. Once the GPU falls behind, Android's Vulkan drivers
+  /// block that thread for the backlog (the queue is serialized with the
+  /// raster thread's own submissions), so a GPU-bound scene stalls the UI
+  /// thread and everything else on it. Pacing instead re-presents the last frame
   /// once [maxGpuFramesInFlight] frames are still running; the scene updates
   /// at the rate the GPU finishes frames, which it did anyway. Scene time
   /// still advances on a paced frame.
   ///
-  /// The default of 1 keeps the UI thread free and costs about a tenth of
-  /// GPU throughput on a saturated GPU. 2 keeps the throughput but only
-  /// halves the stall on drivers with shallow queues. Set to 0 to always
-  /// encode. Only screen views pace; render-to-texture views always render.
+  /// Defaults to 2 on iOS and macOS, where Metal queues a second frame
+  /// without stalling either thread. There a limit of 1 can halve the frame
+  /// rate of a scene the GPU has room for, since the GPU clocks down until
+  /// each frame barely fits a vsync and a held frame then misses the next.
+  /// Elsewhere it defaults to 1. On Android's Vulkan backend a second frame
+  /// blocks this thread or the raster thread once the GPU falls behind, which
+  /// slows the whole app, and on GLES it gains little. An Android game whose
+  /// 3D view matters more than the rest of its UI can still set 2. Set to 0 to
+  /// always encode. Only screen views pace; render-to-texture views always
+  /// render.
   /// {@category Rendering}
-  int maxGpuFramesInFlight = 1;
+  int maxGpuFramesInFlight = defaultMaxGpuFramesInFlight;
 
   /// Makes the image a screen view draws of [frame], the color texture it
   /// rendered or the previous one a paced frame shows again, in place of

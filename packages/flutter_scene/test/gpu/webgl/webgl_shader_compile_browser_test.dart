@@ -1,5 +1,7 @@
-// The WebGL2 backend compiles a shader where it is first looked up, and
-// reads no link status of a program before the browser reports it complete.
+// The WebGL2 backend compiles a shader where it is first looked up, not
+// every shader of its bundle at load, reads no link status of a program
+// before the browser reports it complete, and a hot reload of its asset
+// reaches a shader first looked up after it.
 //
 //   flutter test --platform chrome --dart-define=FLUTTER_SCENE_GPU_BACKEND=webgl2 \
 //     test/gpu/webgl/webgl_shader_compile_browser_test.dart
@@ -139,6 +141,23 @@ void main() {
     },
   );
 
+  test('a shader that fails to compile throws on every lookup', () async {
+    final context = gpu.gpuContext as WebGlContext;
+    if (context.gl.getExtension('KHR_parallel_shader_compile') != null) {
+      markTestSkipped(
+        'Where compiles run in parallel, a failed compile throws when its '
+        'program links.',
+      );
+      return;
+    }
+    final library = (await gpu.loadShaderLibraryFromBytesAsync(
+      ByteData.sublistView(_bundle(color: 'missing')),
+    ))!;
+    expect(() => library['WhiteFragment'], throwsException);
+    expect(() => library['WhiteFragment'], throwsException);
+    expect(library['NoSuchShader'], isNull);
+  });
+
   test(
     'a shader first looked up after a reload compiles the new source',
     () async {
@@ -156,14 +175,18 @@ void main() {
         shaderSource.callAsFunction(gl, shader, source);
       }).toJS;
       try {
-        final library = (await gpu.loadShaderLibraryAsync(
+        final first = (await gpu.loadShaderLibraryAsync(
+          'reload_test.shaderbundle',
+        ))!;
+        final second = (await gpu.loadShaderLibraryAsync(
           'reload_test.shaderbundle',
         ))!;
         bundle = _bundle(color: '0.75');
         await gpu.reinitializeShaderLibraryAsync('reload_test.shaderbundle');
-        library['UnusedFragment'];
-        expect(sources, hasLength(1));
-        expect(sources.single, contains('0.75'));
+        first['UnusedFragment'];
+        second['UnusedFragment'];
+        expect(sources, hasLength(2));
+        expect(sources, everyElement(contains('0.75')));
       } finally {
         window['fetch'] = fetch;
         gl.delete('shaderSource'.toJS);
