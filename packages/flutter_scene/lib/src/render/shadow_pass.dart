@@ -461,14 +461,14 @@ class ShadowPass extends RenderGraphPass {
             if (view.cascades.length != cascades) return null;
             final matrix = view.cascades[c].lightSpaceMatrix;
             return (
-              blocks: [
+              blocks: SceneItems.withAppBlocks(_renderScene, [
                 viewInfo.bytesFor(
                   matrix,
                   view.camera,
                   view.dimensions,
                   view.viewScale,
                 ),
-              ],
+              ]),
               clip: matrix.storage,
             );
           })

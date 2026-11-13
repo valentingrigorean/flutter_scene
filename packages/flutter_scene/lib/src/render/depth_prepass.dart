@@ -238,10 +238,10 @@ class DepthPrepass extends RenderGraphPass {
             ..[2] = forward.z;
           final transform = rasterViewTransformOf(camera, dimensions);
           return (
-            blocks: [
+            blocks: SceneItems.withAppBlocks(_renderScene, [
               viewInfo.bytesFor(transform, camera, dimensions, view.viewScale),
               ByteData.sublistView(info),
-            ],
+            ]),
             clip: transform.storage,
           );
         })
@@ -743,7 +743,10 @@ final class RetainedDepthDraws extends RetainedDraws {
     items.draw(
       pass,
       SceneItems.depthPass,
-      viewBlocks: [view, ByteData.sublistView(encoder._depthInfo)],
+      viewBlocks: SceneItems.withAppBlocks(renderScene, [
+        view,
+        ByteData.sublistView(encoder._depthInfo),
+      ]),
       clip: encoder._cameraTransform.storage,
     );
     // The kept items bound their own pipeline and blocks on the pass, so what

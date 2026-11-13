@@ -375,11 +375,12 @@ abstract interface class GpuBackendItemSet {
     GpuBackendItemPrologue? prologue,
   });
 
-  /// Replaces the records and [bounds] of item [id], kept with instances of
-  /// the same slot, stride and count, culled by their own bounds where it was
-  /// kept so, without recording its draw again. Returns false, changing
-  /// nothing, where [id] was kept otherwise.
-  bool place(int id, {Float32List? bounds, required ItemInstances instances});
+  /// Replaces the [bounds] of item [id] without recording its draw again,
+  /// and with [instances] the records of an item kept with instances of the
+  /// same slot, stride and count, culled by their own bounds where it was
+  /// kept so. Returns false, changing nothing, where [id] was kept
+  /// otherwise: with instances where none are given, or with none.
+  bool place(int id, {Float32List? bounds, ItemInstances? instances});
 
   /// Removes item [id]; an unknown id is ignored.
   void remove(int id);

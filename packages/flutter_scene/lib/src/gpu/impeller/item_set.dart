@@ -213,12 +213,13 @@ final class ItemSet {
     recorder.clearBindings();
   }
 
-  /// Replaces the records and [bounds] of item [id], kept with instances of
-  /// the same slot, stride and count, each culled by its own bounds where it
-  /// was kept so, without recording its draw again: a kept draw that only
-  /// moved draws from where it now stands. Returns false, changing nothing,
-  /// where [id] was kept otherwise.
-  bool place(int id, {Float32List? bounds, required ItemInstances instances}) {
+  /// Replaces the [bounds] of item [id] without recording its draw again,
+  /// and with [instances] the records of an item kept with instances of the
+  /// same slot, stride and count, each culled by its own bounds where it was
+  /// kept so: a kept draw that only moved draws from where it now stands.
+  /// Returns false, changing nothing, where [id] was kept otherwise: with
+  /// instances where none are given, or with none.
+  bool place(int id, {Float32List? bounds, ItemInstances? instances}) {
     final placed =
         _impeller?.place(id, bounds: bounds, instances: instances) ??
         _backend!.place(id, bounds: bounds, instances: instances);

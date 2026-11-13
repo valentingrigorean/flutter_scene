@@ -1486,6 +1486,15 @@ abstract class Geometry with RenderSourceListeners {
   /// {@category Geometry}
   bool get keepsItsDraw => false;
 
+  /// Whether the vertex stage of this geometry ([keepsItsDraw]) adds the
+  /// anchor of its item, which its [bind] holds in a block of the draw, less
+  /// the scene's draw origin, which it reads from a view block the app states
+  /// (`Scene.setViewBlock`). Its kept draw then holds no value a move of the
+  /// draw origin changes: a pass places the bounds of the draw and records
+  /// nothing. False by default: a move records the kept draw again.
+  /// {@category Geometry}
+  bool get drawsFromViewOrigin => false;
+
   /// Tells the passes that keep a draw of this geometry ([keepsItsDraw])
   /// that what its [bind] binds changed, so they record the draw again.
   @protected
