@@ -370,7 +370,7 @@ abstract final class ItemSet {
     ItemInstances? instances,
     int? order,
   }) => null;
-  bool place(int id, {Float32List? bounds, required ItemInstances instances});
+  bool place(int id, {Float32List? bounds, ItemInstances? instances});
   void remove(int id);
   void draw(
     RenderPass pass,
