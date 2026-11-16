@@ -629,6 +629,7 @@ class RenderPassContext {
           replay: (view) => _replay(view, key),
         );
     if (!drawn) record(pass);
+    _submitCommands();
     rendererSubmissions.submit(commands);
   }
 
@@ -636,9 +637,31 @@ class RenderPassContext {
   /// pass returns; a pass that never reads it submits nothing. For a pass
   /// that [CustomRenderPass.encodesIntoCommands] it is the buffer the pass
   /// before it drew [currentColor] in, where that pass left it open.
-  gpu.CommandBuffer get commands => _commands ??=
-      (_takesHeld && !_replaying ? rendererSubmissions.takeHeld() : null) ??
-      gpu.gpuContext.createCommandBuffer(label: _pass.name);
+  ///
+  /// [applyShader] and [drawKept] submit their own buffers at once, after
+  /// submitting what the pass encoded here so far, so the GPU runs the pass's
+  /// work in the order it was encoded. A pass that runs again for a camera
+  /// replay encodes nothing: reading this then throws a [StateError].
+  gpu.CommandBuffer get commands {
+    if (_replaying) {
+      throw StateError(
+        'Pass "${_pass.name}" read RenderPassContext.commands while it runs '
+        'again for a camera replay, which encodes nothing',
+      );
+    }
+    return _commands ??=
+        (_takesHeld ? rendererSubmissions.takeHeld() : null) ??
+        gpu.gpuContext.createCommandBuffer(label: _pass.name);
+  }
+
+  // Submits what the pass encoded into [commands] so far, ahead of a buffer
+  // of its own that a call submits at once.
+  void _submitCommands() {
+    final commands = _commands;
+    if (commands == null) return;
+    _commands = null;
+    _context.submit(commands);
+  }
 
   bool get _takesHeld => _pass.drawsInPlace && _pass.encodesIntoCommands;
 
@@ -733,6 +756,7 @@ class RenderPassContext {
     }
 
     drawCompat(renderPass, 6);
+    _submitCommands();
     _context.submit(commandBuffer);
 
     _wrote = true;
@@ -791,9 +815,18 @@ class UserRenderGraphPass extends RenderGraphPass {
     );
     try {
       _pass.execute(passContext);
-    } finally {
-      if (passContext._commands case final commands?) context.submit(commands);
+    } catch (_) {
+      // The buffer may carry the work of the pass before, so it is still
+      // submitted; a failure of that submit leaves the pass's error to
+      // propagate.
+      if (passContext._commands case final commands?) {
+        try {
+          context.submit(commands);
+        } catch (_) {}
+      }
+      rethrow;
     }
+    if (passContext._commands case final commands?) context.submit(commands);
     final destination = _destination;
     if (passContext._wrote && destination != null) {
       context.blackboard.set(passContext._chainKey, destination);

@@ -100,8 +100,9 @@ class GpuSubmissionTracker {
 
   /// Holds [commandBuffer] open instead of submitting it, for the pass after
   /// it to encode into ([takeHeld]), so the two reach the GPU as one
-  /// submission. Any other submission submits it first, so the GPU runs the
-  /// frame's work in the order it was encoded.
+  /// submission. Any other submission through [submit] submits it first, so
+  /// the GPU runs the frame's work in the order it was encoded; a direct
+  /// [gpu.CommandBuffer.submit] does not.
   void hold(gpu.CommandBuffer commandBuffer) {
     submitHeld();
     _held = commandBuffer;
