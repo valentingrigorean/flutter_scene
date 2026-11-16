@@ -411,7 +411,9 @@ gpu.Texture statedRenderTarget(gpu.Texture texture) {
 /// passes), the [TransientTexturePool], and the [Blackboard]. Each pass
 /// creates and submits its own `gpu.CommandBuffer` — Flutter GPU's
 /// `RenderPass` holds a live command encoder, so a command buffer can
-/// host only one render pass at a time. Scene-specific inputs (camera,
+/// host only one render pass at a time — except that a pass encodes into
+/// the buffer of the pass before it where it [RenderGraphPass.encodesIntoHeld]
+/// and that pass submits through [submit]. Scene-specific inputs (camera,
 /// scene root, lights, the final swapchain target) are supplied to
 /// individual passes through their constructors rather than this generic
 /// context.
@@ -431,6 +433,22 @@ class RenderGraphContext {
   /// such as the shadow atlas, which a change of output size keeps; the
   /// [texturePool] where the view has none of its own.
   final TransientTexturePool sizelessTexturePool;
+
+  // Whether the pass after the running one encodes into the command buffer
+  // the running one submits last ([RenderGraphPass.encodesIntoHeld]).
+  bool _nextEncodesInto = false;
+
+  /// Submits [commandBuffer], the running pass's last: where the pass after
+  /// it encodes into that buffer ([RenderGraphPass.encodesIntoHeld]), holds it
+  /// for that pass instead ([GpuSubmissionTracker.hold]), so both reach the
+  /// GPU in one submission.
+  void submit(gpu.CommandBuffer commandBuffer) {
+    if (_nextEncodesInto) {
+      rendererSubmissions.hold(commandBuffer);
+    } else {
+      rendererSubmissions.submit(commandBuffer);
+    }
+  }
 }
 
 /// A single unit of rendering work in a [RenderGraph].
@@ -451,6 +469,14 @@ abstract class RenderGraphPass {
   /// Records and submits this pass's work, using [context] for transient
   /// uniforms / attachments and to read/publish cross-pass handles.
   void execute(RenderGraphContext context);
+
+  /// Whether this pass encodes its work into the command buffer the pass
+  /// before it submitted last through [RenderGraphContext.submit], taken with
+  /// [GpuSubmissionTracker.takeHeld], where the backend encodes passes one
+  /// after the other in one buffer
+  /// ([gpu.GpuCapabilities.sequentialRenderPasses]). The graph submits that
+  /// buffer after this pass where the pass leaves it. False by default.
+  bool get encodesIntoHeld => false;
 }
 
 /// An ordered list of [RenderGraphPass]es executed once per frame.
@@ -472,7 +498,8 @@ class RenderGraph {
 
   /// Runs every pass in order, using [transientsBuffer] for transient
   /// uniforms and [texturePool] for transient attachments. Each pass
-  /// creates and submits its own command buffer. Clears the blackboard
+  /// creates and submits its own command buffer, but for a pass that
+  /// [RenderGraphPass.encodesIntoHeld]. Clears the blackboard
   /// first so state never leaks between frames.
   ///
   /// Every pass is stopwatched and its counter delta recorded into [stats]
@@ -503,6 +530,7 @@ class RenderGraph {
     );
     final timeline = RenderStats.timelineEvents;
     final stopwatch = Stopwatch();
+    final holds = gpu.gpuHost.capabilities.sequentialRenderPasses;
     for (var i = 0; i < _passes.length; i++) {
       final pass = _passes[i];
       final passStats = stats == null
@@ -522,11 +550,18 @@ class RenderGraph {
         ..reset()
         ..start();
       activeGpuPassLabel = pass.name;
+      context._nextEncodesInto =
+          holds && i + 1 < _passes.length && _passes[i + 1].encodesIntoHeld;
+      var ran = false;
       try {
         pass.execute(context);
+        ran = true;
       } finally {
         activeDrawRecorder = null;
         activeGpuPassLabel = null;
+        if (!ran || !context._nextEncodesInto) {
+          rendererSubmissions.submitHeld();
+        }
       }
       stopwatch.stop();
       if (timeline) developer.Timeline.finishSync();

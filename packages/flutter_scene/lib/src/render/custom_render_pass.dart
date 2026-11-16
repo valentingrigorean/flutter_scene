@@ -230,6 +230,16 @@ abstract class CustomRenderPass {
   /// [RenderPassContext.drawObjects]. False by default.
   bool get drawsInPlace => false;
 
+  /// Whether this pass, drawing in place, encodes all its GPU work into
+  /// [RenderPassContext.commands] and submits no command buffer of its own:
+  /// it is then handed the command buffer of the pass before it where the
+  /// backend encodes passes one after the other in one buffer
+  /// ([gpu.GpuCapabilities.sequentialRenderPasses]), so the frame submits one
+  /// buffer for both. A buffer or texture it writes takes its bytes ahead of
+  /// that pass's work too, so it writes none the pass before it reads. False
+  /// by default.
+  bool get encodesIntoCommands => false;
+
   /// Whether this pass, drawing in place, makes its one draw through
   /// [RenderPassContext.drawKept], so a backend that keeps render items keeps
   /// it and a frame that draws the same one encodes none of it. Read once,
@@ -304,6 +314,7 @@ class RenderPassContext {
   final double _time;
   final CustomRenderPass _pass;
   bool _wrote = false;
+  gpu.CommandBuffer? _commands;
 
   // While the pass runs again for another camera of a frame
   // ([CameraReplay]): the key and view blocks its kept draw states, which it
@@ -621,6 +632,16 @@ class RenderPassContext {
     rendererSubmissions.submit(commands);
   }
 
+  /// A command buffer for this pass's work, which the graph submits once the
+  /// pass returns; a pass that never reads it submits nothing. For a pass
+  /// that [CustomRenderPass.encodesIntoCommands] it is the buffer the pass
+  /// before it drew [currentColor] in, where that pass left it open.
+  gpu.CommandBuffer get commands => _commands ??=
+      (_takesHeld && !_replaying ? rendererSubmissions.takeHeld() : null) ??
+      gpu.gpuContext.createCommandBuffer(label: _pass.name);
+
+  bool get _takesHeld => _pass.drawsInPlace && _pass.encodesIntoCommands;
+
   /// The draws this pass keeps at its [slot]th pass index, below
   /// [CustomRenderPass.keptItemPasses], or null where the scene gave the pass
   /// no such index, the backend keeps no items, or the frame records its
@@ -712,7 +733,7 @@ class RenderPassContext {
     }
 
     drawCompat(renderPass, 6);
-    rendererSubmissions.submit(commandBuffer);
+    _context.submit(commandBuffer);
 
     _wrote = true;
   }
@@ -752,6 +773,9 @@ class UserRenderGraphPass extends RenderGraphPass {
   String get name => _pass.name;
 
   @override
+  bool get encodesIntoHeld => _pass.drawsInPlace && _pass.encodesIntoCommands;
+
+  @override
   void execute(RenderGraphContext context) {
     final passContext = RenderPassContext._(
       context,
@@ -765,7 +789,11 @@ class UserRenderGraphPass extends RenderGraphPass {
       _time,
       _pass,
     );
-    _pass.execute(passContext);
+    try {
+      _pass.execute(passContext);
+    } finally {
+      if (passContext._commands case final commands?) context.submit(commands);
+    }
     final destination = _destination;
     if (passContext._wrote && destination != null) {
       context.blackboard.set(passContext._chainKey, destination);

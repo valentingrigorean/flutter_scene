@@ -16,7 +16,6 @@ import 'package:flutter_scene/src/render/resolve_info.dart';
 import 'package:flutter_scene/src/render/scene_pass.dart';
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/tone_mapping.dart';
-import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/scene_encoder.dart' show resolvePipeline;
 import 'package:flutter_scene/src/render/uniform_slots.dart';
 
@@ -189,7 +188,7 @@ class ResolvePass extends RenderGraphPass {
           replay: (view) => [infoAt(view.time)],
         );
     if (!drawn) record(renderPass);
-    rendererSubmissions.submit(commandBuffer);
+    context.submit(commandBuffer);
 
     context.blackboard.set(kDisplayColorBlackboardKey, _outputColor);
   }

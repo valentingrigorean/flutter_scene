@@ -4,7 +4,6 @@ import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
 import 'package:flutter_scene/src/render/resolve_pass.dart';
-import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/shaders.dart';
 import 'package:flutter_scene/src/scene_encoder.dart' show resolvePipeline;
 import 'package:flutter_scene/src/render/uniform_slots.dart';
@@ -70,7 +69,7 @@ class DisplayReferredCompositePass extends RenderGraphPass {
       sampler: _linearClamp,
     );
     drawCompat(renderPass, 6);
-    rendererSubmissions.submit(commandBuffer);
+    context.submit(commandBuffer);
 
     context.blackboard.set(kDisplayColorBlackboardKey, _output);
   }

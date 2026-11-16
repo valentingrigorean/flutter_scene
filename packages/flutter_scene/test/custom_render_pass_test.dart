@@ -5,6 +5,9 @@ import 'package:flutter_scene/scene.dart';
 // ignore: implementation_imports
 import 'package:flutter_scene/src/render/custom_render_pass.dart'
     show packPostShadowInfo;
+// ignore: implementation_imports
+import 'package:flutter_scene/src/render/frame_transients.dart'
+    show rendererSubmissions;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
 
@@ -74,6 +77,32 @@ class _AttachmentPass extends CustomRenderPass {
   @override
   void execute(RenderPassContext context) =>
       seen.add((context.sceneDepthAttachment, context.sceneViewTransform));
+}
+
+// Clears the display image to red in place, in the command buffer the graph
+// gives it, where [clears] is set.
+class _InPlaceClearPass extends CustomRenderPass {
+  bool clears = false;
+  @override
+  String get name => 'in place clear';
+  @override
+  RenderStage get stage => RenderStage.afterToneMapping;
+  @override
+  bool get drawsInPlace => true;
+  @override
+  bool get encodesIntoCommands => true;
+  @override
+  void execute(RenderPassContext context) {
+    if (!clears) return;
+    context.commands.createRenderPass(
+      gpu.RenderTarget.singleColor(
+        gpu.ColorAttachment(
+          texture: context.currentColor,
+          clearValue: Vector4(1, 0, 0, 1),
+        ),
+      ),
+    );
+  }
 }
 
 void main() {
@@ -175,6 +204,53 @@ void main() {
     final centre = transform!.transform(Vector4(0, 0, 0, 1));
     expect((centre.x / centre.w).abs(), lessThan(1e-4));
     expect(skips.seen.single, (null, null));
+  });
+
+  test('a pass that draws in place encodes into the command buffer of the '
+      'pass before it where the backend encodes passes one after the other in '
+      'one buffer, so the frame submits no buffer more, and the GPU runs its '
+      'draw after the image it draws on', () async {
+    if (!gpuAvailable()) return;
+    await Scene.initializeStaticResources();
+    final pass = _InPlaceClearPass();
+    final scene = Scene()
+      ..add(
+        Node(
+          mesh: Mesh(CuboidGeometry(Vector3.all(1)), PhysicallyBasedMaterial()),
+        ),
+      )
+      ..addRenderPass(pass);
+    final camera = PerspectiveCamera(position: Vector3(0, 2, 5));
+    Future<(int, ui.Color)> frame() async {
+      final before = rendererSubmissions.latestSubmission;
+      final recorder = ui.PictureRecorder();
+      scene.render(
+        camera,
+        ui.Canvas(recorder),
+        viewport: const ui.Rect.fromLTWH(0, 0, 16, 16),
+        pixelRatio: 1.0,
+      );
+      final submitted = rendererSubmissions.latestSubmission - before;
+      final picture = recorder.endRecording();
+      final image = await picture.toImage(16, 16);
+      picture.dispose();
+      final rgba = (await image.toByteData())!;
+      image.dispose();
+      final pixel = rgba.getUint32(0);
+      return (submitted, ui.Color(pixel >> 8 | (pixel & 0xFF) << 24));
+    }
+
+    await frame();
+    final (bare, _) = await frame();
+    pass.clears = true;
+    final (cleared, color) = await frame();
+
+    expect(bare, greaterThan(0));
+    expect(
+      cleared,
+      bare + (gpu.gpuHost.capabilities.sequentialRenderPasses ? 0 : 1),
+    );
+    expect(color, const ui.Color(0xFFFF0000));
   });
 
   test(
