@@ -1,5 +1,6 @@
 ## 0.24.4
 
+* On a backend that encodes render passes one after the other in one command buffer (`GpuCapabilities.sequentialRenderPasses`: wgpu, not Impeller), a custom pass that draws in place and states `CustomRenderPass.encodesIntoCommands` encodes into `RenderPassContext.commands`, the buffer of the pass before it, so the frame submits one buffer for both.
 * A geometry that keeps its own draw can state `Geometry.drawsFromViewOrigin`: its vertex stage adds its anchor less the draw origin, which it reads from a block the app states with `Scene.setViewBlock`. A move of the draw origin then places the bounds of its kept draw and records nothing; before, every such draw was recorded again. The app's view blocks reach the depth prepass and the directional shadow cascades as well as the color pass, and `ItemSet.place` takes bounds alone for an item kept with no instances. A move of the draw origin no longer drops the recorder of a pass.
 * A shader library on the WebGPU web backend loads its WGSL sidecar alone, without downloading the shader bundle.
 * A shader library on the WebGPU web backend compiles each shader when it is first used, so a page no longer waits at load on shaders it never draws.

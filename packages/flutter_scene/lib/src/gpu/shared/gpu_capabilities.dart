@@ -45,6 +45,7 @@ class GpuCapabilities {
     this.float32Blending = true,
     this.orderedTextureReuse = false,
     this.orderedBufferWrites = false,
+    this.sequentialRenderPasses = false,
   });
 
   /// A rendered texture can be handed to Flutter as a `ui.Image` without a
@@ -102,6 +103,15 @@ class GpuCapabilities {
   /// offsets from frame to frame (see `transientDrawKey`).
   final bool orderedBufferWrites;
 
+  /// One command buffer encodes several render passes one after the other,
+  /// each started once the one before it ends.
+  ///
+  /// Where this is true, a custom render pass that draws in place into the
+  /// command buffer it is given (`CustomRenderPass.encodesIntoCommands`)
+  /// encodes into the command buffer of the pass before it, so a frame
+  /// submits one buffer for both.
+  final bool sequentialRenderPasses;
+
   /// The tier these capabilities add up to.
   GpuHostTier get hostTier {
     if (!textureToImage && !presentAsImage) return GpuHostTier.headless;
@@ -118,7 +128,8 @@ class GpuCapabilities {
       'aheadOfTimePipelines: $aheadOfTimePipelines, '
       'float32Blending: $float32Blending, '
       'orderedTextureReuse: $orderedTextureReuse, '
-      'orderedBufferWrites: $orderedBufferWrites)';
+      'orderedBufferWrites: $orderedBufferWrites, '
+      'sequentialRenderPasses: $sequentialRenderPasses)';
 }
 
 /// A native GPU backend the shim can render through.

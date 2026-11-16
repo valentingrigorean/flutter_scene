@@ -96,8 +96,36 @@ class GpuSubmissionTracker {
     return count;
   }
 
-  /// Submits [commandBuffer] and records it for completion tracking.
+  gpu.CommandBuffer? _held;
+
+  /// Holds [commandBuffer] open instead of submitting it, for the pass after
+  /// it to encode into ([takeHeld]), so the two reach the GPU as one
+  /// submission. Any other submission through [submit] submits it first, so
+  /// the GPU runs the frame's work in the order it was encoded; a direct
+  /// [gpu.CommandBuffer.submit] does not.
+  void hold(gpu.CommandBuffer commandBuffer) {
+    submitHeld();
+    _held = commandBuffer;
+  }
+
+  /// The command buffer [hold] holds, for the caller to encode into and
+  /// submit, or null.
+  gpu.CommandBuffer? takeHeld() {
+    final held = _held;
+    _held = null;
+    return held;
+  }
+
+  /// Submits the command buffer [hold] holds, if any.
+  void submitHeld() {
+    final held = takeHeld();
+    if (held != null) submit(held);
+  }
+
+  /// Submits [commandBuffer] and records it for completion tracking, after
+  /// the command buffer [hold] holds.
   void submit(gpu.CommandBuffer commandBuffer) {
+    submitHeld();
     final int id = record();
     try {
       commandBuffer.submit(completionCallback: (_) => complete(id));

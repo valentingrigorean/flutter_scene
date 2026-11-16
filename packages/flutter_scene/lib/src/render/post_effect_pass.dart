@@ -8,7 +8,6 @@ import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:flutter_scene/src/post_process/post_effect.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
 import 'package:flutter_scene/src/shaders.dart';
-import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/scene_encoder.dart' show resolvePipeline;
 import 'package:flutter_scene/src/render/uniform_slots.dart';
 
@@ -92,7 +91,7 @@ class PostEffectPass extends RenderGraphPass {
     _effect.bindUniforms(renderPass, context.transientsBuffer);
 
     drawCompat(renderPass, 6);
-    rendererSubmissions.submit(commandBuffer);
+    context.submit(commandBuffer);
 
     context.blackboard.set(_outputKey, _output);
   }

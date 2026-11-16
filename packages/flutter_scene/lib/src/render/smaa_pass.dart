@@ -324,7 +324,7 @@ class SmaaPass extends RenderGraphPass {
         infoView,
       );
       drawCompat(renderPass, 6);
-      rendererSubmissions.submit(commandBuffer);
+      context.submit(commandBuffer);
     }
 
     context.blackboard.set(kDisplayColorBlackboardKey, _output);

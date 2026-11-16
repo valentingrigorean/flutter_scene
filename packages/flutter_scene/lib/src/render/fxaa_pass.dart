@@ -11,7 +11,6 @@ import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/resolve_pass.dart';
 import 'package:flutter_scene/src/render/retained_draws.dart';
 import 'package:flutter_scene/src/shaders.dart';
-import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/scene_encoder.dart' show resolvePipeline;
 import 'package:flutter_scene/src/render/uniform_slots.dart';
 
@@ -97,7 +96,7 @@ class FxaaPass extends RenderGraphPass {
           replay: (view) => view.dimensions == _dimensions ? [info] : null,
         );
     if (!drawn) record(renderPass);
-    rendererSubmissions.submit(commandBuffer);
+    context.submit(commandBuffer);
 
     context.blackboard.set(kDisplayColorBlackboardKey, _output);
   }
