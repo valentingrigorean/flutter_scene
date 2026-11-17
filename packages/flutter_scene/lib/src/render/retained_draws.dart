@@ -737,7 +737,11 @@ abstract base class RetainedDraws {
       }
       if (kept.id != 0 && !kept.placed && kept.rows < 0) {
         _takeBounds(kept, bounds);
-        if (items.place(kept.id, bounds: kept.bounded ? kept.bounds : null)) {
+        if (items.place(
+          kept.id,
+          bounds: kept.bounded ? kept.bounds : null,
+          parts: _partsOf(item, geometry),
+        )) {
           assert(_recordsAsKept(item, kept, bounds, 'the same but its bounds'));
           return;
         }
@@ -803,7 +807,9 @@ abstract base class RetainedDraws {
     recordKeptDraw(() => record(item));
     _takeRecorded(item, kept);
     _leaveRun(item, kept);
-    final key = joinsRuns ? _runKeyOf(item, kept, pipeline, state) : null;
+    final key = joinsRuns && geometry.keptDrawParts == null
+        ? _runKeyOf(item, kept, pipeline, state)
+        : null;
     heldInstanceBinding = null;
     final run = key == null ? null : _runs[key];
     if (run != null && run.members.isNotEmpty) {
@@ -1158,7 +1164,27 @@ abstract base class RetainedDraws {
       kept.id,
       bounds: kept.bounded ? kept.bounds : null,
       instances: _loneInstances(item, kept),
+      parts: _partsOf(item, geometryOf(item)),
     );
+  }
+
+  static final Aabb3 _partBox = Aabb3();
+
+  // The parts of the kept draw of [geometry] by [item], each culled by its
+  // box as the item's bounds state it; null for a draw culled whole.
+  static gpu.ItemParts? _partsOf(RenderItem item, Geometry geometry) {
+    if (!item.frustumCulled || item.instanceTransforms != null) return null;
+    final parts = geometry.keptDrawParts;
+    if (parts == null) return null;
+    final (:ranges, :boxes) = parts;
+    final bounds = Float32List(ranges.length * 3);
+    for (var part = 0; part < ranges.length ~/ 2; part++) {
+      final at = part * 6;
+      _partBox.min.setValues(boxes[at], boxes[at + 1], boxes[at + 2]);
+      _partBox.max.setValues(boxes[at + 3], boxes[at + 4], boxes[at + 5]);
+      item.writeDrawnBounds(_partBox, bounds, at);
+    }
+    return gpu.ItemParts(ranges: ranges, bounds: bounds);
   }
 
   // Takes what the draw of [item] just recorded read that a move reaches.
@@ -1190,6 +1216,7 @@ abstract base class RetainedDraws {
       passes: passesOf(item),
       bounds: kept.bounded ? kept.bounds : null,
       instances: instances,
+      parts: instances == null ? _partsOf(item, geometryOf(item)) : null,
       order: _orderOf(kept.pipeline, kept.material),
     );
   }

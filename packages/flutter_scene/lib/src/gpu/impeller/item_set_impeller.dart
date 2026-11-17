@@ -297,6 +297,7 @@ final class _ItemDraw {
   int? order;
   Float32List? bounds;
   _ItemInstances? instances;
+  ItemParts? parts;
 
   // What a pass sorts runs of its items that share an order and blend
   // nothing by, so items that share a pipeline and then textures draw next
@@ -534,6 +535,7 @@ final class _ItemSet {
     required int passes,
     Float32List? bounds,
     ItemInstances? instances,
+    ItemParts? parts,
     int? order,
   }) {
     final draw = recorder.take();
@@ -547,6 +549,9 @@ final class _ItemSet {
       ..order = order
       ..bounds = bounds == null ? null : Float32List.fromList(bounds)
       ..instances = instances == null ? null : _instancesOf(instances)
+      ..parts = instances != null || parts == null || !draw.indexed
+          ? null
+          : _partsOf(parts)
       ..pipelineKey = _keyOf(draw.pipeline)
       ..textureKeys = [
         for (final (_, texture, _) in draw.textures) _keyOf(texture),
@@ -556,10 +561,20 @@ final class _ItemSet {
     return at;
   }
 
-  bool place(int id, {Float32List? bounds, ItemInstances? instances}) {
+  bool place(
+    int id, {
+    Float32List? bounds,
+    ItemInstances? instances,
+    ItemParts? parts,
+  }) {
     final draw = _items[id];
     final held = draw?.instances;
     if (draw == null || (held == null) != (instances == null)) return false;
+    final heldParts = draw.parts;
+    if ((heldParts == null) != (parts == null) ||
+        (heldParts != null && !_sameRanges(heldParts, parts!))) {
+      return false;
+    }
     if (held != null && instances != null) {
       if (held.slot != instances.slot ||
           held.stride != instances.stride ||
@@ -577,6 +592,20 @@ final class _ItemSet {
       draw.instances = placed;
     }
     draw.bounds = bounds == null ? null : Float32List.fromList(bounds);
+    if (parts != null) draw.parts = _partsOf(parts);
+    return true;
+  }
+
+  static ItemParts _partsOf(ItemParts parts) => ItemParts(
+    ranges: Int32List.fromList(parts.ranges),
+    bounds: Float32List.fromList(parts.bounds),
+  );
+
+  static bool _sameRanges(ItemParts a, ItemParts b) {
+    if (a.ranges.length != b.ranges.length) return false;
+    for (var at = 0; at < a.ranges.length; at++) {
+      if (a.ranges[at] != b.ranges[at]) return false;
+    }
     return true;
   }
 
@@ -812,7 +841,11 @@ final class _ItemSet {
           _bindTexture(pass, slot, viewTextures[at], sampler);
         }
       }
-      if (draw.indexed) {
+      final parts = draw.parts;
+      if (parts != null && indices != null) {
+        _drawParts(pass, parts, planes, indices, draw.indexType, instanceCount);
+        boundIndex = null;
+      } else if (draw.indexed) {
         pass.drawIndexed(draw.count, instanceCount: instanceCount);
       } else {
         pass.draw(draw.count, instanceCount: instanceCount);
@@ -821,6 +854,50 @@ final class _ItemSet {
     if (saved == null) return;
     saved.applyOnto(pass, live);
     pass.clearBindings();
+  }
+
+  // Draws the parts of [parts] inside [planes] from [indices], consecutive
+  // ones as one draw, each from a view onto its own indices.
+  static void _drawParts(
+    fg.RenderPass pass,
+    ItemParts parts,
+    Float32List planes,
+    fg.BufferView indices,
+    IndexType type,
+    int instanceCount,
+  ) {
+    final bytes = type == IndexType.int32 ? 4 : 2;
+    final ranges = parts.ranges;
+    var first = -1;
+    var end = -1;
+    void flush() {
+      if (first < 0) return;
+      pass
+        ..bindIndexBuffer(
+          fg.BufferView(
+            indices.buffer,
+            offsetInBytes: indices.offsetInBytes + first * bytes,
+            lengthInBytes: (end - first) * bytes,
+          ),
+          type,
+        )
+        ..drawIndexed(end - first, instanceCount: instanceCount);
+      first = -1;
+    }
+
+    for (var part = 0; part < parts.count; part++) {
+      final from = ranges[part * 2];
+      final count = ranges[part * 2 + 1];
+      if (count == 0 || !_inside(planes, parts.bounds, part * 6)) continue;
+      if (first >= 0 && end == from) {
+        end += count;
+        continue;
+      }
+      flush();
+      first = from;
+      end = from + count;
+    }
+    flush();
   }
 
   void _bindVertices(fg.RenderPass pass, int slot, fg.BufferView view) {

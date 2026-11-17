@@ -13,6 +13,7 @@ import 'package:vector_math/vector_math.dart' as vm;
 import '../shared/encoded_image_types.dart';
 import '../shared/gpu_capabilities.dart';
 import '../shared/item_instances.dart';
+import '../shared/item_parts.dart';
 import '../shared/item_sort.dart';
 import '../shared/kept_draw.dart';
 import '../shared/web_backend_choice.dart';

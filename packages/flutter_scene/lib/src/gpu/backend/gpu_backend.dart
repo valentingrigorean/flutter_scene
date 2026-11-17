@@ -41,6 +41,7 @@ import 'package:vector_math/vector_math.dart' as vm;
 
 import '../shared/gpu_capabilities.dart';
 import '../shared/item_instances.dart';
+import '../shared/item_parts.dart';
 import '../shared/item_sort.dart';
 
 /// A GPU backend the shim can render through instead of Impeller.
@@ -356,6 +357,10 @@ abstract interface class GpuBackendItemSet {
   /// draw of the instances each [draw] does not cull by their own bounds
   /// ([ItemInstances]); [bounds] then holds them all.
   ///
+  /// With [parts], an indexed draw with no [instances] draws in each pass
+  /// only its parts that pass's clip reaches ([ItemParts]); [bounds] then
+  /// holds them all.
+  ///
   /// With [order], a pass draws its items in ascending [order], so a set
   /// that states one for every item draws them in that order, such as paint
   /// order. Without it the backend orders a pass's items as it draws them
@@ -371,16 +376,24 @@ abstract interface class GpuBackendItemSet {
     required int passes,
     Float32List? bounds,
     ItemInstances? instances,
+    ItemParts? parts,
     int? order,
     GpuBackendItemPrologue? prologue,
   });
 
   /// Replaces the [bounds] of item [id] without recording its draw again,
-  /// and with [instances] the records of an item kept with instances of the
+  /// with [instances] the records of an item kept with instances of the
   /// same slot, stride and count, culled by their own bounds where it was
-  /// kept so. Returns false, changing nothing, where [id] was kept
-  /// otherwise: with instances where none are given, or with none.
-  bool place(int id, {Float32List? bounds, ItemInstances? instances});
+  /// kept so, and with [parts] the bounds of an item kept with as many
+  /// parts at the same ranges. Returns false, changing nothing, where [id]
+  /// was kept otherwise: with instances or parts where none are given, or
+  /// with none.
+  bool place(
+    int id, {
+    Float32List? bounds,
+    ItemInstances? instances,
+    ItemParts? parts,
+  });
 
   /// Removes item [id]; an unknown id is ignored.
   void remove(int id);
