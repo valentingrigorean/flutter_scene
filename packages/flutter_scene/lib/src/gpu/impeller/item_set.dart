@@ -225,10 +225,14 @@ final class ItemSet {
   /// Replaces the [bounds] of item [id] without recording its draw again,
   /// with [instances] the records of an item kept with instances of the
   /// same slot, stride and count, each culled by its own bounds where it was
-  /// kept so, and with [parts] the bounds of an item kept with as many parts
-  /// at the same ranges: a kept draw that only moved draws from where it now
-  /// stands. Returns false, changing nothing, where [id] was kept otherwise:
-  /// with instances or parts where none are given, or with none.
+  /// kept so, and with [parts] the bounds of an item kept with parts at the
+  /// same ranges: a kept draw that only moved draws from where it now
+  /// stands. Without [parts], the parts of an item kept with them keep where
+  /// they lie against its bounds: they move as the min corner of [bounds]
+  /// moves, as a move of the draw origin moves them. Returns false, changing
+  /// nothing, where [id] was kept otherwise: with instances where none are
+  /// given, with none, or with no parts or other ranges where [parts] are
+  /// given.
   bool place(
     int id, {
     Float32List? bounds,

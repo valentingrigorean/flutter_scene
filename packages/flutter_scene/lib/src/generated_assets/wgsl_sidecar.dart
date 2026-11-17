@@ -178,10 +178,9 @@ Future<String> buildWgslSidecar(
 /// point's name (`main` for GLSL, the manifest's `entry_point` for HLSL),
 /// renaming it only to dodge a WGSL reserved word, so the output is read
 /// rather than assumed.
-String? wgslEntryPoint(String wgsl, String stage) =>
-    RegExp('@$stage\\b[^{;]*?\\bfn\\s+([A-Za-z_][A-Za-z0-9_]*)')
-        .firstMatch(wgsl)
-        ?.group(1);
+String? wgslEntryPoint(String wgsl, String stage) => RegExp(
+  '@$stage\\b[^{;]*?\\bfn\\s+([A-Za-z_][A-Za-z0-9_]*)',
+).firstMatch(wgsl)?.group(1);
 
 /// One shader's sidecar entry: its WGSL plus the reflection the WebGPU
 /// backend binds by, read from the same Vulkan entry the WGSL came from, so

@@ -1392,6 +1392,12 @@ class RenderItem {
   // out.
   Aabb3? _placedBounds;
   int _placedBoundsRevision = 0;
+
+  /// Counts the changes of the box [refreshWorldBounds] states, which a move
+  /// of the anchor or the draw origin leaves alone.
+  @internal
+  int get placedBoundsRevision => _placedBoundsRevision;
+
   Aabb3? _drawnBounds;
   int _drawnBoundsOrigin = -1;
   int _drawnBoundsRevision = -1;
