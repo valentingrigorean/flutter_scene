@@ -13,6 +13,24 @@ import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
 import 'package:flutter_scene/src/render/retained_draws.dart';
 
+// Whether the frame being encoded skips the draws whose pipeline still
+// compiles ([skippingCompilingDraws]).
+bool _skipping = false;
+
+/// Runs [record] with the backend skipping each draw whose pipeline still
+/// compiles ([gpu.GpuHost.skipCompilingDraws]), and returns how many it
+/// skipped. A kept draw the backend refuses meanwhile may have been skipped
+/// rather than refused, so it is recorded again at its next draw.
+int skippingCompilingDraws(void Function() record) {
+  final was = _skipping;
+  _skipping = true;
+  try {
+    return gpu.gpuHost.skipCompilingDraws(record);
+  } finally {
+    _skipping = was;
+  }
+}
+
 /// The kept draw of one pass index of a scene's item set ([SceneItems]): a
 /// full-screen pass's, or a custom render pass's
 /// (`RenderPassContext.drawKept`).
@@ -120,6 +138,7 @@ final class KeptPassDraw {
       final id = _items.keep(recorder, id: _id, passes: 1 << _index);
       _id = id ?? 0;
       _refused = id == null;
+      if (_refused && _skipping) _key = null;
     } else {
       assert(
         keptDrawHolds(
@@ -261,7 +280,7 @@ final class KeptPassItems {
         order: order,
       );
       if (id == null) {
-        _refused.add(draw.key);
+        if (!_skipping) _refused.add(draw.key);
         _held.addAll(held);
         _clear();
         return false;

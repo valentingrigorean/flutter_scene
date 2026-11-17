@@ -2521,13 +2521,13 @@ base class Scene implements SceneGraph {
       if (slice > 0) await awaitRasterThread();
       if (_disposed) return;
       final paced = _pacedFrameCount;
-      final compiling = gpu.gpuHost.skipCompilingDraws(
+      final compiling = skippingCompilingDraws(
         () => withPipelineBuildBudget(sliceBudget, encode),
       );
       if (_pacedFrameCount == paced &&
           deferredPipelineBuilds == 0 &&
           compiling == 0) {
-        final building = gpu.gpuHost.skipCompilingDraws(() {
+        final building = skippingCompilingDraws(() {
           _buildListedShadowCasters(views, querySize);
           _buildShadowTileCopy();
         });
