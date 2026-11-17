@@ -185,7 +185,8 @@ final class _RunKey {
 /// Pass [casterPass] and the three after it are the directional shadow
 /// cascades, [depthPass] the primary view's depth prepass, [colorPass] its
 /// color pass, [skyPass] the sky behind it, [resolvePass] the resolve and
-/// tone map, [postPass] the anti-aliasing after it, [customPass] and the
+/// tone map, [postPass] the anti-aliasing after it (SMAA's blend, after
+/// [smaaEdgesPass] and [smaaWeightsPass]), [customPass] and the
 /// [customPasses] after it the draws of custom render passes, and
 /// [orderPass] onwards the color pass's draws of one render order each,
 /// opaque or translucent ([takeOrderPass]). A walk names
@@ -197,7 +198,8 @@ final class _RunKey {
 /// (`Scene.setViewBlock`) after them in every pass that draws the scene's
 /// items ([withAppBlocks]);
 /// `SkyboxFrameInfo` and `SkyboxInfo` for the sky, `ResolveInfo` for the
-/// resolve, `FxaaInfo` for the anti-aliasing, and a custom render pass's
+/// resolve, `FxaaInfo` or `SmaaInfo` for the anti-aliasing, and a custom
+/// render pass's
 /// `CustomRenderPass.keptViewBlocks` for its draw.
 final class SceneItems {
   SceneItems._(this.items, this._blocksRevision);
@@ -245,14 +247,21 @@ final class SceneItems {
   /// The resolve and tone map's pass index.
   static const int resolvePass = 7;
 
-  /// The anti-aliasing pass's index, after the resolve.
+  /// The anti-aliasing pass's index, after the resolve: FXAA, or SMAA's
+  /// blend.
   static const int postPass = 8;
 
+  /// SMAA's edge detection's pass index, the first of its three passes.
+  static const int smaaEdgesPass = 9;
+
+  /// SMAA's blending weights' pass index, between its edges and its blend.
+  static const int smaaWeightsPass = 10;
+
   /// The first of the custom render passes' pass indices.
-  static const int customPass = 9;
+  static const int customPass = 11;
 
   /// The number of custom render pass indices.
-  static const int customPasses = 23;
+  static const int customPasses = 21;
 
   /// The first of the color pass's render order pass indices, one for each
   /// render order whose opaque draws, and one for each whose translucent
@@ -309,6 +318,7 @@ final class SceneItems {
         'SkyboxInfo': 1,
         'ResolveInfo': 0,
         'FxaaInfo': 0,
+        'SmaaInfo': 0,
         ...renderScene.passViewBlocks,
       },
       viewBlockLength:
@@ -351,12 +361,14 @@ final class SceneItems {
 
   /// The frame-transient targets a kept full-screen draw samples, after
   /// [colorViewTextureNames] among a pass's view textures: the scene or
-  /// display color it reads, and the bloom and auto exposure the resolve
-  /// adds.
+  /// display color it reads, the bloom and auto exposure the resolve adds,
+  /// and the edges and blending weights SMAA's later passes read.
   static const fullscreenTextureNames = [
     'scene_color',
     'bloom_color',
     'exposure_factor',
+    'edges_texture',
+    'blend_texture',
   ];
 }
 

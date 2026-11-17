@@ -42,13 +42,16 @@ final class KeptPassDraw {
     ..[15] = 1;
 
   /// A pass's view textures for a full-screen draw sampling [sceneColor],
-  /// and [bloom] and [exposureFactor] where it reads them: placeholders for
-  /// the color pass's own ([SceneItems.colorViewTextureNames]), then
+  /// and [bloom], [exposureFactor], [smaaEdges] and [smaaWeights] where it
+  /// reads them: placeholders for the color pass's own
+  /// ([SceneItems.colorViewTextureNames]), then
   /// [SceneItems.fullscreenTextureNames] in order.
   static List<gpu.Texture> viewTextures({
     required gpu.Texture sceneColor,
     gpu.Texture? bloom,
     gpu.Texture? exposureFactor,
+    gpu.Texture? smaaEdges,
+    gpu.Texture? smaaWeights,
   }) {
     final placeholder = Material.getWhitePlaceholderTexture();
     return [
@@ -56,6 +59,8 @@ final class KeptPassDraw {
       sceneColor,
       bloom ?? placeholder,
       exposureFactor ?? placeholder,
+      smaaEdges ?? placeholder,
+      smaaWeights ?? placeholder,
     ];
   }
 

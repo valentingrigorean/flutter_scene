@@ -5320,8 +5320,12 @@ base class Scene implements SceneGraph {
     }
     if (enableSmaa) {
       displaySteps.add(
-        (output) =>
-            SmaaPass(output: output, dimensions: pixelSize, settings: smaa),
+        (output) => SmaaPass(
+          output: output,
+          dimensions: pixelSize,
+          settings: smaa,
+          renderScene: renderScene,
+        ),
       );
     }
 
