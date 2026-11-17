@@ -525,95 +525,16 @@ void main() {
       expect(seen.length, lessThanOrEqualTo(4));
     });
 
-    test(
-      'immediate pool: every emplacement gets its own zero-offset buffer',
-      () {
-        final tracker = GpuSubmissionTracker();
-        final pool = ImmediatePoolTransients(tracker);
-
-        final a = pool.emplace(_bytes(100));
-        final b = pool.emplace(_bytes(100));
-        expect(a.offsetInBytes, 0);
-        expect(b.offsetInBytes, 0);
-        expect(identical(a.buffer, b.buffer), isFalse);
-        expect(pool.bufferCount, 2);
-      },
-    );
-
-    test('immediate pool: recycles same-class buffers after completion', () {
-      final tracker = GpuSubmissionTracker();
-      final pool = ImmediatePoolTransients(tracker);
-
-      final first = pool.emplace(_bytes(100)); // 512 class
-      final id = tracker.record();
-      pool.beginFrame();
-
-      // Pending: a new buffer is required.
-      final second = pool.emplace(_bytes(80));
-      expect(identical(second.buffer, first.buffer), isFalse);
-      final id2 = tracker.record();
-      pool.beginFrame();
-
-      tracker.complete(id);
-      tracker.complete(id2);
-      final third = pool.emplace(_bytes(64)); // same 512 class
-      expect(
-        identical(third.buffer, first.buffer) ||
-            identical(third.buffer, second.buffer),
-        isTrue,
-      );
-    });
-
-    test('immediate pool: releases buffers left idle', () {
-      final tracker = GpuSubmissionTracker();
-      final pool = ImmediatePoolTransients(tracker);
-
-      final ids = <int>[];
-      for (var frame = 0; frame < 4; frame++) {
-        pool.emplace(_bytes(100));
-        pool.emplace(_bytes(100));
-        ids.add(tracker.record());
-        pool.beginFrame();
-      }
-      for (final id in ids) {
-        tracker.complete(id);
-      }
-      pool.beginFrame();
-      expect(pool.bufferCount, greaterThan(1));
-      // Buffers idle for kTransientIdleFrames are released.
-      for (var i = 0; i <= kTransientIdleFrames; i++) {
-        pool.beginFrame();
-      }
-      expect(pool.bufferCount, lessThanOrEqualTo(1));
-    });
-
     test('emplaceTyped places a typed list like its byte view', () {
       final data = Float32List.fromList([for (var i = 0; i < 25; i++) i + 0.5]);
       final tracker = GpuSubmissionTracker();
       final arena = TransientArena(tracker, alignment: 16);
-      final pool = ImmediatePoolTransients(tracker);
 
       final typed = arena.emplaceTyped(data);
       final bytes = arena.emplace(ByteData.sublistView(data));
       expect(typed.lengthInBytes, data.lengthInBytes);
       expect(bytes.lengthInBytes, data.lengthInBytes);
       expect(bytes.offsetInBytes % 16, 0);
-      expect(pool.emplaceTyped(data).lengthInBytes, data.lengthInBytes);
-    });
-
-    test('immediate vertex pool recycles typed buffers', () {
-      final tracker = GpuSubmissionTracker();
-      final pool = ImmediatePoolTransients(tracker, vertexData: true);
-      final data = Float32List(100);
-
-      final first = pool.emplaceTyped(data);
-      final id = tracker.record();
-      pool.beginFrame();
-      tracker.complete(id);
-      final second = pool.emplaceTyped(data);
-
-      expect(identical(second.buffer, first.buffer), isTrue);
-      expect(pool.bufferCount, 1);
     });
 
     test('single flush per block: staged bytes upload on seal', () {

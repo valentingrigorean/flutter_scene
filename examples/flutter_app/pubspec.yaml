@@ -74,6 +74,6 @@ flutter:
         - android
         - linux
         - windows
-    - path: flutter_scene_generated/opengl_es/
+    - path: flutter_scene_generated/vulkan/
       platforms:
         - web

@@ -15,10 +15,8 @@ library;
 
 import 'package:meta/meta.dart' show experimental;
 
-export 'src/gpu/backend/gpu_backend.dart'
-    if (dart.library.js_interop) 'src/gpu/backend/gpu_backend_web.dart';
+export 'src/gpu/backend/gpu_backend.dart';
 export 'src/gpu/impeller/_gpu.dart'
-    if (dart.library.js_interop) 'src/gpu/backend/gpu_backend_web.dart'
     show
         gpuBackendDeviceBufferOf,
         gpuBackendHostBufferOf,

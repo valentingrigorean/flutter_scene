@@ -286,7 +286,6 @@ void main() {
   ) async {
     int allocations() =>
         TransientArena.buffersCreated +
-        ImmediatePoolTransients.buffersCreated +
         TransientTexturePool.texturesCreated;
 
     await tester.pumpWidget(
