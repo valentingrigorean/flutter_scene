@@ -1495,6 +1495,15 @@ abstract class Geometry with RenderSourceListeners {
   /// {@category Geometry}
   bool get drawsFromViewOrigin => false;
 
+  /// The parts of the draw this geometry ([keepsItsDraw]) last recorded
+  /// while [currentDrawKept] that each pass culls one by one, or null to
+  /// cull the draw as a whole, the default: [ranges] holds each part's first
+  /// index and index count from the draw's first index, in ascending order,
+  /// and [boxes] each part's min x, y, z and max x, y, z in the space of
+  /// [localBounds]. A change to them comes with [markKeptDrawChanged].
+  /// {@category Geometry}
+  ({Int32List ranges, Float64List boxes})? get keptDrawParts => null;
+
   /// Tells the passes that keep a draw of this geometry ([keepsItsDraw])
   /// that what its [bind] binds changed, so they record the draw again.
   @protected

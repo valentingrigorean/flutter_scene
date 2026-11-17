@@ -77,6 +77,13 @@ final class _Kept {
   bool moves = false;
   bool placed = false;
 
+  // The parts the kept draw states ([Geometry.keptDrawParts]) and the
+  // revision of the item's placed bounds they were stated at
+  // ([RenderItem.placedBoundsRevision]): a backend moves them with the
+  // item's bounds while both hold.
+  Object? parts;
+  int partsPlaced = -1;
+
   // The revision of the rows a kept instanced draw holds as its instances
   // ([RetainedDraws._rowsRevisionOf]), a copy of the ranges it takes of
   // them (a mesh may restate its ranges in the same list) and whether they
@@ -735,9 +742,17 @@ abstract base class RetainedDraws {
         assert(_recordsAsKept(item, kept, bounds, 'the same'));
         return;
       }
-      if (kept.id != 0 && !kept.placed && kept.rows < 0) {
+      if (kept.id != 0 &&
+          !kept.placed &&
+          kept.rows < 0 &&
+          // A draw whose parts are gone is recorded again.
+          (kept.parts == null || _partsOf(item, geometry) != null)) {
         _takeBounds(kept, bounds);
-        if (items.place(kept.id, bounds: kept.bounded ? kept.bounds : null)) {
+        if (items.place(
+          kept.id,
+          bounds: kept.bounded ? kept.bounds : null,
+          parts: _movedParts(item, kept, geometry),
+        )) {
           assert(_recordsAsKept(item, kept, bounds, 'the same but its bounds'));
           return;
         }
@@ -803,7 +818,9 @@ abstract base class RetainedDraws {
     recordKeptDraw(() => record(item));
     _takeRecorded(item, kept);
     _leaveRun(item, kept);
-    final key = joinsRuns ? _runKeyOf(item, kept, pipeline, state) : null;
+    final key = joinsRuns && geometry.keptDrawParts == null
+        ? _runKeyOf(item, kept, pipeline, state)
+        : null;
     heldInstanceBinding = null;
     final run = key == null ? null : _runs[key];
     if (run != null && run.members.isNotEmpty) {
@@ -1161,6 +1178,58 @@ abstract base class RetainedDraws {
     );
   }
 
+  static final Aabb3 _partBox = Aabb3();
+
+  // The parts of [item]'s kept draw of [geometry] where [kept] stated others
+  // or the item's placed bounds changed since; null where they only moved
+  // with its bounds, as a move of the draw origin or the anchor moves them,
+  // which the set does with the bounds.
+  static gpu.ItemParts? _movedParts(
+    RenderItem item,
+    _Kept kept,
+    Geometry geometry,
+  ) {
+    if (kept.parts == null ||
+        (identical(kept.parts, _partsOf(item, geometry)) &&
+            kept.partsPlaced == item.placedBoundsRevision)) {
+      return null;
+    }
+    return _stateParts(item, kept, geometry);
+  }
+
+  // The parts [geometry] states of the kept draw of it by [item]; null for
+  // a draw culled whole.
+  static ({Int32List ranges, Float64List boxes})? _partsOf(
+    RenderItem item,
+    Geometry geometry,
+  ) => !item.frustumCulled || item.instanceTransforms != null
+      ? null
+      : geometry.keptDrawParts;
+
+  // The parts of the kept draw of [geometry] by [item], each culled by its
+  // box as the item's bounds state it, which [kept] takes; null for a draw
+  // culled whole.
+  static gpu.ItemParts? _stateParts(
+    RenderItem item,
+    _Kept kept,
+    Geometry geometry,
+  ) {
+    final parts = _partsOf(item, geometry);
+    kept
+      ..parts = parts
+      ..partsPlaced = item.placedBoundsRevision;
+    if (parts == null) return null;
+    final (:ranges, :boxes) = parts;
+    final bounds = Float32List(ranges.length * 3);
+    for (var part = 0; part < ranges.length ~/ 2; part++) {
+      final at = part * 6;
+      _partBox.min.setValues(boxes[at], boxes[at + 1], boxes[at + 2]);
+      _partBox.max.setValues(boxes[at + 3], boxes[at + 4], boxes[at + 5]);
+      item.writeDrawnBounds(_partBox, bounds, at);
+    }
+    return gpu.ItemParts(ranges: ranges, bounds: bounds);
+  }
+
   // Takes what the draw of [item] just recorded read that a move reaches.
   void _takeRecorded(RenderItem item, _Kept kept) {
     final binding = heldInstanceBinding;
@@ -1184,12 +1253,16 @@ abstract base class RetainedDraws {
         ? _loneInstances(item, kept)
         : null;
     kept.placed = instances != null;
+    if (instances != null) kept.parts = null;
     return items.keep(
       recorder,
       id: id,
       passes: passesOf(item),
       bounds: kept.bounded ? kept.bounds : null,
       instances: instances,
+      parts: instances == null
+          ? _stateParts(item, kept, geometryOf(item))
+          : null,
       order: _orderOf(kept.pipeline, kept.material),
     );
   }

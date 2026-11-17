@@ -1392,6 +1392,12 @@ class RenderItem {
   // out.
   Aabb3? _placedBounds;
   int _placedBoundsRevision = 0;
+
+  /// Counts the changes of the box [refreshWorldBounds] states, which a move
+  /// of the anchor or the draw origin leaves alone.
+  @internal
+  int get placedBoundsRevision => _placedBoundsRevision;
+
   Aabb3? _drawnBounds;
   int _drawnBoundsOrigin = -1;
   int _drawnBoundsRevision = -1;
@@ -1441,6 +1447,32 @@ class RenderItem {
   // Reused across [refreshWorldBounds] calls so a steady-state refresh
   // allocates nothing.
   static final Aabb3 _worldBoundsScratch = Aabb3();
+
+  /// Writes [local], a box in the space of [cullBounds], as [worldBounds]
+  /// states the item's box: transformed by [worldTransform] and moved by the
+  /// anchor less the scene's draw origin for an anchored item, six floats
+  /// into [into] from [offset].
+  @internal
+  void writeDrawnBounds(Aabb3 local, Float32List into, int offset) {
+    final turned = instanceTransforms == null ? nodeSpin : null;
+    final box = _worldBoundsScratch
+      ..copyFrom(turned == null ? local : turned.cover(local))
+      ..transform(worldTransform);
+    var x = 0.0, y = 0.0, z = 0.0;
+    final origin = drawOrigin;
+    if (anchored && origin != null) {
+      x = anchor[0] - origin.at[0];
+      y = anchor[1] - origin.at[1];
+      z = anchor[2] - origin.at[2];
+    }
+    into
+      ..[offset] = box.min.x + x
+      ..[offset + 1] = box.min.y + y
+      ..[offset + 2] = box.min.z + z
+      ..[offset + 3] = box.max.x + x
+      ..[offset + 4] = box.max.y + y
+      ..[offset + 5] = box.max.z + z;
+  }
 
   /// Recomputes [worldBounds] from [cullBounds] and [worldTransform], and
   /// returns whether the value changed since the previous call.

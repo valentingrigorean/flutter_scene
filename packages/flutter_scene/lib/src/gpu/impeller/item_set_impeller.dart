@@ -298,6 +298,10 @@ final class _ItemDraw {
   Float32List? bounds;
   _ItemInstances? instances;
 
+  // The parts, their bounds less the min corner of [bounds], so a place
+  // that states no parts moves them with [bounds].
+  ItemParts? parts;
+
   // What a pass sorts runs of its items that share an order and blend
   // nothing by, so items that share a pipeline and then textures draw next
   // to each other and skip binding them again.
@@ -534,6 +538,7 @@ final class _ItemSet {
     required int passes,
     Float32List? bounds,
     ItemInstances? instances,
+    ItemParts? parts,
     int? order,
   }) {
     final draw = recorder.take();
@@ -547,6 +552,9 @@ final class _ItemSet {
       ..order = order
       ..bounds = bounds == null ? null : Float32List.fromList(bounds)
       ..instances = instances == null ? null : _instancesOf(instances)
+      ..parts = instances != null || parts == null || !draw.indexed
+          ? null
+          : _partsOf(parts, bounds)
       ..pipelineKey = _keyOf(draw.pipeline)
       ..textureKeys = [
         for (final (_, texture, _) in draw.textures) _keyOf(texture),
@@ -556,10 +564,21 @@ final class _ItemSet {
     return at;
   }
 
-  bool place(int id, {Float32List? bounds, ItemInstances? instances}) {
+  bool place(
+    int id, {
+    Float32List? bounds,
+    ItemInstances? instances,
+    ItemParts? parts,
+  }) {
     final draw = _items[id];
     final held = draw?.instances;
     if (draw == null || (held == null) != (instances == null)) return false;
+    final heldParts = draw.parts;
+    if (parts != null &&
+        (heldParts == null || !_sameRanges(heldParts, parts))) {
+      return false;
+    }
+    if (heldParts != null && bounds == null) return false;
     if (held != null && instances != null) {
       if (held.slot != instances.slot ||
           held.stride != instances.stride ||
@@ -577,6 +596,29 @@ final class _ItemSet {
       draw.instances = placed;
     }
     draw.bounds = bounds == null ? null : Float32List.fromList(bounds);
+    if (parts != null) draw.parts = _partsOf(parts, bounds);
+    return true;
+  }
+
+  // A copy of [parts] whose bounds are less the min corner of [bounds].
+  static ItemParts _partsOf(ItemParts parts, Float32List? bounds) {
+    final relative = Float32List.fromList(parts.bounds);
+    if (bounds != null) {
+      for (var at = 0; at < relative.length; at++) {
+        relative[at] -= bounds[at % 3];
+      }
+    }
+    return ItemParts(
+      ranges: Int32List.fromList(parts.ranges),
+      bounds: relative,
+    );
+  }
+
+  static bool _sameRanges(ItemParts a, ItemParts b) {
+    if (a.ranges.length != b.ranges.length) return false;
+    for (var at = 0; at < a.ranges.length; at++) {
+      if (a.ranges[at] != b.ranges[at]) return false;
+    }
     return true;
   }
 
@@ -812,7 +854,19 @@ final class _ItemSet {
           _bindTexture(pass, slot, viewTextures[at], sampler);
         }
       }
-      if (draw.indexed) {
+      final parts = draw.parts;
+      if (parts != null && indices != null) {
+        _drawParts(
+          pass,
+          parts,
+          draw.bounds,
+          planes,
+          indices,
+          draw.indexType,
+          instanceCount,
+        );
+        boundIndex = null;
+      } else if (draw.indexed) {
         pass.drawIndexed(draw.count, instanceCount: instanceCount);
       } else {
         pass.draw(draw.count, instanceCount: instanceCount);
@@ -821,6 +875,57 @@ final class _ItemSet {
     if (saved == null) return;
     saved.applyOnto(pass, live);
     pass.clearBindings();
+  }
+
+  // Draws the parts of [parts], which lie against the min corner of
+  // [bounds], inside [planes] from [indices], consecutive ones as one draw,
+  // each from a view onto its own indices.
+  static void _drawParts(
+    fg.RenderPass pass,
+    ItemParts parts,
+    Float32List? bounds,
+    Float32List planes,
+    fg.BufferView indices,
+    IndexType type,
+    int instanceCount,
+  ) {
+    final bytes = type == IndexType.int32 ? 4 : 2;
+    final ranges = parts.ranges;
+    var first = -1;
+    var end = -1;
+    void flush() {
+      if (first < 0) return;
+      pass
+        ..bindIndexBuffer(
+          fg.BufferView(
+            indices.buffer,
+            offsetInBytes: indices.offsetInBytes + first * bytes,
+            lengthInBytes: (end - first) * bytes,
+          ),
+          type,
+        )
+        ..drawIndexed(end - first, instanceCount: instanceCount);
+      first = -1;
+    }
+
+    for (var part = 0; part < parts.count; part++) {
+      final from = ranges[part * 2];
+      final count = ranges[part * 2 + 1];
+      if (count == 0) continue;
+      final at = part * 6;
+      for (var axis = 0; axis < 6; axis++) {
+        _part[axis] = parts.bounds[at + axis] + (bounds?[axis % 3] ?? 0);
+      }
+      if (!_inside(planes, _part, 0)) continue;
+      if (first >= 0 && end == from) {
+        end += count;
+        continue;
+      }
+      flush();
+      first = from;
+      end = from + count;
+    }
+    flush();
   }
 
   void _bindVertices(fg.RenderPass pass, int slot, fg.BufferView view) {
@@ -1042,6 +1147,9 @@ final class _ItemSet {
     }
     return planes;
   }
+
+  // Scratch: the bounds of the part [_drawParts] culls.
+  static final Float32List _part = Float32List(6);
 
   // Whether the bounds at [at] of [bounds] reach inside [planes].
   static bool _inside(Float32List planes, Float32List bounds, int at) {

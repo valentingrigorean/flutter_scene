@@ -122,6 +122,10 @@ final class ItemSet {
   /// a [draw] does not cull, each by its own bounds; [bounds] then holds
   /// them all.
   ///
+  /// With [parts], an indexed draw with no [instances] draws in each pass
+  /// only its parts that pass's clip reaches ([ItemParts]); [bounds] then
+  /// holds them all.
+  ///
   /// With [order], a pass draws its items in ascending [order], so a set
   /// that states one for every item draws them in that order, such as paint
   /// order. Among items of one order, or of none, the backend orders those
@@ -137,6 +141,7 @@ final class ItemSet {
     required int passes,
     Float32List? bounds,
     ItemInstances? instances,
+    ItemParts? parts,
     int? order,
   }) {
     assert(identical(recorder._records, this));
@@ -152,6 +157,7 @@ final class ItemSet {
       passes: passes,
       bounds: bounds,
       instances: instances,
+      parts: instances == null ? parts : null,
       order: order,
     );
     assert(() {
@@ -169,6 +175,7 @@ final class ItemSet {
     required int passes,
     Float32List? bounds,
     ItemInstances? instances,
+    ItemParts? parts,
     int? order,
   }) {
     final prologue = recorder._prologue;
@@ -187,6 +194,7 @@ final class ItemSet {
         passes: passes,
         bounds: bounds,
         instances: instances,
+        parts: parts,
         order: order,
       );
     }
@@ -196,6 +204,7 @@ final class ItemSet {
       passes: passes,
       bounds: bounds,
       instances: instances,
+      parts: parts,
       order: order,
       prologue: prologue == null
           ? null
@@ -214,15 +223,30 @@ final class ItemSet {
   }
 
   /// Replaces the [bounds] of item [id] without recording its draw again,
-  /// and with [instances] the records of an item kept with instances of the
+  /// with [instances] the records of an item kept with instances of the
   /// same slot, stride and count, each culled by its own bounds where it was
-  /// kept so: a kept draw that only moved draws from where it now stands.
-  /// Returns false, changing nothing, where [id] was kept otherwise: with
-  /// instances where none are given, or with none.
-  bool place(int id, {Float32List? bounds, ItemInstances? instances}) {
+  /// kept so, and with [parts] the bounds of an item kept with parts at the
+  /// same ranges: a kept draw that only moved draws from where it now
+  /// stands. Without [parts], the parts of an item kept with them keep where
+  /// they lie against its bounds: they move as the min corner of [bounds]
+  /// moves, as a move of the draw origin moves them. Returns false, changing
+  /// nothing, where [id] was kept otherwise: with instances where none are
+  /// given, with none, or with no parts or other ranges where [parts] are
+  /// given.
+  bool place(
+    int id, {
+    Float32List? bounds,
+    ItemInstances? instances,
+    ItemParts? parts,
+  }) {
     final placed =
-        _impeller?.place(id, bounds: bounds, instances: instances) ??
-        _backend!.place(id, bounds: bounds, instances: instances);
+        _impeller?.place(
+          id,
+          bounds: bounds,
+          instances: instances,
+          parts: parts,
+        ) ??
+        _backend!.place(id, bounds: bounds, instances: instances, parts: parts);
     assert(() {
       if (placed) _held[this]?[id]?.place(bounds, instances);
       return true;
