@@ -8,6 +8,9 @@ import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
+import 'package:flutter_scene/src/render/kept_pass_draw.dart';
+import 'package:flutter_scene/src/render/render_scene.dart';
+import 'package:flutter_scene/src/render/retained_draws.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
 import 'package:flutter_scene/src/render/resolve_pass.dart';
 import 'package:flutter_scene/src/scene_encoder.dart' show resolvePipeline;
@@ -62,13 +65,17 @@ class SmaaPass extends RenderGraphPass {
     required gpu.Texture output,
     required ui.Size dimensions,
     SmaaSettings? settings,
+    RenderScene? renderScene,
   }) : _output = output,
        _dimensions = dimensions,
-       _settings = settings ?? SmaaSettings();
+       _settings = settings ?? SmaaSettings(),
+       _renderScene = renderScene;
 
   final gpu.Texture _output;
   final ui.Size _dimensions;
   final SmaaSettings _settings;
+  // The scene whose item set keeps the three draws, or null to encode them.
+  final RenderScene? _renderScene;
 
   static final gpu.Shader _vertexShader =
       baseShaderLibrary['FullscreenVertex']!;
@@ -207,126 +214,166 @@ class SmaaPass extends RenderGraphPass {
     final width = _dimensions.width.toInt();
     final height = _dimensions.height.toInt();
 
-    final info = Float32List(8)
-      ..[0] = width == 0 ? 0.0 : 1.0 / width
-      ..[1] = height == 0 ? 0.0 : 1.0 / height
-      ..[2] = width.toDouble()
-      ..[3] = height.toDouble()
-      ..[4] = _settings.threshold
-      ..[5] = _settings.maxSearchSteps.clamp(1, 112).toDouble()
-      ..[6] = _settings.maxDiagonalSearchSteps.clamp(1, 20).toDouble()
-      ..[7] = _settings.cornerRounding.clamp(0.0, 100.0);
-    final infoView = context.transientsBuffer.emplace(
-      ByteData.sublistView(info),
+    final info = ByteData.sublistView(
+      Float32List(8)
+        ..[0] = width == 0 ? 0.0 : 1.0 / width
+        ..[1] = height == 0 ? 0.0 : 1.0 / height
+        ..[2] = width.toDouble()
+        ..[3] = height.toDouble()
+        ..[4] = _settings.threshold
+        ..[5] = _settings.maxSearchSteps.clamp(1, 112).toDouble()
+        ..[6] = _settings.maxDiagonalSearchSteps.clamp(1, 20).toDouble()
+        ..[7] = _settings.cornerRounding.clamp(0.0, 100.0),
     );
 
-    // Pass 1: edge detection. Non-edge texels discard, so the target must
-    // clear to zero.
-    final edges = context.texturePool.acquire(
-      TransientTextureDescriptor.color(
-        width: width,
-        height: height,
-        format: gpu.PixelFormat.r8g8b8a8UNormInt,
-        debugName: 'smaa_edges',
-      ),
-    );
-    {
-      final commandBuffer = gpu.gpuContext.createCommandBuffer();
-      final renderPass = commandBuffer.createRenderPass(
-        gpu.RenderTarget.singleColor(
-          gpu.ColorAttachment(
-            texture: edges,
-            loadAction: gpu.LoadAction.clear,
-            clearValue: Vector4.zero(),
-          ),
-        ),
-      );
-      renderPass.bindPipeline(resolvePipeline(_vertexShader, _edgesShader));
-      bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
-      renderPass.bindTexture(
+    // Edge detection, then the blending weights. Non-edge texels discard, so
+    // both targets clear to zero.
+    final edges = _target(context, 'smaa_edges', width, height);
+    _draw(
+      context,
+      index: SceneItems.smaaEdgesPass,
+      output: edges,
+      clears: true,
+      shader: _edgesShader,
+      info: info,
+      textures: KeptPassDraw.viewTextures(sceneColor: input),
+      bind: (pass) => pass.bindTexture(
         _edgesShader.cachedUniformSlot('scene_color'),
         input,
         sampler: _linearClamp,
-      );
-      renderPass.bindUniform(
-        _edgesShader.cachedUniformSlot('SmaaInfo'),
-        infoView,
-      );
-      drawCompat(renderPass, 6);
-      rendererSubmissions.submit(commandBuffer);
-    }
-
-    // Pass 2: blending weights from the edge, area, and search textures.
-    final weights = context.texturePool.acquire(
-      TransientTextureDescriptor.color(
-        width: width,
-        height: height,
-        format: gpu.PixelFormat.r8g8b8a8UNormInt,
-        debugName: 'smaa_weights',
       ),
     );
-    {
-      final commandBuffer = gpu.gpuContext.createCommandBuffer();
-      final renderPass = commandBuffer.createRenderPass(
-        gpu.RenderTarget.singleColor(
-          gpu.ColorAttachment(
-            texture: weights,
-            loadAction: gpu.LoadAction.clear,
-            clearValue: Vector4.zero(),
-          ),
+    final weights = _target(context, 'smaa_weights', width, height);
+    final area = _areaTexture!;
+    final search = _searchTexture!;
+    _draw(
+      context,
+      index: SceneItems.smaaWeightsPass,
+      output: weights,
+      clears: true,
+      shader: _weightsShader,
+      info: info,
+      // The tables are uploaded again after a device loss.
+      tables: (area, search),
+      textures: KeptPassDraw.viewTextures(sceneColor: input, smaaEdges: edges),
+      bind: (pass) => pass
+        ..bindTexture(
+          _weightsShader.cachedUniformSlot('edges_texture'),
+          edges,
+          sampler: _linearClamp,
+        )
+        ..bindTexture(
+          _weightsShader.cachedUniformSlot('area_texture'),
+          area,
+          sampler: _linearClamp,
+        )
+        ..bindTexture(
+          _weightsShader.cachedUniformSlot('search_texture'),
+          search,
+          sampler: _nearestClamp,
         ),
-      );
-      renderPass.bindPipeline(resolvePipeline(_vertexShader, _weightsShader));
-      bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
-      renderPass.bindTexture(
-        _weightsShader.cachedUniformSlot('edges_texture'),
-        edges,
-        sampler: _linearClamp,
-      );
-      renderPass.bindTexture(
-        _weightsShader.cachedUniformSlot('area_texture'),
-        _areaTexture!,
-        sampler: _linearClamp,
-      );
-      renderPass.bindTexture(
-        _weightsShader.cachedUniformSlot('search_texture'),
-        _searchTexture!,
-        sampler: _nearestClamp,
-      );
-      renderPass.bindUniform(
-        _weightsShader.cachedUniformSlot('SmaaInfo'),
-        infoView,
-      );
-      drawCompat(renderPass, 6);
-      rendererSubmissions.submit(commandBuffer);
-    }
-
-    // Pass 3: neighborhood blending into the output.
-    {
-      final commandBuffer = gpu.gpuContext.createCommandBuffer();
-      final renderPass = commandBuffer.createRenderPass(
-        gpu.RenderTarget.singleColor(gpu.ColorAttachment(texture: _output)),
-      );
-      renderPass.bindPipeline(resolvePipeline(_vertexShader, _blendShader));
-      bindVertexBufferCompat(renderPass, fullscreenQuadView, 6);
-      renderPass.bindTexture(
-        _blendShader.cachedUniformSlot('scene_color'),
-        input,
-        sampler: _linearClamp,
-      );
-      renderPass.bindTexture(
-        _blendShader.cachedUniformSlot('blend_texture'),
-        weights,
-        sampler: _linearClamp,
-      );
-      renderPass.bindUniform(
-        _blendShader.cachedUniformSlot('SmaaInfo'),
-        infoView,
-      );
-      drawCompat(renderPass, 6);
-      context.submit(commandBuffer);
-    }
+    );
+    // Neighborhood blending into the output.
+    _draw(
+      context,
+      index: SceneItems.postPass,
+      output: _output,
+      clears: false,
+      shader: _blendShader,
+      info: info,
+      textures: KeptPassDraw.viewTextures(
+        sceneColor: input,
+        smaaWeights: weights,
+      ),
+      bind: (pass) => pass
+        ..bindTexture(
+          _blendShader.cachedUniformSlot('scene_color'),
+          input,
+          sampler: _linearClamp,
+        )
+        ..bindTexture(
+          _blendShader.cachedUniformSlot('blend_texture'),
+          weights,
+          sampler: _linearClamp,
+        ),
+      last: true,
+    );
 
     context.blackboard.set(kDisplayColorBlackboardKey, _output);
+  }
+
+  static gpu.Texture _target(
+    RenderGraphContext context,
+    String name,
+    int width,
+    int height,
+  ) => context.texturePool.acquire(
+    TransientTextureDescriptor.color(
+      width: width,
+      height: height,
+      format: gpu.PixelFormat.r8g8b8a8UNormInt,
+      debugName: name,
+    ),
+  );
+
+  // One of the three passes: a full-screen draw of [shader] into [output],
+  // kept at pass [index] of the scene's item set where it keeps items, so
+  // the frame holds a walk, and encoded here otherwise. [bind] binds the
+  // textures it samples; those that change from frame to frame go as
+  // [textures], the pass's view textures.
+  void _draw(
+    RenderGraphContext context, {
+    required int index,
+    required gpu.Texture output,
+    required bool clears,
+    required gpu.Shader shader,
+    required ByteData info,
+    required List<gpu.Texture> textures,
+    required void Function(gpu.RenderPass pass) bind,
+    (gpu.Texture, gpu.Texture)? tables,
+    bool last = false,
+  }) {
+    final commandBuffer = gpu.gpuContext.createCommandBuffer();
+    final target = gpu.RenderTarget.singleColor(
+      clears
+          ? gpu.ColorAttachment(
+              texture: output,
+              loadAction: gpu.LoadAction.clear,
+              clearValue: Vector4.zero(),
+            )
+          : gpu.ColorAttachment(texture: output),
+    );
+    final renderPass = commandBuffer.createRenderPass(target);
+    final pipeline = resolvePipeline(_vertexShader, shader);
+
+    void record(gpu.RenderPass pass) {
+      pass.bindPipeline(pipeline);
+      bindVertexBufferCompat(pass, fullscreenQuadView, 6);
+      bind(pass);
+      pass.bindUniform(
+        shader.cachedUniformSlot('SmaaInfo'),
+        context.transientsBuffer.emplace(info),
+      );
+      drawCompat(pass, 6);
+    }
+
+    final kept = KeptPassDraw.of(_renderScene, index);
+    final drawn =
+        kept != null &&
+        kept.draw(
+          renderPass,
+          target,
+          key: (pipeline, tables),
+          record: record,
+          viewBlocks: [info],
+          viewTextures: textures,
+          replay: (view) => view.dimensions == _dimensions ? [info] : null,
+        );
+    if (!drawn) record(renderPass);
+    if (last) {
+      context.submit(commandBuffer);
+    } else {
+      rendererSubmissions.submit(commandBuffer);
+    }
   }
 }
