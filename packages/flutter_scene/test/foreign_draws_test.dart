@@ -1,8 +1,9 @@
 // The app's own draws into the scene's item set ([ForeignDraws]): the scene
 // calls them in the depth prepass, at each cached static shadow tile it
-// renders, and among its color draws at the app's render orders, after
-// every draw of the scene of that order or a lower one, on the plain path
-// and on the path that splits the color pass. The view blocks of the
+// renders, and among its color draws at the app's render orders, on the
+// plain path and on the path that splits the color pass: an opaque order
+// after every draw of the scene of that order or a lower one, a translucent
+// one behind each draw the scene encodes of that order and after the last. The view blocks of the
 // prepass and of a static tile refresh are packed under the state of the
 // pass's own kept draw, and a mark of the app's draws keeps the next frame
 // from replaying the last one for another camera.
@@ -98,8 +99,10 @@ ForeignDraws _logging(
 }) => ForeignDraws(
   draw: (site) {
     log.add(switch (site.kind) {
-      ForeignSiteKind.opaque ||
-      ForeignSiteKind.translucent => '${site.kind.name} ${site.order}',
+      ForeignSiteKind.opaque => '${site.kind.name} ${site.order}',
+      ForeignSiteKind.translucent =>
+        '${site.kind.name} ${site.order}'
+            '${site.fartherThan == null ? '' : ' behind the next'}',
       ForeignSiteKind.cascade ||
       ForeignSiteKind.staticTile => '${site.kind.name} ${site.cascade}',
       ForeignSiteKind.prepass => site.kind.name,
@@ -120,8 +123,10 @@ ForeignDraws _logging(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('the app draws in the prepass and at each of its color orders, after '
-      'every draw of the scene of that order or a lower one', () async {
+  test('the app draws in the prepass and at each of its color orders: an '
+      'opaque one after every draw of the scene of that order or a lower '
+      'one, a translucent one behind each draw the scene encodes of that '
+      'order and after the last', () async {
     if (!gpuAvailable()) return;
     await Scene.initializeStaticResources();
     final log = <String>[];
@@ -142,6 +147,7 @@ void main() {
       'opaque -3.0',
       'wall',
       'opaque 2.0',
+      'translucent 0.0 behind the next',
       'glass',
       'translucent 0.0',
     ]);
@@ -188,6 +194,7 @@ void main() {
       'opaque -3.0',
       'wall',
       'opaque 2.0',
+      'translucent 0.0 behind the next',
       'glass',
       'translucent 0.0',
     ]);

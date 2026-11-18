@@ -274,16 +274,40 @@ final class ItemSet {
   /// view textures, each at the index [GpuContext.createItemSet] gave it,
   /// culled by [clip] and drawn in the order [sort] names.
   ///
+  /// With [merge], the items of pass [merge] draw too, among those of
+  /// [index] in the one order [sort] names and with the view blocks given
+  /// here; of two items at one depth the one of [merge] draws first. The
+  /// caller then draws pass [merge] no other way in the frame.
+  ///
+  /// With [fartherThan] or [notFartherThan], under a [sort] by depth, only
+  /// the items draw whose depth key ([ItemSort.farthestFirst]) is greater
+  /// than [fartherThan] and not greater than [notFartherThan], a null bound
+  /// being open, so a caller draws a pass in ranges of depth with its own
+  /// draws between them. A [sort] by [ItemSort.key] with either throws an
+  /// [ArgumentError]. The ranges a frame draws of one pass share no item
+  /// and take the same [viewBlocks], [clip], [sort] and [merge].
+  ///
   /// The items bind what they draw with on [pass], so the caller binds its
   /// own pipeline and blocks again for the draws it encodes afterwards.
   void draw(
     RenderPass pass,
     int index, {
-    required List<ByteData> viewBlocks,
     required Float32List clip,
-    List<Texture> viewTextures = const [],
+    double? fartherThan,
+    int? merge,
+    double? notFartherThan,
     ItemSort sort = ItemSort.key,
+    required List<ByteData> viewBlocks,
+    List<Texture> viewTextures = const [],
   }) {
+    if (sort == ItemSort.key &&
+        (fartherThan != null || notFartherThan != null)) {
+      throw ArgumentError.value(
+        sort,
+        'sort',
+        'a range of depth needs a sort by depth',
+      );
+    }
     final impeller = _impeller;
     if (impeller != null) {
       impeller.draw(
@@ -291,20 +315,26 @@ final class ItemSet {
         pass._commands!,
         pass._state!,
         index,
-        viewBlocks: viewBlocks,
         clip: clip,
-        viewTextures: [for (final texture in viewTextures) texture._impeller!],
+        fartherThan: fartherThan,
+        merge: merge,
+        notFartherThan: notFartherThan,
         sort: sort,
+        viewBlocks: viewBlocks,
+        viewTextures: [for (final texture in viewTextures) texture._impeller!],
       );
       return;
     }
     _backend!.draw(
       pass._backend!,
       index,
-      viewBlocks: viewBlocks,
       clip: clip,
-      viewTextures: [for (final texture in viewTextures) texture._backend!],
+      fartherThan: fartherThan,
+      merge: merge,
+      notFartherThan: notFartherThan,
       sort: sort,
+      viewBlocks: viewBlocks,
+      viewTextures: [for (final texture in viewTextures) texture._backend!],
     );
   }
 
