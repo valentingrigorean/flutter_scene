@@ -14,6 +14,7 @@ import 'package:flutter_scene/src/geometry/geometry.dart'
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
 import 'package:flutter_scene/src/material/engine_lighting.dart';
 import 'package:flutter_scene/src/material/material.dart' show Material;
+import 'package:flutter_scene/src/render/foreign_draws.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart';
 import 'package:flutter_scene/src/render/instance_records.dart';
@@ -188,8 +189,10 @@ final class _RunKey {
 /// tone map, [postPass] the anti-aliasing after it (SMAA's blend, after
 /// [smaaEdgesPass] and [smaaWeightsPass]), [customPass] and the
 /// [customPasses] after it the draws of custom render passes, and
-/// [orderPass] onwards the color pass's draws of one render order each,
-/// opaque or translucent ([takeOrderPass]). A walk names
+/// [orderPass] and the [orderPasses] after it the color pass's draws of one
+/// render order each, opaque or translucent ([takeOrderPass]), and
+/// [ForeignDraws.firstPass] onwards the app's own ([ForeignDraws]). A walk
+/// names
 /// the passes in the order they draw, so an index does not order them.
 ///
 /// Each pass states its own view blocks: `ViewInfo` first, then `DepthInfo`
@@ -268,8 +271,8 @@ final class SceneItems {
   /// draws, it keeps, [orderPasses] at most.
   static const int orderPass = customPass + customPasses;
 
-  /// The number of render order pass indices, up to the 64 a set holds.
-  static const int orderPasses = 64 - orderPass;
+  /// The number of render order pass indices, up to the app's own.
+  static const int orderPasses = ForeignDraws.firstPass - orderPass;
 
   static final Expando<List<int>> _orderPassesTaken = Expando(
     'order passes taken',

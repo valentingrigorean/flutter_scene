@@ -29,6 +29,7 @@ import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/material/shadow_catcher_material.dart';
 import 'package:flutter_scene/src/render/bvh.dart';
 import 'package:flutter_scene/src/render/custom_render_pass.dart';
+import 'package:flutter_scene/src/render/foreign_draws.dart';
 import 'package:flutter_scene/src/render/instance_packing.dart'
     show invalidateRetainedInstanceData, updateRetainedInstanceRows;
 import 'package:flutter_scene/src/render/instance_records.dart';
@@ -2019,6 +2020,16 @@ class RenderScene {
   /// Counts the drops of [changeLog].
   @internal
   int changeLogEpoch = 0;
+
+  /// The draws the app makes itself into the scene's item set; see
+  /// `Scene.foreignDraws`.
+  @internal
+  ForeignDraws? foreignDraws;
+
+  /// Has the static shadow cache read the app's static shadow casters again
+  /// ([ForeignDraws.castsStaticShadows], [ForeignDraws.staticSignatureIn]).
+  @internal
+  void markForeignStaticShadowDirty() => _staticShadowRevision++;
 
   /// The app's own view blocks, by uniform block name, each with what gives
   /// the frame's bytes; see `Scene.setViewBlock`.

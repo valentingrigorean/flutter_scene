@@ -14,6 +14,7 @@ import 'package:flutter_scene/src/coplanar_overlaps.dart'
 import 'package:flutter_scene/src/depth_conflicts.dart'
     as depth_conflicts
     show DepthConflictReport, probeDepthConflicts;
+import 'package:flutter_scene/src/render/foreign_draws.dart';
 import 'package:flutter_scene/src/render/kept_pass_draw.dart';
 import 'package:flutter_scene/src/render/retained_draws.dart';
 import 'package:flutter_scene/src/render/camera_replay.dart';
@@ -678,6 +679,20 @@ base class Scene implements SceneGraph {
   /// state, such as a [Material.clipVolume] that follows a cut the app moves.
   /// A frame that calls it reads every item once.
   void markKeptDrawsChanged() => renderScene.relogItems();
+
+  /// The draws the app makes itself into pass indices of the scene's item
+  /// set ([ForeignDraws]), or null for none.
+  ForeignDraws? get foreignDraws => renderScene.foreignDraws;
+  set foreignDraws(ForeignDraws? draws) {
+    renderScene.foreignDraws = draws;
+    renderScene.markForeignStaticShadowDirty();
+  }
+
+  /// Has the static shadow cache read [foreignDraws]' static shadow casters
+  /// again: whether it draws any, and the fingerprint of those in each
+  /// cached tile. A tile whose fingerprint changed is rendered again.
+  void markForeignShadowCastersChanged() =>
+      renderScene.markForeignStaticShadowDirty();
 
   /// Supplies the bytes [bytes] gives, each frame, as the uniform block
   /// [name] to every draw of the color pass, the depth prepass and the
@@ -2979,7 +2994,9 @@ base class Scene implements SceneGraph {
   bool _refreshStaticShadowMetadata() {
     final staticShadowRevision = renderScene.staticShadowRevision;
     if (_renderMetadataStaticShadowRevision != staticShadowRevision) {
-      _cachedHasStaticShadowCasters = renderScene.hasStaticShadowCasters;
+      _cachedHasStaticShadowCasters =
+          renderScene.hasStaticShadowCasters ||
+          (renderScene.foreignDraws?.castsStaticShadows?.call() ?? false);
       _staticShadowContentRevision++;
       _renderMetadataStaticShadowRevision = staticShadowRevision;
     }
@@ -3013,6 +3030,13 @@ base class Scene implements SceneGraph {
         item.lightChannelMask,
       );
     });
+    final foreign =
+        renderScene.foreignDraws?.staticSignatureIn?.call(lightSpaceMatrix) ??
+        0;
+    if (foreign != 0) {
+      casts = true;
+      signature += foreign;
+    }
     if (!casts) return DirectionalShadowCache.noCasters;
     return 0x40000000 | (signature & 0x3fffffff);
   }

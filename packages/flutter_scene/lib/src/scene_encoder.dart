@@ -32,6 +32,7 @@ import 'package:flutter_scene/src/render/custom_render_pass.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
 import 'package:flutter_scene/src/render/debug_view.dart';
 import 'package:flutter_scene/src/render/draw_recorder.dart';
+import 'package:flutter_scene/src/render/foreign_draws.dart';
 import 'package:flutter_scene/src/mesh_draw.dart';
 import 'package:flutter_scene/src/render/mesh_draw_selection.dart';
 import 'package:flutter_scene/src/render/instance_batch_records.dart';
@@ -3313,10 +3314,72 @@ base class SceneEncoder {
   @internal
   RetainedColorDraws? keptOpaque;
 
+  /// The draws the app makes itself in this color pass ([ForeignDraws]),
+  /// with the scene's item set, the render target the pass draws into first
+  /// (a later render pass of the frame has its formats) and the app's view
+  /// blocks; null for none.
+  @internal
+  ({
+    ForeignDraws draws,
+    gpu.ItemSet items,
+    gpu.RenderTarget target,
+    List<ByteData Function()> appBlocks,
+  })?
+  foreign;
+
+  // The next of the foreign opaque and translucent orders to draw.
+  int _foreignOpaque = 0;
+  int _foreignTranslucent = 0;
+
+  // Draws the kept draws of each render order below [order], and the foreign
+  // draws of each foreign order below it after the kept draws of that order.
+  // Returns whether any drew.
+  bool _drawKeptBelow(
+    double order,
+    List<double> foreignOrders,
+    int Function() cursor,
+    void Function() advance,
+    ForeignSiteKind kind,
+    ({
+      bool Function(double order, {bool through}) below,
+      void Function(double order, {bool through}) draw,
+    })?
+    kept,
+  ) {
+    var drew = false;
+    while (cursor() < foreignOrders.length && foreignOrders[cursor()] < order) {
+      final at = foreignOrders[cursor()];
+      advance();
+      if (kept != null && kept.below(at, through: true)) {
+        kept.draw(at, through: true);
+        drew = true;
+      }
+      drew |= _drawForeign(kind, at);
+    }
+    if (kept != null && kept.below(order)) {
+      kept.draw(order);
+      drew = true;
+    }
+    return drew;
+  }
+
   void _drawKeptOpaqueBelow(double order) {
     final kept = keptOpaque;
-    if (kept == null || !kept.drawsBelow(order)) return;
-    kept.drawBelow(order, _renderPass, this);
+    final drew = _drawKeptBelow(
+      order,
+      foreign?.draws.opaqueOrders ?? const [],
+      () => _foreignOpaque,
+      () => _foreignOpaque++,
+      ForeignSiteKind.opaque,
+      kept == null
+          ? null
+          : (
+              below: kept.drawsBelow,
+              draw: (at, {through = false}) =>
+                  kept.drawBelow(at, _renderPass, this, through: through),
+            ),
+    );
+    if (!drew) return;
     // The kept items bound their own pipeline and blocks on the pass, so what
     // the encoder holds of its bindings no longer stands, the pipeline
     // included: the next draw encoded binds its own again.
@@ -3331,10 +3394,100 @@ base class SceneEncoder {
 
   void _drawKeptTranslucentBelow(double order) {
     final kept = keptTranslucent;
-    if (kept == null || !kept.drawsBelow(order)) return;
-    kept.drawBelow(order, _renderPass, this);
-    _rebind(_renderPass);
+    final drew = _drawKeptBelow(
+      order,
+      foreign?.draws.translucentOrders ?? const [],
+      () => _foreignTranslucent,
+      () => _foreignTranslucent++,
+      ForeignSiteKind.translucent,
+      kept == null
+          ? null
+          : (
+              below: kept.drawsBelow,
+              draw: (at, {through = false}) =>
+                  kept.drawBelow(at, _renderPass, this, through: through),
+            ),
+    );
+    if (drew) _rebind(_renderPass);
   }
+
+  // Has the app draw at its foreign [kind] site of render order [order], and
+  // records the pass index it drew for a camera replay. Returns whether it
+  // drew.
+  bool _drawForeign(ForeignSiteKind kind, double order) {
+    final foreign = this.foreign!;
+    final index = foreign.draws.draw(
+      ForeignSite(
+        kind: kind,
+        order: order,
+        items: foreign.items,
+        pass: _renderPass,
+        target: foreign.target,
+        viewBlocks: _keptViewBlocks(foreign.appBlocks),
+        clip: _cameraTransform.storage,
+        viewTextures: _keptViewTextures,
+        sort: kind == ForeignSiteKind.translucent
+            ? _farthestFirst
+            : gpu.ItemSort.key,
+        layerMask: _layerMask,
+        primaryView: _primaryView,
+      ),
+    );
+    if (index == null) return false;
+    CameraReplay.recording?.pass(
+      index,
+      _colorReplay(_lighting, foreign.appBlocks, _keptViewInfo!),
+    );
+    return true;
+  }
+
+  gpu.ItemSort get _farthestFirst => _raster.reversed
+      ? gpu.ItemSort.farthestFirstReversedDepth
+      : gpu.ItemSort.farthestFirst;
+
+  // The view blocks a kept or foreign draw of this color pass is given, made
+  // at the first of them, and the view they were made for.
+  List<ByteData>? _keptBlocks;
+  ViewInfoState? _keptViewInfo;
+  late final Float32List _keptFragInfo = Float32List(
+    EngineLightingUniforms.fragInfoFloatCount,
+  );
+  late final Float32List _keptFog = Float32List(24);
+  late final Float32List _keptInput = Float32List(24);
+
+  // `ViewInfo`, `FragInfo`, `FogInfo` and `SceneInputInfo` of this pass, then
+  // the app's blocks [appBlocks] give.
+  List<ByteData> _keptViewBlocks(List<ByteData Function()> appBlocks) {
+    final held = _keptBlocks;
+    if (held != null) return held;
+    final lighting = _lighting;
+    _keptFragInfo.fillRange(0, _keptFragInfo.length, 0);
+    EngineLightingUniforms.packInto(
+      _keptFragInfo,
+      lighting,
+      lighting.environmentMap,
+    );
+    EngineLightingUniforms.packFog(_keptFog, lighting);
+    EngineLightingUniforms.packSceneInputInfo(_keptInput, lighting);
+    _keptViewInfo = ViewInfoState.current();
+    return _keptBlocks = [
+      viewInfoBytesOf(_cameraTransform, _cameraPosition),
+      ByteData.sublistView(_keptFragInfo),
+      ByteData.sublistView(_keptFog),
+      ByteData.sublistView(_keptInput),
+      for (final bytes in appBlocks) bytes(),
+    ];
+  }
+
+  // The frame-transient engine textures a kept or foreign draw of this color
+  // pass samples ([SceneItems.colorViewTextureNames]).
+  List<gpu.Texture> get _keptViewTextures => [
+    Material.whitePlaceholder(_lighting.shadowMap),
+    Material.whitePlaceholder(_lighting.ssaoMap),
+    Material.whitePlaceholder(_lighting.punctualParamsTexture),
+    Material.whitePlaceholder(_lighting.punctualIndexTexture),
+    Material.whitePlaceholder(_lighting.sceneDepthLinear),
+  ];
 
   void _flushTranslucentThrough(int end, {gpu.RenderPass? translucentPass}) {
     _prepareTranslucent();
@@ -3530,12 +3683,6 @@ final class RetainedColorDraws extends RetainedDraws {
   late SceneEncoder _pass;
   SceneEncoder? _recording;
 
-  final Float32List _fragInfoScratch = Float32List(
-    EngineLightingUniforms.fragInfoFloatCount,
-  );
-  final Float32List _fogScratch = Float32List(24);
-  final Float32List _inputScratch = Float32List(24);
-
   @override
   int get passes => 1 << SceneItems.colorPass;
 
@@ -3557,7 +3704,6 @@ final class RetainedColorDraws extends RetainedDraws {
       target: target,
       key: (encoder._layerMask, encoder._debugView != null, keepsTranslucent),
     );
-    _viewBlocks = null;
     _drawn.clear();
     _cursor = 0;
     for (final MapEntry(key: order, value: members) in _members.entries) {
@@ -3587,8 +3733,6 @@ final class RetainedColorDraws extends RetainedDraws {
   // of them to draw.
   final List<double> _drawn = [];
   int _cursor = 0;
-  List<ByteData>? _viewBlocks;
-  ViewInfoState? _viewInfo;
 
   @override
   int passesOf(RenderItem item) {
@@ -3723,26 +3867,27 @@ final class RetainedColorDraws extends RetainedDraws {
     }
   }
 
-  /// Whether a render order below [order] still has kept draws to draw this
-  /// frame.
-  bool drawsBelow(double order) =>
-      _cursor < _drawn.length && _drawn[_cursor] < order;
+  /// Whether a render order below [order], or [through] it, still has kept
+  /// draws to draw this frame.
+  bool drawsBelow(double order, {bool through = false}) =>
+      _cursor < _drawn.length &&
+      (_drawn[_cursor] < order || through && _drawn[_cursor] == order);
 
   /// Draws into [pass], the render pass [encoder] encodes, the kept draws of
-  /// each render order below [order] not drawn yet this frame, supplying the
-  /// view's `ViewInfo`, `FragInfo`, `FogInfo` and `SceneInputInfo`.
-  void drawBelow(double order, gpu.RenderPass pass, SceneEncoder encoder) {
-    final blocks = _viewBlocks ??= _blocksOf(encoder);
-    final viewInfo = _viewInfo!;
+  /// each render order below [order], or [through] it, not drawn yet this
+  /// frame, supplying the view's `ViewInfo`, `FragInfo`, `FogInfo` and
+  /// `SceneInputInfo`.
+  void drawBelow(
+    double order,
+    gpu.RenderPass pass,
+    SceneEncoder encoder, {
+    bool through = false,
+  }) {
+    final blocks = encoder._keptViewBlocks(_appBlocks);
+    final viewInfo = encoder._keptViewInfo!;
     final lighting = encoder._lighting;
-    final viewTextures = [
-      Material.whitePlaceholder(lighting.shadowMap),
-      Material.whitePlaceholder(lighting.ssaoMap),
-      Material.whitePlaceholder(lighting.punctualParamsTexture),
-      Material.whitePlaceholder(lighting.punctualIndexTexture),
-      Material.whitePlaceholder(lighting.sceneDepthLinear),
-    ];
-    while (drawsBelow(order)) {
+    final viewTextures = encoder._keptViewTextures;
+    while (drawsBelow(order, through: through)) {
       final index = _passOf[_drawn[_cursor++]]!;
       CameraReplay.recording
         ?..pass(index, _colorReplay(lighting, _appBlocks, viewInfo))
@@ -3755,26 +3900,6 @@ final class RetainedColorDraws extends RetainedDraws {
         viewTextures: viewTextures,
       );
     }
-  }
-
-  List<ByteData> _blocksOf(SceneEncoder encoder) {
-    final lighting = encoder._lighting;
-    _fragInfoScratch.fillRange(0, _fragInfoScratch.length, 0);
-    EngineLightingUniforms.packInto(
-      _fragInfoScratch,
-      lighting,
-      lighting.environmentMap,
-    );
-    EngineLightingUniforms.packFog(_fogScratch, lighting);
-    EngineLightingUniforms.packSceneInputInfo(_inputScratch, lighting);
-    _viewInfo = ViewInfoState.current();
-    return [
-      viewInfoBytesOf(encoder._cameraTransform, encoder._cameraPosition),
-      ByteData.sublistView(_fragInfoScratch),
-      ByteData.sublistView(_fogScratch),
-      ByteData.sublistView(_inputScratch),
-      for (final bytes in _appBlocks) bytes(),
-    ];
   }
 
   @override
@@ -3869,14 +3994,6 @@ final class RetainedTranslucentDraws extends RetainedDraws {
   late SceneEncoder _pass;
   SceneEncoder? _recording;
 
-  final Float32List _fragInfoScratch = Float32List(
-    EngineLightingUniforms.fragInfoFloatCount,
-  );
-  final Float32List _fogScratch = Float32List(24);
-  final Float32List _inputScratch = Float32List(24);
-  List<ByteData>? _viewBlocks;
-  ViewInfoState? _viewInfo;
-
   @override
   int get passes => 0;
 
@@ -3902,7 +4019,6 @@ final class RetainedTranslucentDraws extends RetainedDraws {
   }) {
     _pass = encoder;
     sync(target: target, key: encoder._layerMask);
-    _viewBlocks = null;
     _drawn.clear();
     _cursor = 0;
     _submitted = 0;
@@ -4057,26 +4173,26 @@ final class RetainedTranslucentDraws extends RetainedDraws {
     }
   }
 
-  /// Whether a render order below [order] still has kept draws to draw this
-  /// frame.
-  bool drawsBelow(double order) =>
-      _cursor < _drawn.length && _drawn[_cursor] < order;
+  /// Whether a render order below [order], or [through] it, still has kept
+  /// draws to draw this frame.
+  bool drawsBelow(double order, {bool through = false}) =>
+      _cursor < _drawn.length &&
+      (_drawn[_cursor] < order || through && _drawn[_cursor] == order);
 
   /// Draws into [pass], the render pass [encoder] encodes, the kept draws of
-  /// each render order below [order] not drawn yet this frame, each order's
-  /// back to front.
-  void drawBelow(double order, gpu.RenderPass pass, SceneEncoder encoder) {
-    final blocks = _viewBlocks ??= _blocksOf(encoder);
-    final viewInfo = _viewInfo!;
+  /// each render order below [order], or [through] it, not drawn yet this
+  /// frame, each order's back to front.
+  void drawBelow(
+    double order,
+    gpu.RenderPass pass,
+    SceneEncoder encoder, {
+    bool through = false,
+  }) {
+    final blocks = encoder._keptViewBlocks(_appBlocks);
+    final viewInfo = encoder._keptViewInfo!;
     final lighting = encoder._lighting;
-    final viewTextures = [
-      Material.whitePlaceholder(lighting.shadowMap),
-      Material.whitePlaceholder(lighting.ssaoMap),
-      Material.whitePlaceholder(lighting.punctualParamsTexture),
-      Material.whitePlaceholder(lighting.punctualIndexTexture),
-      Material.whitePlaceholder(lighting.sceneDepthLinear),
-    ];
-    while (drawsBelow(order)) {
+    final viewTextures = encoder._keptViewTextures;
+    while (drawsBelow(order, through: through)) {
       final index = _passOf[_drawn[_cursor++]]!;
       CameraReplay.recording
         ?..pass(index, _colorReplay(lighting, _appBlocks, viewInfo))
@@ -4087,31 +4203,9 @@ final class RetainedTranslucentDraws extends RetainedDraws {
         viewBlocks: blocks,
         clip: encoder._cameraTransform.storage,
         viewTextures: viewTextures,
-        sort: encoder._raster.reversed
-            ? gpu.ItemSort.farthestFirstReversedDepth
-            : gpu.ItemSort.farthestFirst,
+        sort: encoder._farthestFirst,
       );
     }
-  }
-
-  List<ByteData> _blocksOf(SceneEncoder encoder) {
-    final lighting = encoder._lighting;
-    _fragInfoScratch.fillRange(0, _fragInfoScratch.length, 0);
-    EngineLightingUniforms.packInto(
-      _fragInfoScratch,
-      lighting,
-      lighting.environmentMap,
-    );
-    EngineLightingUniforms.packFog(_fogScratch, lighting);
-    EngineLightingUniforms.packSceneInputInfo(_inputScratch, lighting);
-    _viewInfo = ViewInfoState.current();
-    return [
-      viewInfoBytesOf(encoder._cameraTransform, encoder._cameraPosition),
-      ByteData.sublistView(_fragInfoScratch),
-      ByteData.sublistView(_fogScratch),
-      ByteData.sublistView(_inputScratch),
-      for (final bytes in _appBlocks) bytes(),
-    ];
   }
 
   @override
