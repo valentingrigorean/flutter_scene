@@ -52,7 +52,9 @@ enum ShaderBundleBackend { metalIos, metalDesktop, openglEs, vulkan }
 /// The backends an app running on [os] needs, spelled the way the hook protocol
 /// spells `target_os` (build) and `Platform.operatingSystem` spells it
 /// (runtime). Null is web, or a hook invocation whose config names no target
-/// OS. A name with no arm here gets the portable set.
+/// OS; the web loads Vulkan SPIR-V, which its registered wgpu backend
+/// translates for WebGPU or WebGL2. A name with no arm here gets the portable
+/// set.
 ///
 /// The build and the runtime both resolve through here, so what an output is
 /// recorded as and what the app looks for cannot drift apart. Drift is silent,
@@ -69,7 +71,7 @@ enum ShaderBundleBackend { metalIos, metalDesktop, openglEs, vulkan }
 // there yet and this arm is inert. It is here so the key still agrees on both
 // sides if a GPU path arrives. Revisit when one does.
 Set<ShaderBundleBackend> shaderBundleBackendsForOS(String? os) => switch (os) {
-  null => const {ShaderBundleBackend.openglEs},
+  null => const {ShaderBundleBackend.vulkan},
   'ios' ||
   'tvos' ||
   'visionos' ||
@@ -113,18 +115,19 @@ const List<GeneratedTargetDirectory> generatedTargetDirectories = [
   GeneratedTargetDirectory('metal_ios', ['ios']),
   GeneratedTargetDirectory('metal_desktop', ['macos']),
   GeneratedTargetDirectory('opengl_es_vulkan', ['android', 'linux', 'windows']),
-  GeneratedTargetDirectory('opengl_es', ['web']),
+  GeneratedTargetDirectory('vulkan', ['web']),
 ];
 
 /// The directory for outputs recorded with [target], a [shaderTargetKey], or
-/// null when no platform filter selects exactly the apps that load it (Vulkan
-/// alone, which only Fuchsia takes). Those outputs stay at the top of the tree.
+/// null when no platform filter selects exactly the apps that load it. Those
+/// outputs stay at the top of the tree. Vulkan alone is the web's set; Fuchsia,
+/// which takes it too, is no `platforms:` value.
 GeneratedTargetDirectory? generatedTargetDirectory(String target) {
   final name = switch (target) {
     'metalIos' => 'metal_ios',
     'metalDesktop' => 'metal_desktop',
     'openglEs,vulkan' => 'opengl_es_vulkan',
-    'openglEs' => 'opengl_es',
+    'vulkan' => 'vulkan',
     _ => null,
   };
   if (name == null) return null;

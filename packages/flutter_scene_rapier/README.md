@@ -96,7 +96,7 @@ from.
 
 On the web, the package loads a WebAssembly build of the physics shim at
 runtime (Flutter GPU / `dart:ffi` do not exist there; flutter_scene runs
-on a WebGL2 backend). The module for each release is fetched from a
+on a GPU backend the app registers). The module for each release is fetched from a
 CORS-enabled host. To run against a locally built module during
 development, serve it and point the loader at it:
 

@@ -2,10 +2,11 @@
 /// with it: a custom [ShaderMaterial], a `Geometry` that overrides `bind` and
 /// `draw`, or a pass of its own into an offscreen target.
 ///
-/// The library is `package:flutter_gpu` on native and a WebGL2 backend with
-/// the same names on the web, so code written against it compiles for both.
-/// Import this library in place of `package:flutter_gpu/gpu.dart`, which
-/// imports `dart:ffi` and so does not compile for the web.
+/// The library is `package:flutter_gpu`'s API over the GPU backend in use,
+/// Impeller or a registered one (on the web always a registered one), so code
+/// written against it compiles for every platform. Import this library in
+/// place of `package:flutter_gpu/gpu.dart`, which imports `dart:ffi` and so
+/// does not compile for the web.
 ///
 /// ```dart
 /// import 'package:flutter_scene/gpu.dart' as gpu;

@@ -1,6 +1,8 @@
-/// The native GPU shim: flutter_gpu's API over the backend chosen at start-up,
+/// The GPU shim: flutter_gpu's API over the backend chosen at start-up,
 /// Flutter GPU (Impeller) by default or a backend the app registers (see
-/// [registerGpuBackend] and [selectGpuBackend]).
+/// [registerGpuBackend] and [selectGpuBackend]). On the web, where Impeller
+/// does not run and flutter_gpu's value types come from a copy without
+/// `dart:ffi`, the registered backend is the only one.
 ///
 /// The resource classes are final wrappers that hold either a flutter_gpu
 /// object, which each member calls directly, or an object of the registered
@@ -12,8 +14,11 @@ library;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:flutter_gpu/gpu.dart' as fg;
 import 'package:flutter_gpu/gpu.dart'
+    if (dart.library.js_interop) '../web/flutter_gpu_web.dart'
+    as fg;
+import 'package:flutter_gpu/gpu.dart'
+    if (dart.library.js_interop) '../web/flutter_gpu_web.dart'
     show
         CompletionCallback,
         CompareFunction,
@@ -37,6 +42,7 @@ import 'package:flutter_gpu/gpu.dart'
         VertexLayout,
         Viewport,
         WindingOrder;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_scene/src/gpu/shared/encoded_image_types.dart';
 import 'package:flutter_scene/src/gpu/shared/shader_library_sources.dart';
 import 'package:meta/meta.dart' show experimental;
@@ -51,6 +57,7 @@ import '../shared/kept_draw.dart';
 import '../backend/gpu_backend.dart';
 
 export 'package:flutter_gpu/gpu.dart'
+    if (dart.library.js_interop) '../web/flutter_gpu_web.dart'
     show
         BlendFactor,
         BlendOperation,
