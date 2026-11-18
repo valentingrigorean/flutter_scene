@@ -36,6 +36,10 @@ final class Shader {
   final fg.Shader? _impeller;
   final GpuBackendShader? _backend;
 
+  /// The backend's shader, which a backend reaches to hand the shader to
+  /// native code of its own; null on Impeller.
+  GpuBackendShader? get backend => _backend;
+
   // One slot per name, so a draw that looks a slot up again allocates nothing.
   final Map<String, UniformSlot> _slots = {};
 
