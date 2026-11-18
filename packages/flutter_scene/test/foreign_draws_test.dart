@@ -2,8 +2,11 @@
 // calls them in the depth prepass, at each cached static shadow tile it
 // renders, and among its color draws at the app's render orders, after
 // every draw of the scene of that order or a lower one, on the plain path
-// and on the path that splits the color pass.
+// and on the path that splits the color pass. The view blocks of the
+// prepass and of a static tile refresh are packed under the state of the
+// pass's own kept draw.
 
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter_scene/scene.dart';
@@ -75,10 +78,10 @@ Node _slab(String name, List<String> log, double order, {double alpha = 1}) =>
       localTransform: Matrix4.translationValues(0, 0, -50 - order),
     )..renderOrder = order;
 
-void _frame(Scene scene) {
+void _frame(Scene scene, {Camera? camera}) {
   final recorder = ui.PictureRecorder();
   scene.render(
-    _camera,
+    camera ?? _camera,
     ui.Canvas(recorder),
     viewport: const ui.Rect.fromLTWH(0, 0, 32, 32),
     pixelRatio: 1.0,
@@ -230,5 +233,66 @@ void main() {
     expect(log.where((site) => site.startsWith('cascade')).toList(), [
       for (var c = 0; c < tiles.length; c++) 'cascade $c',
     ]);
+  });
+
+  test('the prepass of a view that keeps no draw and a static tile refresh '
+      'with no static caster of the scene\'s hand the app the ViewInfo of '
+      'their own kept draw, not the last color draw\'s', () async {
+    if (!gpuAvailable()) return;
+    await Scene.initializeStaticResources();
+    final camera = PerspectiveCamera(
+      position: Vector3(3, 4, 10),
+      target: Vector3(3, 4, 0),
+      up: Vector3(0, 1, 0),
+      fovNear: 0.1,
+      fovFar: 1000,
+    );
+    final views = <ForeignSiteKind, Float32List>{};
+    var signature = 1;
+    final wall = _slab('wall', [], 0);
+    wall.castsShadows = false;
+    final scene = Scene()
+      ..maxGpuFramesInFlight = 0
+      ..directionalLight = DirectionalLight(castsShadow: true)
+      ..add(wall);
+    // The prepass writes normals for reflections, so it keeps no draw.
+    scene.screenSpaceReflections.enabled = true;
+    scene.foreignDraws = ForeignDraws(
+      draw: (site) {
+        views[site.kind] = Float32List.fromList(
+          Float32List.sublistView(site.viewBlocks[0]),
+        );
+        return null;
+      },
+      castsStaticShadows: () => true,
+      staticSignatureIn: (_) => signature,
+    );
+    addTearDown(scene.dispose);
+
+    // The second frame's sites follow the first frame's color draws.
+    _frame(scene, camera: camera);
+    signature = 2;
+    scene.markForeignShadowCastersChanged();
+    views.clear();
+    _frame(scene, camera: camera);
+
+    void expectView(ForeignSiteKind kind, DepthRaster raster) {
+      final view = views[kind];
+      expect(view, isNotNull, reason: '$kind');
+      expect(view!.sublist(16, 19), [3, 4, 10], reason: '$kind position');
+      expect(view.sublist(20, 24), [0, 0, 0, 0], reason: '$kind forward');
+      expect(view.sublist(32, 35), [
+        raster.stepScale,
+        raster.stepClip,
+        0,
+      ], reason: '$kind depth unit');
+    }
+
+    // The view rasterizes reversed float depth, as the frame's log states.
+    expectView(
+      ForeignSiteKind.prepass,
+      const DepthRaster(reversed: true, floatDepth: true),
+    );
+    expectView(ForeignSiteKind.staticTile, DepthRaster.standard);
   });
 }

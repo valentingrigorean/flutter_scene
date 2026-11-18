@@ -2,6 +2,9 @@
 /// keeps as render items, drawn by each cascade without encoding them.
 library;
 
+import 'dart:typed_data';
+
+import 'package:meta/meta.dart';
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/draw_revision.dart';
@@ -44,7 +47,6 @@ final class RetainedShadowCasters extends RetainedDraws {
   }
 
   static final Matrix4 _noLight = Matrix4.identity();
-  static final Vector3 _noViewDirection = Vector3.zero();
 
   ShadowCasterFaces _faces = ShadowCasterFaces.front;
   int _channels = 0xFF;
@@ -143,16 +145,36 @@ final class RetainedShadowCasters extends RetainedDraws {
     Matrix4 lightSpaceMatrix,
     Vector3 cameraPosition,
   ) {
-    setCurrentViewInstanceBand(cameraPosition, _noViewDirection);
-    currentViewForward = null;
-    clearCurrentDrawDepthOffset();
     items.draw(
       pass,
       SceneItems.casterPass + cascade,
-      viewBlocks: SceneItems.withAppBlocks(renderScene, [
-        viewInfoBytesOf(lightSpaceMatrix, cameraPosition),
-      ]),
+      viewBlocks: casterViewBlocks(
+        renderScene,
+        lightSpaceMatrix,
+        cameraPosition,
+      ),
       clip: lightSpaceMatrix.storage,
     );
   }
+}
+
+final Vector3 _noViewDirection = Vector3.zero();
+
+/// The view blocks of a shadow caster draw of [renderScene] from
+/// [lightSpaceMatrix] and [cameraPosition], packed under what a caster
+/// draw states first: the band seen from [cameraPosition] with no view
+/// direction, no view forward and no depth offset. A kept caster and the
+/// app's draw at a shadow site take the same.
+@internal
+List<ByteData> casterViewBlocks(
+  RenderScene renderScene,
+  Matrix4 lightSpaceMatrix,
+  Vector3 cameraPosition,
+) {
+  setCurrentViewInstanceBand(cameraPosition, _noViewDirection);
+  currentViewForward = null;
+  clearCurrentDrawDepthOffset();
+  return SceneItems.withAppBlocks(renderScene, [
+    viewInfoBytesOf(lightSpaceMatrix, cameraPosition),
+  ]);
 }

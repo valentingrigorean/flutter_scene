@@ -106,7 +106,8 @@ final class ForeignSite {
 /// or a lower one, kept or encoded, and before any of a higher order. [draw]
 /// returns the index it drew, which the scene records for a camera replay
 /// as it records its own kept draw at the site, or null where it drew
-/// nothing.
+/// nothing. Spot and point light shadow maps have no site, so the app's
+/// draws cast no shadow from those lights.
 ///
 /// The scene knows the app's static shadow casters through
 /// [castsStaticShadows] and [staticSignatureIn]; the app calls

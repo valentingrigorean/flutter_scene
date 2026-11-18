@@ -1,0 +1,133 @@
+// An app's draw into the scene's item set at each site of a frame
+// ([ForeignDraws]): the scene's draws after it bind again and draw as in a
+// frame with no foreign draw.
+//
+// Its own file: a frame of foreign_draws_test.dart's scenes, run on the GPU
+// by a later image read in the same process, crashes the SwiftShader
+// tester.
+
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:flutter_scene/scene.dart';
+import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_test/flutter_test.dart';
+import 'package:vector_math/vector_math.dart';
+
+import 'support/gpu_available.dart';
+
+final _camera = PerspectiveCamera(
+  position: Vector3.zero(),
+  target: Vector3(0, 0, -1),
+  up: Vector3(0, 1, 0),
+  fovNear: 0.1,
+  fovFar: 1000,
+);
+
+// Logs its name each time a pass encodes a draw of it. It takes part in
+// the debug views the test shader bundle compiles in, so the color pass
+// encodes it every frame.
+class _Seen extends UnlitMaterial {
+  _Seen(this.label, this.log, Vector4 color) {
+    baseColorFactor = color;
+    if (color.w < 1) alphaMode = AlphaMode.blend;
+  }
+
+  final String label;
+  final List<String> log;
+
+  @override
+  void bind(
+    gpu.RenderPass pass,
+    TransientWriter transientsBuffer,
+    Lighting lighting,
+  ) {
+    log.add(label);
+    super.bind(pass, transientsBuffer, lighting);
+  }
+}
+
+Node _seen(String name, List<String> log, double order, Vector4 color) => Node(
+  mesh: Mesh(CuboidGeometry(Vector3(100, 100, 0.01)), _Seen(name, log, color)),
+  localTransform: Matrix4.translationValues(0, 0, -50 - order),
+)..renderOrder = order;
+
+// The colour of the centre pixel of a frame of [scene].
+Future<List<int>> _centre(Scene scene) async {
+  final recorder = ui.PictureRecorder();
+  scene.render(
+    _camera,
+    ui.Canvas(recorder),
+    viewport: const ui.Rect.fromLTWH(0, 0, 200, 200),
+    pixelRatio: 1.0,
+  );
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(200, 200);
+  picture.dispose();
+  final bytes = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+  image.dispose();
+  final at = (100 * 200 + 100) * 4;
+  return Uint8List.sublistView(bytes!).sublist(at, at + 4);
+}
+
+String _siteName(ForeignSite site) => switch (site.kind) {
+  ForeignSiteKind.opaque ||
+  ForeignSiteKind.translucent => '${site.kind.name} ${site.order}',
+  ForeignSiteKind.cascade ||
+  ForeignSiteKind.staticTile => '${site.kind.name} ${site.cascade}',
+  ForeignSiteKind.prepass => site.kind.name,
+};
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('a site that draws its index completes the frame, and the scene\'s '
+      'next draws after it draw as with no foreign draw', () async {
+    if (!gpuAvailable()) return;
+    await Scene.initializeStaticResources();
+    final log = <String>[];
+    Scene make() {
+      final scene = Scene()
+        ..maxGpuFramesInFlight = 0
+        ..directionalLight = DirectionalLight(castsShadow: true)
+        ..add(_seen('wall', log, 1, Vector4(1, 0, 0, 1)))
+        ..add(_seen('glass', log, 1, Vector4(0, 0, 1, 0.5)));
+      scene.ambientOcclusion.enabled = true;
+      addTearDown(scene.dispose);
+      return scene;
+    }
+
+    final plain = await _centre(make());
+
+    final scene = make();
+    scene.foreignDraws = ForeignDraws(
+      draw: (site) {
+        log.add(_siteName(site));
+        const index = ForeignDraws.firstPass;
+        site.items.draw(
+          site.pass,
+          index,
+          viewBlocks: site.viewBlocks,
+          clip: site.clip,
+          viewTextures: site.viewTextures,
+          sort: site.sort,
+        );
+        return index;
+      },
+      opaqueOrders: [0],
+      translucentOrders: [0],
+    );
+    for (var frame = 0; frame < 3; frame++) {
+      log.clear();
+      final got = await _centre(scene);
+      expect(got, plain, reason: "frame $frame");
+      expect(log, contains('prepass'), reason: 'frame $frame');
+      expect(log.sublist(log.indexOf('opaque 0.0')), [
+        'opaque 0.0',
+        'wall',
+        'translucent 0.0',
+        'glass',
+      ], reason: 'frame $frame');
+    }
+  });
+}
