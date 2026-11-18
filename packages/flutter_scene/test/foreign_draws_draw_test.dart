@@ -43,6 +43,7 @@ class _Seen extends UnlitMaterial {
     Lighting lighting,
   ) {
     log.add(label);
+    lightings.add(lighting);
     super.bind(pass, transientsBuffer, lighting);
   }
 }
@@ -51,6 +52,9 @@ Node _seen(String name, List<String> log, double order, Vector4 color) => Node(
   mesh: Mesh(CuboidGeometry(Vector3(100, 100, 0.01)), _Seen(name, log, color)),
   localTransform: Matrix4.translationValues(0, 0, -50 - order),
 )..renderOrder = order;
+
+// The lighting each draw of a [_Seen] bound with.
+final lightings = <Lighting>{};
 
 // The colour of the centre pixel of a frame of [scene].
 Future<List<int>> _centre(Scene scene) async {
@@ -100,9 +104,11 @@ void main() {
     final plain = await _centre(make());
 
     final scene = make();
+    final sitesLighting = <String, Lighting?>{};
     scene.foreignDraws = ForeignDraws(
       draw: (site) {
         log.add(_siteName(site));
+        sitesLighting[_siteName(site)] = site.lighting;
         const index = ForeignDraws.firstPass;
         site.items.draw(
           site.pass,
@@ -119,9 +125,24 @@ void main() {
     );
     for (var frame = 0; frame < 3; frame++) {
       log.clear();
+      lightings.clear();
+      sitesLighting.clear();
       final got = await _centre(scene);
       expect(got, plain, reason: "frame $frame");
       expect(log, contains('prepass'), reason: 'frame $frame');
+      // The colour sites hand the app the lighting the scene's materials
+      // bind with; the depth and shadow sites hand it none.
+      expect(lightings, hasLength(1), reason: 'frame $frame');
+      for (final MapEntry(key: site, value: lighting)
+          in sitesLighting.entries) {
+        final colour =
+            site.startsWith('opaque') || site.startsWith('translucent');
+        expect(
+          lighting,
+          colour ? same(lightings.single) : isNull,
+          reason: 'frame $frame, $site',
+        );
+      }
       expect(log.sublist(log.indexOf('opaque 0.0')), [
         'opaque 0.0',
         'wall',

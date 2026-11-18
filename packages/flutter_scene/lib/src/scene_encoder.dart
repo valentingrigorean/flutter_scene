@@ -3431,6 +3431,7 @@ base class SceneEncoder {
             : gpu.ItemSort.key,
         layerMask: _layerMask,
         primaryView: _primaryView,
+        lighting: _lighting,
       ),
     );
     if (index == null) return false;

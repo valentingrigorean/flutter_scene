@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/light.dart' show Lighting;
 
 /// Where in a frame a [ForeignSite] stands.
 enum ForeignSiteKind {
@@ -48,6 +49,7 @@ final class ForeignSite {
     this.order = 0,
     this.layerMask = 0xFFFFFFFF,
     this.primaryView = true,
+    this.lighting,
   });
 
   /// Where in the frame the site stands.
@@ -92,6 +94,12 @@ final class ForeignSite {
   /// Whether the view is the frame's primary view, the one a camera replay
   /// records.
   final bool primaryView;
+
+  /// The lighting the scene's own materials bind with at an
+  /// [ForeignSiteKind.opaque] or [ForeignSiteKind.translucent] site, which a
+  /// material drawn there binds with and picks its fragment shader by; null
+  /// at a depth or shadow site.
+  final Lighting? lighting;
 }
 
 /// The draws an app makes itself into pass indices [firstPass] to
