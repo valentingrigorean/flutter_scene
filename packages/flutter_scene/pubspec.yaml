@@ -116,5 +116,5 @@ flutter:
       platforms: [macos]
     - path: flutter_scene_generated/opengl_es_vulkan/
       platforms: [android, linux, windows]
-    - path: flutter_scene_generated/opengl_es/
+    - path: flutter_scene_generated/vulkan/
       platforms: [web]

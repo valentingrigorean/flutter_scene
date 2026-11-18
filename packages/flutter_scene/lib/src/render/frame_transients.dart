@@ -3,10 +3,6 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
-// Whether GPU commands execute while passes are encoded (the WebGL2 backend)
-// rather than after submission. Decides the default transients strategy.
-import 'package:flutter_scene/src/render/transients_execution_native.dart'
-    if (dart.library.js_interop) 'package:flutter_scene/src/render/transients_execution_web.dart';
 
 /// Tracks GPU completion of command buffers submitted by the renderer.
 ///
@@ -271,10 +267,8 @@ final Expando<ByteData> _scratchBytes = Expando('scratch bytes');
 ByteData scratchBytesOf(TypedData scratch) =>
     _scratchBytes[scratch] ??= ByteData.sublistView(scratch);
 
-/// A [TransientWriter] with the renderer's per-frame lifecycle. Implemented
-/// by [TransientArena] (deferred-execution backends) and
-/// [ImmediatePoolTransients] (the immediate-execution WebGL2 backend); the
-/// engine's shared instances pick per platform via [createFrameTransients].
+/// A [TransientWriter] with the renderer's per-frame lifecycle, which
+/// [TransientArena] implements.
 abstract interface class FrameTransients implements TransientWriter {
   /// Recycles completed buffers and resets frame stats. Called once per
   /// frame from the render setup.
@@ -285,173 +279,11 @@ abstract interface class FrameTransients implements TransientWriter {
   /// between frames.
   void forgetDrawKeys(Iterable<Object> keys);
 
-  /// [emplace] for [data] kept in its own element type. The web backends
-  /// upload by element type, so this skips the byte-wise copy a `ByteData`
-  /// view of a `Float32List` costs under dart2wasm.
+  /// [emplace] for [data] kept in its own element type, which skips the
+  /// byte-wise copy a `ByteData` view of a `Float32List` costs under
+  /// dart2wasm.
   gpu.BufferView emplaceTyped(TypedData data);
 }
-
-/// Per-emplacement pooled transients for the immediate-execution WebGL2
-/// backend.
-///
-/// GL commands run while passes are encoded, so emplaced bytes must be
-/// device-resident before the caller binds the returned view, and a buffer
-/// written while earlier draws reference it forces the browser to ghost
-/// (copy) it, which dominated per-draw cost before per-emplacement buffers
-/// were introduced. Every emplacement therefore gets its own small device
-/// buffer (sized to the next power-of-two class), written exactly once via
-/// `overwrite` before the view is returned and never touched again while in
-/// flight. Buffers recycle through a completion-gated pool per size class
-/// and are released after [kTransientIdleFrames] unused frames, the same
-/// policies as [TransientArena].
-///
-/// With [vertexData], buffers are geometry buffers, which the web backends
-/// create as typed vertex buffers whose uploads skip the staging mirror.
-/// The pool is then only for vertex-rate data, such as instance transforms.
-class ImmediatePoolTransients implements FrameTransients {
-  ImmediatePoolTransients(this._tracker, {this.vertexData = false}) {
-    _tracker.addBeforeSubmitListener(_onBeforeSubmit);
-  }
-
-  final bool vertexData;
-
-  // Every emplacement has a buffer of its own, so no draw holds a slot.
-  @override
-  void forgetDrawKeys(Iterable<Object> keys) {}
-
-  /// The smallest pooled buffer size; tiny uniform blocks share this class.
-  static const int kMinBufferLengthInBytes = 512;
-
-  final GpuSubmissionTracker _tracker;
-
-  /// Buffers handed out since the last submission; stamped by it.
-  final List<_TransientBlock> _used = [];
-
-  /// Stamped buffers, reusable once the watermark passes their stamp.
-  final List<_TransientBlock> _pooled = [];
-
-  int _frame = 0;
-
-  /// Total live buffers. For tests.
-  @visibleForTesting
-  int get bufferCount => _used.length + _pooled.length;
-
-  /// Device buffers every [ImmediatePoolTransients] has created. For tests
-  /// that check steady-state rendering allocates nothing.
-  @visibleForTesting
-  static int buffersCreated = 0;
-
-  static int _sizeClassFor(int length) {
-    var size = kMinBufferLengthInBytes;
-    while (size < length) {
-      size <<= 1;
-    }
-    return size;
-  }
-
-  @override
-  gpu.BufferView emplace(ByteData bytes) => emplaceTyped(bytes);
-
-  @override
-  gpu.BufferView emplaceTyped(TypedData data) {
-    _forgetLost();
-    final length = data.lengthInBytes;
-    final sizeClass = _sizeClassFor(length);
-    final completed = _tracker.completedThrough;
-
-    // Most recently used first, so surplus buffers age out.
-    _TransientBlock? block;
-    for (var i = _pooled.length - 1; i >= 0; i--) {
-      final candidate = _pooled[i];
-      if (candidate.length == sizeClass && candidate.stamp <= completed) {
-        block = candidate;
-        _pooled.removeAt(i);
-        break;
-      }
-    }
-    block ??= _TransientBlock(
-      _createBuffer(sizeClass),
-      ByteData(0), // No CPU staging: writes go straight to the device.
-      sizeClass,
-      false,
-    );
-    block.lastUsed = _frame;
-    _used.add(block);
-
-    // Device-resident before the view is returned: the immediate backend
-    // consumes it as soon as the caller binds and draws.
-    final uploaded = vertexData
-        ? gpu.writeGeometryData(block.device, data, destinationOffsetInBytes: 0)
-        : block.device.overwrite(
-            data is ByteData ? data : ByteData.sublistView(data),
-          );
-    if (!uploaded) {
-      debugPrint(
-        'ImmediatePoolTransients: failed to upload $length bytes to a '
-        '$sizeClass-byte transient buffer.',
-      );
-    }
-    return gpu.BufferView(
-      block.device,
-      offsetInBytes: 0,
-      lengthInBytes: length,
-    );
-  }
-
-  gpu.DeviceBuffer _createBuffer(int length) {
-    buffersCreated++;
-    final buffer = vertexData
-        ? gpu.createGeometryBuffers(length, 0).vertex
-        : gpu.gpuContext.createDeviceBuffer(
-            gpu.StorageMode.hostVisible,
-            length,
-          );
-    gpu.markTransientBuffer(buffer);
-    return buffer;
-  }
-
-  void _onBeforeSubmit(int id) {
-    _forgetLost();
-    for (final block in _used) {
-      block.stamp = id;
-      _pooled.add(block);
-    }
-    _used.clear();
-  }
-
-  int _generation = 0;
-
-  // Buffers made on a device that was lost stay on it, so the pool drops them
-  // once the context reopened, before it hands out or stamps any.
-  void _forgetLost() {
-    if (_generation == gpu.gpuContextGeneration) return;
-    _generation = gpu.gpuContextGeneration;
-    _used.clear();
-    _pooled.clear();
-  }
-
-  @override
-  void beginFrame() {
-    _forgetLost();
-    _onBeforeSubmit(_tracker.latestSubmission);
-    _frame++;
-    final completed = _tracker.completedThrough;
-    _pooled.removeWhere((block) => block.retireIfIdle(completed, _frame));
-  }
-}
-
-/// Creates the platform-default [FrameTransients]: a staged, block-based
-/// [TransientArena] where GPU work executes after submission, and a
-/// per-emplacement [ImmediatePoolTransients] where GL commands execute at
-/// encode time and a bound buffer can never be written again. [vertexData]
-/// marks a pool that only ever holds vertex-rate data.
-FrameTransients createFrameTransients(
-  GpuSubmissionTracker tracker, {
-  int? alignment,
-  bool vertexData = false,
-}) => immediateGpuExecution
-    ? ImmediatePoolTransients(tracker, vertexData: vertexData)
-    : TransientArena(tracker, alignment: alignment);
 
 /// A completion-aware bump allocator for per-frame transient GPU data.
 ///
@@ -1008,14 +840,11 @@ class _Slot {
 
 /// The renderer's per-frame uniform transients (alignment resolved from the
 /// GPU context's minimum uniform alignment).
-final FrameTransients uniformTransients = createFrameTransients(
-  rendererSubmissions,
-);
+final FrameTransients uniformTransients = TransientArena(rendererSubmissions);
 
 /// The renderer's per-frame instance-rate vertex transients. Vertex fetch
 /// needs only element alignment; 16 bytes covers a vec4 column.
-final FrameTransients instanceTransients = createFrameTransients(
+final FrameTransients instanceTransients = TransientArena(
   rendererSubmissions,
   alignment: 16,
-  vertexData: true,
 );

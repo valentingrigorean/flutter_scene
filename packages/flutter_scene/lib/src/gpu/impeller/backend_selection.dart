@@ -1,7 +1,8 @@
 part of '_gpu.dart';
 
 /// The backend a process starts on: Impeller, or the registered wgpu backend
-/// when built with `--dart-define=FLUTTER_SCENE_GPU_BACKEND=wgpu`. A test file
+/// when built with `--dart-define=FLUTTER_SCENE_GPU_BACKEND=wgpu` and always
+/// on the web, where Impeller does not run. A test file
 /// runs on either backend unchanged through this define, for example
 /// `flutter test --dart-define=FLUTTER_SCENE_GPU_BACKEND=wgpu <file>`, as long
 /// as the test process registers the backend before its first GPU object.
@@ -9,7 +10,7 @@ const String gpuBackendDefine = String.fromEnvironment(
   'FLUTTER_SCENE_GPU_BACKEND',
 );
 
-GpuBackendKind _kind = gpuBackendDefine == 'wgpu'
+GpuBackendKind _kind = kIsWeb || gpuBackendDefine == 'wgpu'
     ? GpuBackendKind.wgpu
     : GpuBackendKind.impeller;
 bool _backendInUse = false;
@@ -86,7 +87,8 @@ GpuBackend _backendFor(GpuBackendKind kind) {
   throw StateError(
     'No ${kind.name} GPU backend is registered. The package that implements '
     'it registers it with registerGpuBackend before the first GPU object is '
-    'created; without one the GPU backend is Impeller.',
+    'created; without one the GPU backend is Impeller'
+    '${kIsWeb ? ', which does not run on the web' : ''}.',
   );
 }
 

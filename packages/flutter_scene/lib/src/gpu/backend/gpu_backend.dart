@@ -1,6 +1,6 @@
-/// The contract a native GPU backend other than Impeller implements for the
-/// GPU shim, which an app registers with `registerGpuBackend` before the first
-/// GPU object exists.
+/// The contract a GPU backend other than Impeller implements for the GPU
+/// shim, which an app registers with `registerGpuBackend` before the first
+/// GPU object exists; on the web it is the only backend.
 ///
 /// The shim's public classes are final facades that hold either a flutter_gpu
 /// object or one of these backend objects. On Impeller each member is a direct
@@ -14,6 +14,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter_gpu/gpu.dart'
+    if (dart.library.js_interop) '../web/flutter_gpu_web.dart'
     show
         CompareFunction,
         ColorBlendEquation,
