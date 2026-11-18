@@ -38,7 +38,7 @@
 - **Games.** Physics (Rapier and box3d backends), positional audio (SoLoud and FMOD), multiplayer over dashwire, skeletal and morph animation with blending, camera controllers, a gameplay kit, raycast picking, and interactive Flutter widgets on 3D surfaces.
 - **Tooling.** A desktop scene editor with an MCP server for agent-driven editing, agent skills for coding assistants, a build-time asset pipeline, and hot reload for models, shaders, textures, and environments.
 - **Formats.** glTF import, the `.fscene` scene document, `.fmat` custom materials in GLSL, KTX2 compressed textures, and HDR/EXR environments.
-- **Platforms.** iOS, Android, macOS, Windows, Linux, and the web, where a built-in WebGL2 backend stands in for Impeller.
+- **Platforms.** iOS, Android, macOS, Windows, Linux, and the web, where a GPU backend the app registers stands in for Impeller.
 
 ## Built with Scene
 
@@ -297,7 +297,7 @@ public symbol.
 Flutter Scene is pre-1.0 and evolving quickly. Minor releases can carry breaking changes, and every change is documented in the [CHANGELOG](https://github.com/bdero/flutter_scene/blob/master/packages/flutter_scene/CHANGELOG.md).
 
 - Flutter 3.47 (stable) or newer. Rendering is built on [Flutter GPU](https://github.com/flutter/flutter/blob/main/docs/engine/impeller/Flutter-GPU.md), which every platform except the web needs turned on once (see [Enable Flutter GPU](#enable-flutter-gpu)).
-- On native platforms rendering runs on [Impeller](https://docs.flutter.dev/perf/impeller#availability), Flutter's default renderer on every native platform as of 3.47. The web has no Impeller, so the package ships its own WebGL2 backend and runs there without flags.
+- On native platforms rendering runs on [Impeller](https://docs.flutter.dev/perf/impeller#availability), Flutter's default renderer on every native platform as of 3.47. The web has no Impeller, so it draws through a GPU backend the app registers (`package:flutter_scene/gpu_backend.dart`).
 
 ## Features
 
@@ -383,7 +383,7 @@ Flutter Scene is pre-1.0 and evolving quickly. Minor releases can carry breaking
 
 ### **Q:** What platforms does this package support?
 
-On native platforms `flutter_scene` runs anywhere [Impeller](https://docs.flutter.dev/perf/impeller#availability) does. On the web it runs on a built-in WebGL2 backend.
+On native platforms `flutter_scene` runs anywhere [Impeller](https://docs.flutter.dev/perf/impeller#availability) does. On the web it runs on a GPU backend the app registers.
 
 Every native platform needs Flutter GPU turned on. Impeller, which it builds on, is already the default everywhere. [Enable Flutter GPU](#enable-flutter-gpu) has the file and the key for each.
 
@@ -401,7 +401,7 @@ On the web, no flags are needed; it works under both the CanvasKit and Skwasm re
 
 ### **Q:** How does web support work?
 
-Impeller and Flutter GPU aren't available on the web, so `flutter_scene` ships a built-in WebGL2 backend (a drop-in for `flutter_gpu`) and renders through it there. It works under both the CanvasKit and Skwasm web renderers, with no extra flags or configuration.
+Impeller and Flutter GPU aren't available on the web, so `flutter_scene` renders there through a GPU backend the app chooses at start-up with `useGpuBackend` (`package:flutter_scene/gpu_backend.dart`), the same contract a native backend other than Impeller implements. Without one, the first GPU call throws an `UnsupportedError`.
 
 ## Sponsors
 
@@ -424,7 +424,7 @@ This repository is a [pub workspace](https://dart.dev/tools/pub/workspaces) cont
 
 | Path | Description |
 | --- | --- |
-| [`packages/flutter_scene`](https://github.com/bdero/flutter_scene/tree/master/packages/flutter_scene) | The 3D engine, including the glTF importer, the `.fscene` format, and the web (WebGL2) backend. Published to pub.dev as [`flutter_scene`](https://pub.dev/packages/flutter_scene). |
+| [`packages/flutter_scene`](https://github.com/bdero/flutter_scene/tree/master/packages/flutter_scene) | The 3D engine, including the glTF importer and the `.fscene` format. Published to pub.dev as [`flutter_scene`](https://pub.dev/packages/flutter_scene). |
 | [`packages/flutter_scene_rapier`](https://github.com/bdero/flutter_scene/tree/master/packages/flutter_scene_rapier) | Rapier physics backend, shipping prebuilt native binaries and a wasm module. Published to pub.dev as [`flutter_scene_rapier`](https://pub.dev/packages/flutter_scene_rapier). |
 | [`packages/flutter_scene_box3d`](https://github.com/bdero/flutter_scene/tree/master/packages/flutter_scene_box3d) | box3d physics backend. Published to pub.dev as [`flutter_scene_box3d`](https://pub.dev/packages/flutter_scene_box3d). |
 | [`packages/flutter_scene_soloud`](https://github.com/bdero/flutter_scene/tree/master/packages/flutter_scene_soloud) | SoLoud audio backend. Published to pub.dev as [`flutter_scene_soloud`](https://pub.dev/packages/flutter_scene_soloud). |

@@ -1309,7 +1309,7 @@ final geometry = UnskinnedGeometry()
 `uploadVertexStreams` sends the bytes as given, so the engine keeps no CPU
 copy for raycasting and scans no bounds; set them, or the mesh is never
 culled. Integer formats (`VertexFormat.uint32`, read as `in uint`) work on
-Metal, Vulkan, and the web backend but not yet on Impeller's OpenGL ES
+Metal, Vulkan, and a registered backend but not yet on Impeller's OpenGL ES
 backend, so a mesh that must draw there packs small integers into a float
 stream instead.
 

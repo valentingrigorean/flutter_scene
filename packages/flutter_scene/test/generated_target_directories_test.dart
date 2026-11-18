@@ -69,13 +69,6 @@ void main() {
           ...directory.platforms,
       ];
       expect(claimed.toSet().length, claimed.length);
-      // Fuchsia takes Vulkan alone, which no platform filter can name.
-      expect(
-        generatedTargetDirectory(
-          shaderTargetKey(shaderBundleBackendsForOS('fuchsia')),
-        ),
-        isNull,
-      );
     },
   );
 
@@ -111,8 +104,9 @@ void main() {
     final gles = bundleUri(tree, 'openglEs,vulkan');
     expect(relative(metal), startsWith('metal_desktop/'));
     expect(relative(gles), startsWith('opengl_es_vulkan/'));
+    expect(relative(bundleUri(tree, 'vulkan')), startsWith('vulkan/'));
     // Target-agnostic outputs and unfilterable targets stay at the top.
-    expect(relative(bundleUri(tree, 'vulkan')), isNot(contains('/')));
+    expect(relative(bundleUri(tree, 'metalIos,vulkan')), isNot(contains('/')));
     expect(
       relative(
         tree.fileUri(

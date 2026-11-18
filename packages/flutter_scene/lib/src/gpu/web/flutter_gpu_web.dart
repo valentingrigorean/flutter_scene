@@ -1131,8 +1131,14 @@ abstract interface class HostBuffer {
 
 abstract class Texture {
   dynamic get isValid;
-  static int fullMipCount(int width, int height) =>
-      throw UnsupportedError(_noGpu);
+  static int fullMipCount(int width, int height) {
+    if (width < 1 || height < 1) {
+      return 1;
+    }
+    final int smallest = width < height ? width : height;
+    final int count = smallest.bitLength - 1;
+    return count > 0 ? count : 1;
+  }
   static Texture fromImage(GpuContext gpuContext, ui.Image image) =>
       throw UnsupportedError(_noGpu);
   StorageMode get storageMode;
