@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:vector_math/vector_math.dart';
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/light.dart' show Lighting;
 
 /// Where in a frame a [ForeignSite] stands.
 enum ForeignSiteKind {
@@ -27,7 +28,9 @@ enum ForeignSiteKind {
   opaque,
 
   /// The color pass's translucent phase, at one of
-  /// [ForeignDraws.translucentOrders].
+  /// [ForeignDraws.translucentOrders], where the app's draws take their place
+  /// by depth among the scene's of that order ([ForeignSite.merge],
+  /// [ForeignSite.fartherThan]).
   translucent,
 }
 
@@ -48,6 +51,11 @@ final class ForeignSite {
     this.order = 0,
     this.layerMask = 0xFFFFFFFF,
     this.primaryView = true,
+    this.reversedDepth = false,
+    this.lighting,
+    this.merge,
+    this.fartherThan,
+    this.notFartherThan,
   });
 
   /// Where in the frame the site stands.
@@ -92,6 +100,49 @@ final class ForeignSite {
   /// Whether the view is the frame's primary view, the one a camera replay
   /// records.
   final bool primaryView;
+
+  /// Whether the depth [pass] tests and writes is reversed, 1 at the near
+  /// plane and 0 at the far plane ([DepthRaster.reversed]), so a draw here
+  /// compares greater-or-equal; false at a shadow site.
+  final bool reversedDepth;
+
+  /// The lighting the scene's own materials bind with at an
+  /// [ForeignSiteKind.opaque] or [ForeignSiteKind.translucent] site, which a
+  /// material drawn there binds with and picks its fragment shader by; null
+  /// at a depth or shadow site. The app states its draw on such a material
+  /// with `Material.drawsAs` before it binds it, as the scene does for its
+  /// own draws.
+  final Lighting? lighting;
+
+  /// At a [ForeignSiteKind.translucent] site, the pass index that holds the
+  /// scene's kept draws of the site's render order, which the app draws
+  /// with its own in one order by depth (the `merge` of [gpu.ItemSet.draw]);
+  /// null where the scene keeps none of that order, or draws them itself.
+  ///
+  /// The scene draws that pass index itself only where [ForeignDraws.draw]
+  /// returns null, so an app that draws at a site with a [merge] passes it
+  /// on.
+  final int? merge;
+
+  /// At a [ForeignSiteKind.translucent] site, the key [sort] gives the draw
+  /// of the scene's that follows this call: the app draws its items farther
+  /// than it (the `fartherThan` of [gpu.ItemSet.draw]), and the scene's draw
+  /// then blends over them. Null where no draw of the site's render order
+  /// follows, and the app draws through its nearest item.
+  ///
+  /// The scene calls the site before each of its draws of the site's render
+  /// order that it encodes itself, farthest first, and once after the last,
+  /// so each call's range starts where the last one ended
+  /// ([notFartherThan]); a draw no nearer than the one before it takes no
+  /// call. A frame in which the app drew such a range is not one a camera
+  /// replays (`Scene.cameraFrame`).
+  final double? fartherThan;
+
+  /// At a [ForeignSiteKind.translucent] site, the [fartherThan] of the last
+  /// call of this site in the frame, past which the app drew then (the
+  /// `notFartherThan` of [gpu.ItemSet.draw]); null at the first call, where
+  /// the app draws from its farthest item.
+  final double? notFartherThan;
 }
 
 /// The draws an app makes itself into pass indices [firstPass] to
@@ -102,11 +153,16 @@ final class ForeignSite {
 /// the depth prepass, each shadow cascade or static shadow tile refresh,
 /// and in the color pass at each of [opaqueOrders] among the opaque draws
 /// and each of [translucentOrders] among the translucent ones. A foreign
-/// draw of a render order draws after every draw of the scene of that order
-/// or a lower one, kept or encoded, and before any of a higher order. [draw]
-/// returns the index it drew, which the scene records for a camera replay
-/// as it records its own kept draw at the site, or null where it drew
-/// nothing.
+/// draw of a render order draws after every draw of the scene of a lower
+/// order and before any of a higher one. Among the scene's draws of its own
+/// order an opaque one draws last, and a translucent one draws by depth,
+/// back to front, as the scene orders its own: with the scene's kept draws
+/// of that order in one sorted draw ([ForeignSite.merge]), or in the ranges
+/// of depth between the draws the scene encodes
+/// ([ForeignSite.fartherThan]). [draw] returns the index it drew, which the
+/// scene records for a camera replay as it records its own kept draw at the
+/// site, or null where it drew nothing. Spot and point light shadow maps
+/// have no site, so the app's draws cast no shadow from those lights.
 ///
 /// The scene knows the app's static shadow casters through
 /// [castsStaticShadows] and [staticSignatureIn]; the app calls

@@ -725,9 +725,11 @@ class ShadowPass extends RenderGraphPass {
         items: items,
         pass: pass,
         target: target,
-        viewBlocks: SceneItems.withAppBlocks(_renderScene, [
-          viewInfoBytesOf(lightSpaceMatrix, cameraPosition),
-        ]),
+        viewBlocks: casterViewBlocks(
+          _renderScene,
+          lightSpaceMatrix,
+          cameraPosition,
+        ),
         clip: lightSpaceMatrix.storage,
       ),
     );

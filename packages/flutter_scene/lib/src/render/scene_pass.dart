@@ -14,6 +14,7 @@ import 'package:flutter_scene/src/camera.dart';
 import 'package:flutter_scene/src/fog.dart';
 import 'package:flutter_scene/src/light.dart';
 import 'package:flutter_scene/src/material/environment.dart';
+import 'package:flutter_scene/src/render/camera_replay.dart';
 import 'package:flutter_scene/src/render/projection_params.dart';
 import 'package:flutter_scene/src/render/punctual_lights.dart';
 import 'package:flutter_scene/src/gpu/render_pass_compat.dart';
@@ -250,6 +251,12 @@ class ScenePass extends RenderGraphPass {
   final double _time;
   final List<Plane> _cullingPlanes;
   final bool _includeOffscreen;
+
+  // A primary view that keeps none of its color draws encodes them all, and
+  // a frame that encodes a color draw is not one another camera replays.
+  void _refuseCameraReplay() {
+    if (_primaryView) CameraReplay.recording?.refuse();
+  }
 
   // The cull the view already ran for this camera, or null for a pass that
   // culls for itself.
@@ -519,6 +526,7 @@ class ScenePass extends RenderGraphPass {
     final cullWatch = profileRendering ? (Stopwatch()..start()) : null;
     final visibleItems = _visibleItems;
     if (_includeOffscreen) {
+      _refuseCameraReplay();
       for (final item in _renderScene.items) {
         encoder.submit(item);
       }
@@ -552,6 +560,7 @@ class ScenePass extends RenderGraphPass {
         }
         translucent?.syncTranslucent(target: target, encoder: encoder);
       } else {
+        _refuseCameraReplay();
         // The view culled once to decide its passes; a pass that changed the
         // items or their bounds since then leaves that cull stale.
         final int rejected;

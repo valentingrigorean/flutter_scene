@@ -406,6 +406,29 @@ double sceneSortDepth(
       bias;
 }
 
+/// The key [gpu.ItemSort.farthestFirst] orders by, under the clip matrix
+/// [clip] of a camera at [cameraPosition] looking along [cameraForward], of
+/// a point [depth] along the view axis ([sceneSortDepth]); with [reversed],
+/// the key of [gpu.ItemSort.farthestFirstReversedDepth]. It places a draw the
+/// encoder sorts among the items a backend sorts.
+double itemSortKeyAtDepth(
+  Matrix4 clip,
+  Vector3 cameraPosition,
+  Vector3 cameraForward,
+  double depth, {
+  required bool reversed,
+}) {
+  final m = clip.storage;
+  final row = m[3] == 0.0 && m[7] == 0.0 && m[11] == 0.0 ? 2 : 3;
+  final along = depth / cameraForward.length2;
+  final key =
+      m[row] * (cameraPosition.x + cameraForward.x * along) +
+      m[4 + row] * (cameraPosition.y + cameraForward.y * along) +
+      m[8 + row] * (cameraPosition.z + cameraForward.z * along) +
+      m[12 + row];
+  return row == 2 && reversed ? -key : key;
+}
+
 // Scratch: placed() writes and reads it within one call.
 final Aabb3 _translucentBounds = Aabb3();
 
@@ -2084,7 +2107,15 @@ base class SceneEncoder {
       _renderPass.setTrackedWindingOrder(gpu.WindingOrder.clockwise);
       if (_coveragePass) _bindCoverage(material, fade);
     } else {
-      material.lodFade = fade;
+      material.drawsAs(
+        lightChannelMask: lightChannelMask,
+        lightListCount: lightCount,
+        lightListOffset: lightOffset,
+        lodFade: fade,
+        modelScaleX: material.modelScaleX,
+        modelScaleY: material.modelScaleY,
+        modelScaleZ: material.modelScaleZ,
+      );
       final drawKey = transientDrawKey;
       transientDrawKey = material;
       // The draw's held ItemFragInfo block, so the material binds it instead
@@ -2782,10 +2813,12 @@ base class SceneEncoder {
       final item = record.item;
       _drawKeptOpaqueBelow(item.renderOrder);
       transientDrawKey = item;
-      record.material.lightListOffset = item.lightListOffset;
-      record.material.lightListCount = item.lightListCount;
-      record.material.lightChannelMask = item.lightChannelMask;
-      record.material.setModelScaleFromTransform(item.worldTransform);
+      _drawsAsItem(
+        record.material,
+        item,
+        item.lightListOffset,
+        item.lightListCount,
+      );
       item.applyJointsTexture(record.geometry);
       item.applyMorphWeights(record.geometry);
 
@@ -3332,54 +3365,25 @@ base class SceneEncoder {
   int _foreignOpaque = 0;
   int _foreignTranslucent = 0;
 
-  // Draws the kept draws of each render order below [order], and the foreign
-  // draws of each foreign order below it after the kept draws of that order.
-  // Returns whether any drew.
-  bool _drawKeptBelow(
-    double order,
-    List<double> foreignOrders,
-    int Function() cursor,
-    void Function() advance,
-    ForeignSiteKind kind,
-    ({
-      bool Function(double order, {bool through}) below,
-      void Function(double order, {bool through}) draw,
-    })?
-    kept,
-  ) {
-    var drew = false;
-    while (cursor() < foreignOrders.length && foreignOrders[cursor()] < order) {
-      final at = foreignOrders[cursor()];
-      advance();
-      if (kept != null && kept.below(at, through: true)) {
-        kept.draw(at, through: true);
-        drew = true;
-      }
-      drew |= _drawForeign(kind, at);
-    }
-    if (kept != null && kept.below(order)) {
-      kept.draw(order);
-      drew = true;
-    }
-    return drew;
-  }
-
+  // Draws the kept opaque draws of each render order below [order], and the
+  // app's of each of its opaque orders below it after the kept draws of that
+  // order.
   void _drawKeptOpaqueBelow(double order) {
     final kept = keptOpaque;
-    final drew = _drawKeptBelow(
-      order,
-      foreign?.draws.opaqueOrders ?? const [],
-      () => _foreignOpaque,
-      () => _foreignOpaque++,
-      ForeignSiteKind.opaque,
-      kept == null
-          ? null
-          : (
-              below: kept.drawsBelow,
-              draw: (at, {through = false}) =>
-                  kept.drawBelow(at, _renderPass, this, through: through),
-            ),
-    );
+    final orders = foreign?.draws.opaqueOrders ?? const <double>[];
+    var drew = false;
+    while (_foreignOpaque < orders.length && orders[_foreignOpaque] < order) {
+      final at = orders[_foreignOpaque++];
+      if (kept != null && kept.drawsBelow(at, through: true)) {
+        kept.drawBelow(at, _renderPass, this, through: true);
+        drew = true;
+      }
+      drew |= _drawForeign(ForeignSiteKind.opaque, at);
+    }
+    if (kept != null && kept.drawsBelow(order)) {
+      kept.drawBelow(order, _renderPass, this);
+      drew = true;
+    }
     if (!drew) return;
     // The kept items bound their own pipeline and blocks on the pass, so what
     // the encoder holds of its bindings no longer stands, the pipeline
@@ -3393,29 +3397,97 @@ base class SceneEncoder {
   @internal
   RetainedTranslucentDraws? keptTranslucent;
 
+  // The least key the app's translucent site of its next order was called
+  // with among the draws encoded of that order ([ForeignSite.fartherThan]),
+  // or null where it was not called yet.
+  double? _foreignCut;
+
+  // Draws the kept translucent draws of each render order below [order], and
+  // has the app draw at each of its translucent orders below it: with the
+  // kept draws of that order, which the app then draws among its own by
+  // depth ([ForeignSite.merge]), or what it left of a range past the encoded
+  // draws of that order ([_drawForeignBehind]).
   void _drawKeptTranslucentBelow(double order) {
     final kept = keptTranslucent;
-    final drew = _drawKeptBelow(
-      order,
-      foreign?.draws.translucentOrders ?? const [],
-      () => _foreignTranslucent,
-      () => _foreignTranslucent++,
-      ForeignSiteKind.translucent,
-      kept == null
-          ? null
-          : (
-              below: kept.drawsBelow,
-              draw: (at, {through = false}) =>
-                  kept.drawBelow(at, _renderPass, this, through: through),
-            ),
-    );
+    final orders = foreign?.draws.translucentOrders ?? const <double>[];
+    var drew = false;
+    while (_foreignTranslucent < orders.length &&
+        orders[_foreignTranslucent] < order) {
+      final at = orders[_foreignTranslucent++];
+      final cut = _foreignCut;
+      _foreignCut = null;
+      // An order is kept or encoded as a whole, so kept draws of an order
+      // whose encoded draws cut the app's are not expected: they draw first.
+      if (kept != null && kept.drawsBelow(at, through: cut != null)) {
+        kept.drawBelow(at, _renderPass, this, through: cut != null);
+        drew = true;
+      }
+      final merge = kept?.passAt(at);
+      if (_drawForeign(
+        ForeignSiteKind.translucent,
+        at,
+        merge: merge,
+        notFartherThan: cut,
+      )) {
+        drew = true;
+        if (merge != null) kept!.takeAsDrawn(at);
+        // What is left of a range lies past an encoded draw for this camera
+        // only.
+        if (cut != null) CameraReplay.recording?.refuse();
+      }
+    }
+    if (kept != null && kept.drawsBelow(order)) {
+      kept.drawBelow(order, _renderPass, this);
+      drew = true;
+    }
     if (drew) _rebind(_renderPass);
+  }
+
+  // Has the app draw, at its translucent site of [record]'s render order,
+  // those of its draws farther than [record] that it did not draw at an
+  // earlier record of the order: what [record], drawn next, blends over.
+  void _drawForeignBehind(_TranslucentRecord record) {
+    final orders = foreign?.draws.translucentOrders;
+    final order = record.item.renderOrder;
+    if (orders == null ||
+        _foreignTranslucent >= orders.length ||
+        orders[_foreignTranslucent] != order) {
+      return;
+    }
+    final key = itemSortKeyAtDepth(
+      _cameraTransform,
+      _cameraPosition,
+      _cameraForward,
+      record.depth,
+      reversed: _raster.reversed,
+    );
+    final last = _foreignCut;
+    // A draw no nearer than the last leaves no range between the two.
+    if (last != null && !(key < last)) return;
+    _foreignCut = key;
+    if (!_drawForeign(
+      ForeignSiteKind.translucent,
+      order,
+      fartherThan: key,
+      notFartherThan: last,
+    )) {
+      return;
+    }
+    // The range lies between two encoded draws for this camera only.
+    CameraReplay.recording?.refuse();
+    _rebind(_renderPass);
   }
 
   // Has the app draw at its foreign [kind] site of render order [order], and
   // records the pass index it drew for a camera replay. Returns whether it
   // drew.
-  bool _drawForeign(ForeignSiteKind kind, double order) {
+  bool _drawForeign(
+    ForeignSiteKind kind,
+    double order, {
+    double? fartherThan,
+    int? merge,
+    double? notFartherThan,
+  }) {
     final foreign = this.foreign!;
     final index = foreign.draws.draw(
       ForeignSite(
@@ -3432,6 +3504,11 @@ base class SceneEncoder {
             : gpu.ItemSort.key,
         layerMask: _layerMask,
         primaryView: _primaryView,
+        reversedDepth: _raster.reversed,
+        lighting: _lighting,
+        merge: merge,
+        fartherThan: fartherThan,
+        notFartherThan: notFartherThan,
       ),
     );
     if (index == null) return false;
@@ -3505,6 +3582,7 @@ base class SceneEncoder {
     while (_translucentCursor < end) {
       final record = _translucentRecords[_translucentCursor++];
       _drawKeptTranslucentBelow(record.item.renderOrder);
+      _drawForeignBehind(record);
       _renderPass.setTrackedDepthWriteEnable(
         record.material.translucentDepthWrite,
       );
@@ -3513,10 +3591,12 @@ base class SceneEncoder {
       _renderPass.setTrackedDepthCompareOperation(
         _raster.compare(record.material.depthCompare),
       );
-      record.material.lightListOffset = record.lightListOffset;
-      record.material.lightListCount = record.lightListCount;
-      record.material.lightChannelMask = record.item.lightChannelMask;
-      record.material.setModelScaleFromTransform(record.item.worldTransform);
+      _drawsAsItem(
+        record.material,
+        record.item,
+        record.lightListOffset,
+        record.lightListCount,
+      );
       record.item.applyJointsTexture(record.geometry);
       record.item.applyMorphWeights(record.geometry);
       transientDrawKey = record.item;
@@ -3600,10 +3680,12 @@ base class SceneEncoder {
       _renderPass.setTrackedDepthCompareOperation(
         _raster.compare(record.material.depthCompare),
       );
-      record.material.lightListOffset = record.lightListOffset;
-      record.material.lightListCount = record.lightListCount;
-      record.material.lightChannelMask = record.item.lightChannelMask;
-      record.material.setModelScaleFromTransform(record.item.worldTransform);
+      _drawsAsItem(
+        record.material,
+        record.item,
+        record.lightListOffset,
+        record.lightListCount,
+      );
       record.item.applyJointsTexture(record.geometry);
       record.item.applyMorphWeights(record.geometry);
       transientDrawKey = record.item;
@@ -3835,11 +3917,8 @@ final class RetainedColorDraws extends RetainedDraws {
     );
     // A material drawn by several items holds the last one's per-item values,
     // so the kept draw states its own, as the encoded opaque draw does.
-    final material = materialOf(item)
-      ..lightListOffset = item.lightListOffset
-      ..lightListCount = item.lightListCount
-      ..lightChannelMask = item.lightChannelMask
-      ..setModelScaleFromTransform(item.worldTransform);
+    final material = materialOf(item);
+    _drawsAsItem(material, item, item.lightListOffset, item.lightListCount);
     final key = transientDrawKey;
     transientDrawKey = item;
     encoder.encodeForKeep(item, geometry: geometryOf(item), material: material);
@@ -4051,6 +4130,9 @@ final class RetainedTranslucentDraws extends RetainedDraws {
     activeRenderCounters
       ..colorItemsKept += keptCount - _submitted
       ..colorItemsEncoded += encoded.length + _submitted;
+    // A frame that encodes a translucent draw is not one another camera
+    // replays, whether or not the pass keeps any.
+    CameraReplay.recording?.refuseWhere(!keepsForAnyCamera);
     encoder.keptTranslucent = _drawn.isEmpty ? null : this;
   }
 
@@ -4145,11 +4227,7 @@ final class RetainedTranslucentDraws extends RetainedDraws {
       ..setTrackedDepthCompareOperation(
         encoder._raster.compare(material.depthCompare),
       );
-    material
-      ..lightListOffset = item.lightListOffset
-      ..lightListCount = item.lightListCount
-      ..lightChannelMask = item.lightChannelMask
-      ..setModelScaleFromTransform(item.worldTransform);
+    _drawsAsItem(material, item, item.lightListOffset, item.lightListCount);
     final key = transientDrawKey;
     transientDrawKey = item;
     encoder.encodeForKeep(item, geometry: item.geometry, material: material);
@@ -4179,6 +4257,23 @@ final class RetainedTranslucentDraws extends RetainedDraws {
   bool drawsBelow(double order, {bool through = false}) =>
       _cursor < _drawn.length &&
       (_drawn[_cursor] < order || through && _drawn[_cursor] == order);
+
+  /// The pass index of the kept draws of render order [order], where they
+  /// are the next this frame draws, or null.
+  int? passAt(double order) =>
+      _cursor < _drawn.length && _drawn[_cursor] == order
+      ? _passOf[order]
+      : null;
+
+  /// Takes the kept draws of render order [order], the next this frame
+  /// draws ([passAt]), as drawn: the app drew their pass index with its own
+  /// at its site ([ForeignSite.merge]), under the view blocks the site
+  /// recorded for a camera replay.
+  void takeAsDrawn(double order) {
+    assert(passAt(order) != null);
+    _cursor++;
+    CameraReplay.recording?.refuseWhere(!keepsForAnyCamera);
+  }
 
   /// Draws into [pass], the render pass [encoder] encodes, the kept draws of
   /// each render order below [order], or [through] it, not drawn yet this
@@ -4262,3 +4357,23 @@ CameraReplayPass _colorReplay(
     clip: transform.storage,
   );
 };
+
+// States on [material] what the draw of [item] draws as ([Material.drawsAs]),
+// shading the light slice [lightListOffset]/[lightListCount]; the bind sets
+// its cross-fade.
+void _drawsAsItem(
+  Material material,
+  RenderItem item,
+  int lightListOffset,
+  int lightListCount,
+) {
+  final s = item.worldTransform.storage;
+  material.drawsAs(
+    lightChannelMask: item.lightChannelMask,
+    lightListCount: lightListCount,
+    lightListOffset: lightListOffset,
+    modelScaleX: math.sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]),
+    modelScaleY: math.sqrt(s[4] * s[4] + s[5] * s[5] + s[6] * s[6]),
+    modelScaleZ: math.sqrt(s[8] * s[8] + s[9] * s[9] + s[10] * s[10]),
+  );
+}

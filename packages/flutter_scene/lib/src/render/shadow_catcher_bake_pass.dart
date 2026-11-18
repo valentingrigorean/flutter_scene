@@ -195,9 +195,10 @@ class ShadowCatcherBakePass extends RenderGraphPass {
         vertexLayout: geometry.instancedVertexLayoutFor(null, attributes),
       );
       pass.bindPipeline(pipeline);
-      material
-        ..lightListOffset = item.lightListOffset
-        ..lightListCount = item.lightListCount;
+      material.drawsAs(
+        lightListCount: item.lightListCount,
+        lightListOffset: item.lightListOffset,
+      );
       try {
         material.bindForBake(pass, context.transientsBuffer, lighting);
         // The bake never shows a debug view, but the catcher's shader still

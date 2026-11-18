@@ -290,11 +290,12 @@ double pixelWorldScale(Matrix4 projection, double height) {
   return focal > 0.0 ? 1.0 / focal : 0.0;
 }
 
-/// Clears [currentDrawDepthOffset], for passes that never offset depth
-/// (shadow maps).
+/// Clears [currentDrawDepthOffset] and [currentDrawPixelSlope], for passes
+/// that never offset depth (shadow maps).
 @internal
 void clearCurrentDrawDepthOffset() {
   _currentDrawDepthRaster = DepthRaster.standard;
+  currentDrawPixelSlope = 0.0;
   currentRasterFarClipDepth = 1.0;
   currentDrawDepthOffset.fillRange(0, 4, 0.0);
   currentDrawDepthSlope.fillRange(0, 4, 0.0);

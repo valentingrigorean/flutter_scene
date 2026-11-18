@@ -2031,6 +2031,12 @@ class RenderScene {
   @internal
   void markForeignStaticShadowDirty() => _staticShadowRevision++;
 
+  /// Counts the changes to what [foreignDraws] needs stated at its sites,
+  /// which keep a camera from replaying the last frame; see
+  /// `Scene.markForeignDrawsChanged`.
+  @internal
+  int foreignDrawsRevision = 0;
+
   /// The app's own view blocks, by uniform block name, each with what gives
   /// the frame's bytes; see `Scene.setViewBlock`.
   @internal

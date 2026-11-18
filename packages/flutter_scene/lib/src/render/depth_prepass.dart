@@ -308,13 +308,11 @@ class DepthPrepass extends RenderGraphPass {
         items: items,
         pass: pass,
         target: target,
-        viewBlocks: SceneItems.withAppBlocks(_renderScene, [
-          viewInfoBytesOf(encoder._cameraTransform, encoder._cameraPosition),
-          ByteData.sublistView(encoder._depthInfo),
-        ]),
+        viewBlocks: encoder._keptViewBlocks(_renderScene),
         clip: encoder._cameraTransform.storage,
         layerMask: _layerMask,
         primaryView: _primaryView,
+        reversedDepth: encoder._raster.reversed,
       ),
     );
     if (index == null) return;
@@ -784,19 +782,10 @@ final class RetainedDepthDraws extends RetainedDraws {
 
   /// Draws the kept draws into [pass], the render pass [encoder] encodes.
   void _draw(gpu.RenderPass pass, _DepthPrepassEncoder encoder) {
-    currentViewForward = null;
-    setCurrentDrawDepthOffset(encoder._raster, 0, 0);
-    final view = viewInfoBytesOf(
-      encoder._cameraTransform,
-      encoder._cameraPosition,
-    );
     items.draw(
       pass,
       SceneItems.depthPass,
-      viewBlocks: SceneItems.withAppBlocks(renderScene, [
-        view,
-        ByteData.sublistView(encoder._depthInfo),
-      ]),
+      viewBlocks: encoder._keptViewBlocks(renderScene),
       clip: encoder._cameraTransform.storage,
     );
     // The kept items bound their own pipeline and blocks on the pass, so what
@@ -1190,6 +1179,18 @@ class _DepthPrepassEncoder {
           : gpu.WindingOrder.clockwise,
     );
     drawOrRejectPipeline(_renderPass, geometry, _boundPipeline);
+  }
+
+  // The view blocks of a kept draw of this prepass of [renderScene], packed
+  // under what it states first: no view forward and the pass's raster with
+  // no offset. The app's draw at the prepass site takes the same.
+  List<ByteData> _keptViewBlocks(RenderScene renderScene) {
+    currentViewForward = null;
+    setCurrentDrawDepthOffset(_raster, 0, 0);
+    return SceneItems.withAppBlocks(renderScene, [
+      viewInfoBytesOf(_cameraTransform, _cameraPosition),
+      ByteData.sublistView(_depthInfo),
+    ]);
   }
 
   // Per-draw state for [_bindDraw], set by the encode path. Fields rather

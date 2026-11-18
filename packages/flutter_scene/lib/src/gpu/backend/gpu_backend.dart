@@ -406,14 +406,32 @@ abstract interface class GpuBackendItemSet {
   /// viewport and scissor, with [viewBlocks] as the pass's view blocks and
   /// [viewTextures] as its view textures, each at the index the set gives
   /// it, culled by [clip] (a column-major matrix into clip space), in the
-  /// order [sort] names. A command buffer draws a pass index once.
+  /// order [sort] names.
+  ///
+  /// With [merge], the items of pass [merge] draw too, among those of
+  /// [index] in the one order [sort] names and with the view blocks given
+  /// here; of two items at one depth the one of [merge] draws first. The
+  /// caller then draws pass [merge] no other way in the frame.
+  ///
+  /// With [fartherThan] or [notFartherThan], under a [sort] by depth, only
+  /// the items draw whose depth key ([ItemSort.farthestFirst]) is greater
+  /// than [fartherThan] and not greater than [notFartherThan], a null bound
+  /// being open. A [sort] by [ItemSort.key] with either throws an
+  /// [ArgumentError].
+  ///
+  /// A command buffer draws a pass index once, or in several such ranges
+  /// that share no item, each with the same [viewBlocks], [clip], [sort]
+  /// and [merge].
   void draw(
     GpuBackendRenderPass pass,
     int index, {
-    required List<ByteData> viewBlocks,
     required Float32List clip,
-    List<GpuBackendTexture> viewTextures = const [],
+    double? fartherThan,
+    int? merge,
+    double? notFartherThan,
     ItemSort sort = ItemSort.key,
+    required List<ByteData> viewBlocks,
+    List<GpuBackendTexture> viewTextures = const [],
   });
 
   /// Releases every item.

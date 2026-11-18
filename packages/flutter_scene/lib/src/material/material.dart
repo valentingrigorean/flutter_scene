@@ -1,10 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
-import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:vector_math/vector_math.dart' show Matrix4, Vector3;
+import 'package:vector_math/vector_math.dart' show Vector3;
 
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
 import 'package:flutter_scene/src/render/depth_raster.dart';
@@ -356,60 +355,85 @@ abstract class Material with RenderSourceListeners {
   static int _tieBreakCounter = 0;
   static int _nextTieBreakRank() => _tieBreakCounter++ % 3;
 
-  /// Per-draw level-of-detail cross-fade coverage for a blended draw, set by
-  /// the encoder right before [bind] and written into the material's
-  /// `FragInfo.fade`, which scales its opacity. 1 draws at full opacity; a
-  /// value in (0, 1) or its negative complement (see lod_fade.glsl) draws at
-  /// that fraction. Opaque draws always bind 1, since their dithered coverage
-  /// comes from the main pass's coverage pre-draw. Only materials with
-  /// [lodCrossFades] honor it.
+  /// States what the draw bound next draws as, for [bind] to pack into the
+  /// material's `ItemFragInfo` block. The scene's encoder calls it with the
+  /// draw's render item right before [bind]; an app that binds a material
+  /// at a `ForeignSite` calls it the same way, with what its own draw
+  /// states.
+  ///
+  /// - [lightChannelMask]: the draw's light channels. The punctual lights
+  ///   are already filtered by the culler, so it only gates the primary
+  ///   directional light, whose data rides its own uniform path. `0xFF`
+  ///   takes every channel.
+  /// - [lightListCount], [lightListOffset]: the draw's slice of the
+  ///   per-frame light-index buffer. The lit materials loop
+  ///   `[lightListOffset, +lightListCount)`, so a draw shades only the
+  ///   lights that reach it. 0 shades no punctual light.
+  /// - [lodFade]: the level-of-detail cross-fade coverage of a blended draw,
+  ///   which scales its opacity. 1 draws at full opacity; a value in (0, 1)
+  ///   or its negative complement (see lod_fade.glsl) draws at that
+  ///   fraction. Opaque draws bind 1, since their dithered coverage comes
+  ///   from the main pass's coverage pre-draw. Only materials with
+  ///   [lodCrossFades] honor it.
+  /// - [modelScaleX], [modelScaleY], [modelScaleZ]: the world-space lengths
+  ///   of the draw's model transform's basis vectors, which scale
+  ///   local-space lengths like the transmission volume thickness into
+  ///   world units. An instanced draw carries its node's scale (not
+  ///   per-instance), and a skinned draw its node's (not per-joint).
+  void drawsAs({
+    int lightChannelMask = 0xFF,
+    int lightListCount = 0,
+    int lightListOffset = 0,
+    double lodFade = 1.0,
+    double modelScaleX = 1.0,
+    double modelScaleY = 1.0,
+    double modelScaleZ = 1.0,
+  }) {
+    _lightChannelMask = lightChannelMask;
+    _lightListCount = lightListCount;
+    _lightListOffset = lightListOffset;
+    _lodFade = lodFade;
+    _modelScaleX = modelScaleX;
+    _modelScaleY = modelScaleY;
+    _modelScaleZ = modelScaleZ;
+  }
+
+  /// The light channels [drawsAs] last stated.
   @internal
-  double lodFade = 1.0;
+  int get lightChannelMask => _lightChannelMask;
+  int _lightChannelMask = 0xFF;
+
+  /// The light slice length [drawsAs] last stated.
+  @internal
+  int get lightListCount => _lightListCount;
+  int _lightListCount = 0;
+
+  /// The light slice start [drawsAs] last stated.
+  @internal
+  int get lightListOffset => _lightListOffset;
+  int _lightListOffset = 0;
+
+  /// The level-of-detail cross-fade coverage [drawsAs] last stated.
+  @internal
+  double get lodFade => _lodFade;
+  double _lodFade = 1.0;
+
+  /// The model scales [drawsAs] last stated.
+  @internal
+  double get modelScaleX => _modelScaleX;
+  double _modelScaleX = 1.0;
+  @internal
+  double get modelScaleY => _modelScaleY;
+  double _modelScaleY = 1.0;
+  @internal
+  double get modelScaleZ => _modelScaleZ;
+  double _modelScaleZ = 1.0;
 
   /// Whether this material cross-fades between levels of detail. An opaque
   /// draw of one that is mid-fade takes the coverage pre-draw, which dithers
   /// it against the adjacent level. The built-in lit and unlit materials do.
   @internal
   bool get lodCrossFades => false;
-
-  /// The owning render item's punctual-light slice, set by the encoder right
-  /// before [bind] and written into `FragInfo.radiance_blend.zw`. The lit
-  /// materials loop the `[lightListOffset, +lightListCount)` range of the
-  /// per-frame light-index buffer, so each item shades only the lights that
-  /// reach it. Both default to 0 (no punctual lights).
-  @internal
-  int lightListOffset = 0;
-  @internal
-  int lightListCount = 0;
-
-  /// The owning render item's light channels, set by the encoder right before
-  /// [bind]. The punctual lights are already filtered by the culler, so this
-  /// only gates the primary directional light, whose data rides its own
-  /// uniform path. Defaults to `0xFF` (every channel).
-  @internal
-  int lightChannelMask = 0xFF;
-
-  /// The draw's model scale (world-space lengths of the model transform's
-  /// basis vectors), set by the encoder right before [bind] and packed into
-  /// `FragInfo.model_scale`. Scales local-space lengths like the transmission
-  /// volume thickness into world units. An instanced draw carries its node's
-  /// scale (not per-instance), and a skinned draw its node's (not per-joint).
-  @internal
-  double modelScaleX = 1.0;
-  @internal
-  double modelScaleY = 1.0;
-  @internal
-  double modelScaleZ = 1.0;
-
-  /// Sets [modelScaleX]/[modelScaleY]/[modelScaleZ] from [transform]'s basis
-  /// vector lengths. Called by the encoder with the drawn world transform.
-  @internal
-  void setModelScaleFromTransform(Matrix4 transform) {
-    final s = transform.storage;
-    modelScaleX = math.sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
-    modelScaleY = math.sqrt(s[4] * s[4] + s[5] * s[5] + s[6] * s[6]);
-    modelScaleZ = math.sqrt(s[8] * s[8] + s[9] * s[9] + s[10] * s[10]);
-  }
 
   /// This material's own fragment constants (`MatInfo`: color, factors, alpha,
   /// specular antialiasing, the standard dielectric F0), held from frame to

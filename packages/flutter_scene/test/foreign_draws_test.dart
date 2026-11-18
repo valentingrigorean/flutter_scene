@@ -1,9 +1,14 @@
 // The app's own draws into the scene's item set ([ForeignDraws]): the scene
 // calls them in the depth prepass, at each cached static shadow tile it
-// renders, and among its color draws at the app's render orders, after
-// every draw of the scene of that order or a lower one, on the plain path
-// and on the path that splits the color pass.
+// renders, and among its color draws at the app's render orders, on the
+// plain path and on the path that splits the color pass: an opaque order
+// after every draw of the scene of that order or a lower one, a translucent
+// one behind each draw the scene encodes of that order and after the last. The view blocks of the
+// prepass and of a static tile refresh are packed under the state of the
+// pass's own kept draw, and a mark of the app's draws keeps the next frame
+// from replaying the last one for another camera.
 
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter_scene/scene.dart';
@@ -75,10 +80,10 @@ Node _slab(String name, List<String> log, double order, {double alpha = 1}) =>
       localTransform: Matrix4.translationValues(0, 0, -50 - order),
     )..renderOrder = order;
 
-void _frame(Scene scene) {
+void _frame(Scene scene, {Camera? camera}) {
   final recorder = ui.PictureRecorder();
   scene.render(
-    _camera,
+    camera ?? _camera,
     ui.Canvas(recorder),
     viewport: const ui.Rect.fromLTWH(0, 0, 32, 32),
     pixelRatio: 1.0,
@@ -94,8 +99,10 @@ ForeignDraws _logging(
 }) => ForeignDraws(
   draw: (site) {
     log.add(switch (site.kind) {
-      ForeignSiteKind.opaque ||
-      ForeignSiteKind.translucent => '${site.kind.name} ${site.order}',
+      ForeignSiteKind.opaque => '${site.kind.name} ${site.order}',
+      ForeignSiteKind.translucent =>
+        '${site.kind.name} ${site.order}'
+            '${site.fartherThan == null ? '' : ' behind the next'}',
       ForeignSiteKind.cascade ||
       ForeignSiteKind.staticTile => '${site.kind.name} ${site.cascade}',
       ForeignSiteKind.prepass => site.kind.name,
@@ -116,8 +123,10 @@ ForeignDraws _logging(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('the app draws in the prepass and at each of its color orders, after '
-      'every draw of the scene of that order or a lower one', () async {
+  test('the app draws in the prepass and at each of its color orders: an '
+      'opaque one after every draw of the scene of that order or a lower '
+      'one, a translucent one behind each draw the scene encodes of that '
+      'order and after the last', () async {
     if (!gpuAvailable()) return;
     await Scene.initializeStaticResources();
     final log = <String>[];
@@ -138,6 +147,7 @@ void main() {
       'opaque -3.0',
       'wall',
       'opaque 2.0',
+      'translucent 0.0 behind the next',
       'glass',
       'translucent 0.0',
     ]);
@@ -184,9 +194,45 @@ void main() {
       'opaque -3.0',
       'wall',
       'opaque 2.0',
+      'translucent 0.0 behind the next',
       'glass',
       'translucent 0.0',
     ]);
+  });
+
+  test('each site states whether the depth its pass tests is reversed: the '
+      'prepass and the colour sites as the scene\'s depth runs, a shadow site '
+      'never', () async {
+    if (!gpuAvailable()) return;
+    await Scene.initializeStaticResources();
+    for (final reversed in [true, false]) {
+      final sites = <String, Set<bool>>{};
+      final scene = Scene()
+        ..maxGpuFramesInFlight = 0
+        ..reversedDepth = reversed
+        ..directionalLight = DirectionalLight(castsShadow: true)
+        ..add(_slab('wall', [], 0));
+      // Ambient occlusion reads the prepass.
+      scene.ambientOcclusion.enabled = true;
+      scene.foreignDraws = ForeignDraws(
+        draw: (site) {
+          (sites[site.kind.name] ??= {}).add(site.reversedDepth);
+          return null;
+        },
+        opaqueOrders: [2],
+        translucentOrders: [0],
+        castsStaticShadows: () => true,
+        staticSignatureIn: (_) => 1,
+      );
+      _frame(scene);
+      scene.dispose();
+      expect(sites, {
+        'prepass': {reversed},
+        'opaque': {reversed},
+        'translucent': {reversed},
+        'staticTile': {false},
+      }, reason: 'reversedDepth $reversed');
+    }
   });
 
   test('the static shadow cache holds the app\'s static casters: a cascade '
@@ -231,4 +277,141 @@ void main() {
       for (var c = 0; c < tiles.length; c++) 'cascade $c',
     ]);
   });
+
+  test('the prepass of a view that keeps no draw and a static tile refresh '
+      'with no static caster of the scene\'s hand the app the ViewInfo of '
+      'their own kept draw, not the last color draw\'s', () async {
+    if (!gpuAvailable()) return;
+    await Scene.initializeStaticResources();
+    final camera = PerspectiveCamera(
+      position: Vector3(3, 4, 10),
+      target: Vector3(3, 4, 0),
+      up: Vector3(0, 1, 0),
+      fovNear: 0.1,
+      fovFar: 1000,
+    );
+    final views = <ForeignSiteKind, Float32List>{};
+    var signature = 1;
+    final wall = _slab('wall', [], 0);
+    wall.castsShadows = false;
+    final scene = Scene()
+      ..maxGpuFramesInFlight = 0
+      ..directionalLight = DirectionalLight(castsShadow: true)
+      ..add(wall);
+    // The prepass writes normals for reflections, so it keeps no draw.
+    scene.screenSpaceReflections.enabled = true;
+    scene.foreignDraws = ForeignDraws(
+      draw: (site) {
+        views[site.kind] = Float32List.fromList(
+          Float32List.sublistView(site.viewBlocks[0]),
+        );
+        return null;
+      },
+      castsStaticShadows: () => true,
+      staticSignatureIn: (_) => signature,
+    );
+    addTearDown(scene.dispose);
+
+    // The second frame's sites follow the first frame's color draws.
+    _frame(scene, camera: camera);
+    signature = 2;
+    scene.markForeignShadowCastersChanged();
+    views.clear();
+    _frame(scene, camera: camera);
+
+    void expectView(ForeignSiteKind kind, DepthRaster raster) {
+      final view = views[kind];
+      expect(view, isNotNull, reason: '$kind');
+      expect(view!.sublist(16, 19), [3, 4, 10], reason: '$kind position');
+      expect(view.sublist(20, 24), [0, 0, 0, 0], reason: '$kind forward');
+      expect(view.sublist(32, 35), [
+        raster.stepScale,
+        raster.stepClip,
+        0,
+      ], reason: '$kind depth unit');
+    }
+
+    // The view rasterizes reversed float depth, as the frame's log states.
+    expectView(
+      ForeignSiteKind.prepass,
+      const DepthRaster(reversed: true, floatDepth: true),
+    );
+    expectView(ForeignSiteKind.staticTile, DepthRaster.standard);
+  });
+
+  test(
+    'a frame after markForeignDrawsChanged renders in full and calls the '
+    'color sites again, where a camera would replay the last frame',
+    () async {
+      if (!gpuAvailable()) return;
+      await Scene.initializeStaticResources();
+      // A first frame in the process, as the other tests of a kept draw
+      // take: without one this scene's frames do not replay.
+      final warmUp = Scene()..add(_slab('warm', [], 0));
+      _frame(warmUp);
+      warmUp.dispose();
+      final target = RenderTexture(width: 32, height: 32, presents: true);
+      final scene = Scene()
+        ..maxGpuFramesInFlight = 0
+        ..add(
+          Node(
+            mesh: Mesh(CuboidGeometry(Vector3(100, 100, 0.01)), _Kept()),
+            localTransform: Matrix4.translationValues(0, 0, -50),
+          ),
+        );
+      final log = <String>[];
+      scene.foreignDraws = ForeignDraws(
+        draw: (site) {
+          log.add(site.kind.name);
+          const index = ForeignDraws.firstPass;
+          site.items.draw(
+            site.pass,
+            index,
+            viewBlocks: site.viewBlocks,
+            clip: site.clip,
+            viewTextures: site.viewTextures,
+            sort: site.sort,
+          );
+          return index;
+        },
+        opaqueOrders: [0],
+      );
+      addTearDown(scene.dispose);
+      RenderView view(double x) => RenderView(
+        camera: PerspectiveCamera(
+          position: Vector3(x, 0, 0),
+          target: Vector3(x, 0, -1),
+          up: Vector3(0, 1, 0),
+          fovNear: 0.1,
+          fovFar: 1000,
+        ),
+        target: target,
+      );
+      void render() {
+        final recorder = ui.PictureRecorder();
+        scene.renderViews([view(0)], ui.Canvas(recorder));
+        recorder.endRecording().dispose();
+      }
+
+      for (var frame = 0; frame < 3; frame++) {
+        render();
+      }
+      expect(scene.cameraFrame([view(1)]), isNotNull, reason: 'replays');
+      expect(scene.cameraFrame([view(2)]), isNotNull, reason: 'still replays');
+
+      scene.markForeignDrawsChanged();
+      expect(scene.cameraFrame([view(3)]), isNull);
+      log.clear();
+      render();
+      expect(log, contains('opaque'));
+      expect(scene.cameraFrame([view(4)]), isNotNull, reason: 'replays again');
+    },
+  );
+}
+
+// Takes no part in the debug views the test shader bundle compiles in,
+// which would keep its draw from being kept.
+class _Kept extends UnlitMaterial {
+  @override
+  bool get participatesInDebugViews => false;
 }

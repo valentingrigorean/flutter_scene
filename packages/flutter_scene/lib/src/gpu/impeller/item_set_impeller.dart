@@ -754,13 +754,17 @@ final class _ItemSet {
     CommandBuffer commands,
     _ItemDrawState live,
     int index, {
-    required List<ByteData> viewBlocks,
     required Float32List clip,
-    required List<fg.Texture> viewTextures,
+    required double? fartherThan,
+    required int? merge,
+    required double? notFartherThan,
     required ItemSort sort,
+    required List<ByteData> viewBlocks,
+    required List<fg.Texture> viewTextures,
   }) {
     if (_items.isEmpty) return;
-    final mask = 1 << index;
+    final merged = merge == null ? 0 : 1 << merge;
+    final mask = 1 << index | merged;
     final planes = _planesOf(clip);
     List<fg.BufferView>? views;
     _ItemDrawState? saved;
@@ -773,6 +777,9 @@ final class _ItemSet {
             : _farthestFirst(
                 mask,
                 clip,
+                fartherThan: fartherThan,
+                first: merged,
+                notFartherThan: notFartherThan,
                 reversed: sort == ItemSort.farthestFirstReversedDepth,
               )) {
       if (draw.passes & mask == 0) continue;
@@ -1063,26 +1070,40 @@ final class _ItemSet {
     }
   }
 
-  // The items of the pass [mask] names, the farthest first by the clip-space
-  // w of their bounds' centre, or by its z where every point has one w (an
-  // orthographic clip), the lesser z farther with [reversed] depth; an item
-  // with no bounds at 0.
+  // The items of the passes [mask] names, the farthest first by the
+  // clip-space w of their bounds' centre, or by its z where every point has
+  // one w (an orthographic clip), the lesser z farther with [reversed] depth;
+  // an item with no bounds at 0. Only those whose depth is greater than
+  // [fartherThan] and not greater than [notFartherThan], where given. At one
+  // depth the items of the passes [first] names come first, then each in
+  // the order they were kept.
   List<_ItemDraw> _farthestFirst(
     int mask,
     Float32List clip, {
+    required double? fartherThan,
+    required int first,
+    required double? notFartherThan,
     required bool reversed,
   }) {
-    final draws = [
-      for (final draw in _items.values)
-        if (draw.passes & mask != 0)
-          (
-            draw.bounds == null
-                ? 0.0
-                : _depthOf(clip, draw.bounds!, 0, reversed: reversed),
-            draw,
-          ),
-    ]..sort((a, b) => b.$1.compareTo(a.$1));
-    return [for (final (_, draw) in draws) draw];
+    final draws = <(double, int, _ItemDraw)>[];
+    final count = _items.length;
+    var at = 0;
+    for (final draw in _items.values) {
+      at++;
+      if (draw.passes & mask == 0) continue;
+      final bounds = draw.bounds;
+      final depth = bounds == null
+          ? 0.0
+          : _depthOf(clip, bounds, 0, reversed: reversed);
+      if (fartherThan != null && !(depth > fartherThan)) continue;
+      if (notFartherThan != null && depth > notFartherThan) continue;
+      draws.add((depth, draw.passes & first != 0 ? at : at + count, draw));
+    }
+    draws.sort((a, b) {
+      final by = b.$1.compareTo(a.$1);
+      return by != 0 ? by : a.$2.compareTo(b.$2);
+    });
+    return [for (final (_, _, draw) in draws) draw];
   }
 
   // Orders the first [length] instances of [shown] the farthest first by

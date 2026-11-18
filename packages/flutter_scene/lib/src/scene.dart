@@ -684,8 +684,10 @@ base class Scene implements SceneGraph {
   /// set ([ForeignDraws]), or null for none.
   ForeignDraws? get foreignDraws => renderScene.foreignDraws;
   set foreignDraws(ForeignDraws? draws) {
-    renderScene.foreignDraws = draws;
-    renderScene.markForeignStaticShadowDirty();
+    renderScene
+      ..foreignDraws = draws
+      ..markForeignStaticShadowDirty()
+      ..foreignDrawsRevision += 1;
   }
 
   /// Has the static shadow cache read [foreignDraws]' static shadow casters
@@ -693,6 +695,15 @@ base class Scene implements SceneGraph {
   /// cached tile. A tile whose fingerprint changed is rendered again.
   void markForeignShadowCastersChanged() =>
       renderScene.markForeignStaticShadowDirty();
+
+  /// Has the next frame render in full and call [foreignDraws] at every
+  /// site, rather than replay the last frame for a camera that alone moved
+  /// ([cameraFrame]). A replayed frame calls no site: it draws the pass
+  /// indices the last full frame drew, with what that frame stated. The app
+  /// calls it whenever what its draws need stated at a site changed, such as
+  /// a draw that needs a material bound or a pass index the last full frame
+  /// did not draw.
+  void markForeignDrawsChanged() => renderScene.foreignDrawsRevision++;
 
   /// Supplies the bytes [bytes] gives, each frame, as the uniform block
   /// [name] to every draw of the color pass, the depth prepass and the
@@ -1016,8 +1027,9 @@ base class Scene implements SceneGraph {
   /// Where the GPU backend can free memory at once (wgpu, WebGPU, WebGL) it
   /// does so at this call, and work already submitted keeps what it reads;
   /// elsewhere the memory frees once the textures are collected. The images
-  /// last handed to a canvas are kept, since they may still be on screen.
-  /// The scene graph is left as it is.
+  /// each screen view last handed to a canvas are disposed: a picture that
+  /// draws one, on screen or queued, holds the image itself until it is
+  /// done with it. The scene graph is left as it is.
   ///
   /// A pending [captureRenderGraph] completes with a [StateError], and a
   /// [warmUp] in progress stops. A later [render], [renderViews], [warmUp],
@@ -1029,7 +1041,11 @@ base class Scene implements SceneGraph {
       return;
     }
     _disposed = true;
-    // Not disposed, since the last pictures may still be on screen.
+    for (final images in _presentedImages) {
+      for (final image in images) {
+        image.dispose();
+      }
+    }
     _presentedImages.clear();
     surface.dispose();
     _taaState?.dispose();
@@ -3109,8 +3125,9 @@ base class Scene implements SceneGraph {
   /// ([CameraReplay]). A frame stays one where, since then, no item changed,
   /// the target, its size and the view's settings stayed, the directional
   /// light kept its direction and shadow settings, no setting turned a pass
-  /// on or off, and the animation time stayed in its fold
-  /// ([animationTimeEpoch]). The scene's tick runs as [renderViews] runs it,
+  /// on or off, the animation time stayed in its fold
+  /// ([animationTimeEpoch]) and the app marked no change to its foreign draws
+  /// ([markForeignDrawsChanged]). The scene's tick runs as [renderViews] runs it,
   /// so a [renderViews] after a null result in the same frame does not tick
   /// again.
   ///
@@ -3209,6 +3226,7 @@ base class Scene implements SceneGraph {
       renderScene.viewBlocksRevision,
       renderScene.drawOrigin.revision,
       renderScene.staticShadowRevision,
+      renderScene.foreignDrawsRevision,
       renderScene.materialSummary.inputs.isEmpty,
       renderScene.hasVisibleDisplayReferred,
       renderScene.directionalLights.length,
