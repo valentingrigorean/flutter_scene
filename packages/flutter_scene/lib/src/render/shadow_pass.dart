@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/render/foreign_draws.dart';
 import 'package:flutter_scene/src/render/fullscreen_quad.dart';
 import 'package:vector_math/vector_math.dart';
 
@@ -454,30 +455,22 @@ class ShadowPass extends RenderGraphPass {
           ),
         );
         retained.draw(renderPass, c, matrix, _casterCameraPosition);
-        final cascades = _cascades.length;
-        final viewInfo = ViewInfoState.current();
         CameraReplay.recording
-          ?..pass(SceneItems.casterPass + c, (view) {
-            if (view.cascades.length != cascades) return null;
-            final matrix = view.cascades[c].lightSpaceMatrix;
-            return (
-              blocks: SceneItems.withAppBlocks(_renderScene, [
-                viewInfo.bytesFor(
-                  matrix,
-                  view.camera,
-                  view.dimensions,
-                  view.viewScale,
-                ),
-              ]),
-              clip: matrix.storage,
-            );
-          })
+          ?..pass(SceneItems.casterPass + c, _cascadeReplay(c))
           ..refuseWhere(
             !retained.keepsForAnyCamera ||
                 spotCount > 0 ||
                 pointCount > 0 ||
                 _shared != null,
           );
+        _drawForeign(
+          ForeignSiteKind.cascade,
+          c,
+          renderPass,
+          target,
+          matrix,
+          _casterCameraPosition,
+        );
         final encoder = ShadowEncoder(
           renderPass,
           context.transientsBuffer,
@@ -498,6 +491,14 @@ class ShadowPass extends RenderGraphPass {
           _casterFaces,
           casterChannelMask: _casterChannelMask,
           receiverPlanes: _receiverPlanesFor(c),
+        );
+        _drawForeign(
+          ForeignSiteKind.cascade,
+          c,
+          renderPass,
+          target,
+          _cascades[c].lightSpaceMatrix,
+          _casterCameraPosition,
         );
       }
     }
@@ -652,6 +653,15 @@ class ShadowPass extends RenderGraphPass {
       final deferred = deferredPipelineBuilds;
       _renderScene.cull(encoder.frustum, encoder.submitCulled);
       encoder.flush();
+      _drawForeign(
+        ForeignSiteKind.staticTile,
+        refresh.cascadeIndex,
+        renderPass,
+        target,
+        entry.matrix,
+        _cameraPosition,
+        replays: false,
+      );
       rendererSubmissions.submit(commandBuffer);
       // A sliced warm-up skipped some of its casters, so render it again on
       // the next frame rather than reuse it.
@@ -664,6 +674,65 @@ class ShadowPass extends RenderGraphPass {
         staticShadowTileBlackboardKey(refresh.cascadeIndex),
         entry.tile,
       );
+    }
+  }
+
+  // Rebuilds cascade [cascade]'s view blocks for another camera of the
+  // frame: `ViewInfo` of its light-space matrix as that camera's cascades
+  // place it, and the app's blocks read again.
+  CameraReplayPass _cascadeReplay(int cascade) {
+    final cascades = _cascades.length;
+    final viewInfo = ViewInfoState.current();
+    return (view) {
+      if (view.cascades.length != cascades) return null;
+      final matrix = view.cascades[cascade].lightSpaceMatrix;
+      return (
+        blocks: SceneItems.withAppBlocks(_renderScene, [
+          viewInfo.bytesFor(
+            matrix,
+            view.camera,
+            view.dimensions,
+            view.viewScale,
+          ),
+        ]),
+        clip: matrix.storage,
+      );
+    };
+  }
+
+  // Has the app draw at its foreign shadow site of [kind] for [cascade] into
+  // [pass], which draws into [target] under the tile's viewport, with the
+  // view blocks a kept caster drawn from [lightSpaceMatrix] and
+  // [cameraPosition] is given. Where [replays], records the pass index it
+  // drew for a camera replay.
+  void _drawForeign(
+    ForeignSiteKind kind,
+    int cascade,
+    gpu.RenderPass pass,
+    gpu.RenderTarget target,
+    Matrix4 lightSpaceMatrix,
+    Vector3 cameraPosition, {
+    bool replays = true,
+  }) {
+    final foreign = _renderScene.foreignDraws;
+    if (foreign == null) return;
+    final items = SceneItems.of(_renderScene);
+    if (items == null) return;
+    final index = foreign.draw(
+      ForeignSite(
+        kind: kind,
+        cascade: cascade,
+        items: items,
+        pass: pass,
+        target: target,
+        viewBlocks: SceneItems.withAppBlocks(_renderScene, [
+          viewInfoBytesOf(lightSpaceMatrix, cameraPosition),
+        ]),
+        clip: lightSpaceMatrix.storage,
+      ),
+    );
+    if (index != null && replays) {
+      CameraReplay.recording?.pass(index, _cascadeReplay(cascade));
     }
   }
 

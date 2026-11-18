@@ -33,6 +33,7 @@ import 'package:flutter_scene/src/render/shadow_pass.dart';
 import 'package:flutter_scene/src/render/sh_composite.dart';
 import 'package:flutter_scene/src/render/skybox_encoder.dart';
 import 'package:flutter_scene/src/render/ssao_pass.dart';
+import 'package:flutter_scene/src/render/retained_draws.dart' show SceneItems;
 import 'package:flutter_scene/src/scene_encoder.dart';
 import 'package:flutter_scene/src/skybox.dart';
 import 'package:flutter_scene/src/render/frame_transients.dart';
@@ -505,6 +506,16 @@ class ScenePass extends RenderGraphPass {
       debugView: _debugView,
       primaryView: _primaryView,
     );
+    final foreign = _renderScene.foreignDraws;
+    final foreignItems = foreign == null ? null : SceneItems.of(_renderScene);
+    if (foreign != null && foreignItems != null) {
+      encoder.foreign = (
+        draws: foreign,
+        items: foreignItems,
+        target: target,
+        appBlocks: [..._renderScene.viewBlocks.values],
+      );
+    }
     final cullWatch = profileRendering ? (Stopwatch()..start()) : null;
     final visibleItems = _visibleItems;
     if (_includeOffscreen) {
@@ -633,6 +644,8 @@ class ScenePass extends RenderGraphPass {
       encoder.flushNextTranslucentBatch();
     }
     if (!encoder.hasPendingTranslucent) {
+      // What translucent draws are left, kept or the app's, draw last.
+      encoder.flushTranslucent(translucentPass: drawing);
       _encodeDebugOverlays(drawing, context.transientsBuffer, encoder);
     }
     rendererSubmissions.submit(commands);
@@ -728,6 +741,7 @@ class ScenePass extends RenderGraphPass {
         encoder.flushNextSceneColorBatch(translucentPass: translucentPass);
       }
       if (!encoder.hasPendingTranslucent) {
+        encoder.flushTranslucent(translucentPass: translucentPass);
         _encodeDebugOverlays(
           translucentPass,
           context.transientsBuffer,

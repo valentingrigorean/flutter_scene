@@ -33,6 +33,7 @@ import 'package:flutter_scene/src/geometry/geometry.dart'
 import 'package:flutter_scene/src/material/material.dart'
     show MaskedDepthPass, Material;
 import 'package:flutter_scene/src/render/draw_recorder.dart';
+import 'package:flutter_scene/src/render/foreign_draws.dart';
 import 'package:flutter_scene/src/render/render_graph.dart';
 import 'package:flutter_scene/src/render/render_layers.dart';
 import 'package:flutter_scene/src/render/render_scene.dart';
@@ -221,49 +222,39 @@ class DepthPrepass extends RenderGraphPass {
     final retained = _primaryView && !_writeNormals
         ? RetainedDepthDraws.of(_renderScene)
         : null;
+    final foreign = _renderScene.foreignDraws;
     if (retained != null) {
       retained._syncDepth(target: target, encoder: encoder);
       retained._draw(renderPass, encoder);
-      final depthInfo = Float32List.fromList(encoder._depthInfo);
-      final dimensions = _dimensions;
-      final viewInfo = ViewInfoState.current();
       CameraReplay.recording
-        ?..pass(SceneItems.depthPass, (view) {
-          if (view.dimensions != dimensions) return null;
-          final camera = view.camera;
-          final forward = camera.forward;
-          final info = Float32List.fromList(depthInfo)
-            ..[0] = forward.x
-            ..[1] = forward.y
-            ..[2] = forward.z;
-          final transform = rasterViewTransformOf(camera, dimensions);
-          return (
-            blocks: SceneItems.withAppBlocks(_renderScene, [
-              viewInfo.bytesFor(transform, camera, dimensions, view.viewScale),
-              ByteData.sublistView(info),
-            ]),
-            clip: transform.storage,
-          );
-        })
+        ?..pass(SceneItems.depthPass, _depthReplay(encoder))
         ..refuseWhere(!retained.keepsForAnyCamera || _cameraTransform != null);
+      if (foreign != null) {
+        _drawForeign(foreign, renderPass, target, encoder);
+      }
       for (final item in retained.encoded) {
         if (_includeOffscreen ||
             item.meetsView(encoder.frustum, encoder._cullingPlanes)) {
           encoder.submit(item);
         }
       }
-    } else if (visible != null &&
-        visible.cellsCulled &&
-        visible.isCurrentFor(_renderScene)) {
-      for (var i = 0; i < visible.items.length; i++) {
-        encoder.submitKept(visible, i);
-      }
     } else {
-      _renderScene.cull(
-        encoder.frustum,
-        encoder.submit,
-        additionalPlanes: _cullingPlanes,
-      );
+      if (foreign != null) {
+        _drawForeign(foreign, renderPass, target, encoder);
+      }
+      if (visible != null &&
+          visible.cellsCulled &&
+          visible.isCurrentFor(_renderScene)) {
+        for (var i = 0; i < visible.items.length; i++) {
+          encoder.submitKept(visible, i);
+        }
+      } else {
+        _renderScene.cull(
+          encoder.frustum,
+          encoder.submit,
+          additionalPlanes: _cullingPlanes,
+        );
+      }
     }
     encoder.flush();
     rendererSubmissions.submit(commandBuffer);
@@ -272,6 +263,65 @@ class DepthPrepass extends RenderGraphPass {
     if (_keepDepthStencil) {
       context.blackboard.set(kPrepassDepthStencilBlackboardKey, depth);
     }
+  }
+
+  // Rebuilds the prepass's view blocks for another camera of the frame:
+  // `ViewInfo` and `DepthInfo` as that camera sees them, and the app's blocks
+  // read again.
+  CameraReplayPass _depthReplay(_DepthPrepassEncoder encoder) {
+    final depthInfo = Float32List.fromList(encoder._depthInfo);
+    final dimensions = _dimensions;
+    final viewInfo = ViewInfoState.current();
+    return (view) {
+      if (view.dimensions != dimensions) return null;
+      final camera = view.camera;
+      final forward = camera.forward;
+      final info = Float32List.fromList(depthInfo)
+        ..[0] = forward.x
+        ..[1] = forward.y
+        ..[2] = forward.z;
+      final transform = rasterViewTransformOf(camera, dimensions);
+      return (
+        blocks: SceneItems.withAppBlocks(_renderScene, [
+          viewInfo.bytesFor(transform, camera, dimensions, view.viewScale),
+          ByteData.sublistView(info),
+        ]),
+        clip: transform.storage,
+      );
+    };
+  }
+
+  // Has the app draw at its foreign prepass site, with the view blocks a
+  // kept draw of the prepass is given, and records the pass index it drew
+  // for a camera replay.
+  void _drawForeign(
+    ForeignDraws foreign,
+    gpu.RenderPass pass,
+    gpu.RenderTarget target,
+    _DepthPrepassEncoder encoder,
+  ) {
+    final items = SceneItems.of(_renderScene);
+    if (items == null) return;
+    final index = foreign.draw(
+      ForeignSite(
+        kind: ForeignSiteKind.prepass,
+        items: items,
+        pass: pass,
+        target: target,
+        viewBlocks: SceneItems.withAppBlocks(_renderScene, [
+          viewInfoBytesOf(encoder._cameraTransform, encoder._cameraPosition),
+          ByteData.sublistView(encoder._depthInfo),
+        ]),
+        clip: encoder._cameraTransform.storage,
+        layerMask: _layerMask,
+        primaryView: _primaryView,
+      ),
+    );
+    if (index == null) return;
+    encoder._forgetBindings();
+    CameraReplay.recording
+      ?..pass(index, _depthReplay(encoder))
+      ..refuseWhere(_cameraTransform != null);
   }
 }
 

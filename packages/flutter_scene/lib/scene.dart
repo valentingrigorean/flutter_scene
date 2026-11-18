@@ -267,6 +267,8 @@ export 'src/light.dart'
         SunHorizon,
         ShadowCastingMode,
         SpotLight;
+export 'src/render/foreign_draws.dart'
+    show ForeignDraws, ForeignSite, ForeignSiteKind;
 export 'src/render/custom_render_pass.dart'
     show CustomRenderPass, RenderInput, RenderPassContext, RenderStage;
 export 'src/render/kept_pass_draw.dart' show KeptItem, KeptPassItems;
