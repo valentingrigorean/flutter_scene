@@ -4,7 +4,8 @@
 // every draw of the scene of that order or a lower one, on the plain path
 // and on the path that splits the color pass. The view blocks of the
 // prepass and of a static tile refresh are packed under the state of the
-// pass's own kept draw.
+// pass's own kept draw, and a mark of the app's draws keeps the next frame
+// from replaying the last one for another camera.
 
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -295,4 +296,80 @@ void main() {
     );
     expectView(ForeignSiteKind.staticTile, DepthRaster.standard);
   });
+
+  test(
+    'a frame after markForeignDrawsChanged renders in full and calls the '
+    'color sites again, where a camera would replay the last frame',
+    () async {
+      if (!gpuAvailable()) return;
+      await Scene.initializeStaticResources();
+      // A first frame in the process, as the other tests of a kept draw
+      // take: without one this scene's frames do not replay.
+      final warmUp = Scene()..add(_slab('warm', [], 0));
+      _frame(warmUp);
+      warmUp.dispose();
+      final target = RenderTexture(width: 32, height: 32, presents: true);
+      final scene = Scene()
+        ..maxGpuFramesInFlight = 0
+        ..add(
+          Node(
+            mesh: Mesh(CuboidGeometry(Vector3(100, 100, 0.01)), _Kept()),
+            localTransform: Matrix4.translationValues(0, 0, -50),
+          ),
+        );
+      final log = <String>[];
+      scene.foreignDraws = ForeignDraws(
+        draw: (site) {
+          log.add(site.kind.name);
+          const index = ForeignDraws.firstPass;
+          site.items.draw(
+            site.pass,
+            index,
+            viewBlocks: site.viewBlocks,
+            clip: site.clip,
+            viewTextures: site.viewTextures,
+            sort: site.sort,
+          );
+          return index;
+        },
+        opaqueOrders: [0],
+      );
+      addTearDown(scene.dispose);
+      RenderView view(double x) => RenderView(
+        camera: PerspectiveCamera(
+          position: Vector3(x, 0, 0),
+          target: Vector3(x, 0, -1),
+          up: Vector3(0, 1, 0),
+          fovNear: 0.1,
+          fovFar: 1000,
+        ),
+        target: target,
+      );
+      void render() {
+        final recorder = ui.PictureRecorder();
+        scene.renderViews([view(0)], ui.Canvas(recorder));
+        recorder.endRecording().dispose();
+      }
+
+      for (var frame = 0; frame < 3; frame++) {
+        render();
+      }
+      expect(scene.cameraFrame([view(1)]), isNotNull, reason: 'replays');
+      expect(scene.cameraFrame([view(2)]), isNotNull, reason: 'still replays');
+
+      scene.markForeignDrawsChanged();
+      expect(scene.cameraFrame([view(3)]), isNull);
+      log.clear();
+      render();
+      expect(log, contains('opaque'));
+      expect(scene.cameraFrame([view(4)]), isNotNull, reason: 'replays again');
+    },
+  );
+}
+
+// Takes no part in the debug views the test shader bundle compiles in,
+// which would keep its draw from being kept.
+class _Kept extends UnlitMaterial {
+  @override
+  bool get participatesInDebugViews => false;
 }
