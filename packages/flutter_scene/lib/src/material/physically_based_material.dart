@@ -1658,13 +1658,15 @@ class PhysicallyBasedMaterial extends Material {
         ..doubleSided = doubleSided
         ..depthBias = depthBias
         ..depthLayer = depthLayer
-        ..lodFade = lodFade
-        ..lightListOffset = lightListOffset
-        ..lightListCount = lightListCount
-        ..lightChannelMask = lightChannelMask
-        ..modelScaleX = modelScaleX
-        ..modelScaleY = modelScaleY
-        ..modelScaleZ = modelScaleZ
+        ..drawsAs(
+          lightChannelMask: lightChannelMask,
+          lightListCount: lightListCount,
+          lightListOffset: lightListOffset,
+          lodFade: lodFade,
+          modelScaleX: modelScaleX,
+          modelScaleY: modelScaleY,
+          modelScaleZ: modelScaleZ,
+        )
         ..clipVolume = clipVolume
         ..environment = environment;
       prepared.bind(pass, transientsBuffer, lighting);

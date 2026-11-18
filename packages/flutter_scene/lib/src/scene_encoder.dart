@@ -2083,7 +2083,15 @@ base class SceneEncoder {
       _renderPass.setTrackedWindingOrder(gpu.WindingOrder.clockwise);
       if (_coveragePass) _bindCoverage(material, fade);
     } else {
-      material.lodFade = fade;
+      material.drawsAs(
+        lightChannelMask: lightChannelMask,
+        lightListCount: lightCount,
+        lightListOffset: lightOffset,
+        lodFade: fade,
+        modelScaleX: material.modelScaleX,
+        modelScaleY: material.modelScaleY,
+        modelScaleZ: material.modelScaleZ,
+      );
       final drawKey = transientDrawKey;
       transientDrawKey = material;
       // The draw's held ItemFragInfo block, so the material binds it instead
@@ -2781,10 +2789,12 @@ base class SceneEncoder {
       final item = record.item;
       _drawKeptOpaqueBelow(item.renderOrder);
       transientDrawKey = item;
-      record.material.lightListOffset = item.lightListOffset;
-      record.material.lightListCount = item.lightListCount;
-      record.material.lightChannelMask = item.lightChannelMask;
-      record.material.setModelScaleFromTransform(item.worldTransform);
+      _drawsAsItem(
+        record.material,
+        item,
+        item.lightListOffset,
+        item.lightListCount,
+      );
       item.applyJointsTexture(record.geometry);
       item.applyMorphWeights(record.geometry);
 
@@ -3513,10 +3523,12 @@ base class SceneEncoder {
       _renderPass.setTrackedDepthCompareOperation(
         _raster.compare(record.material.depthCompare),
       );
-      record.material.lightListOffset = record.lightListOffset;
-      record.material.lightListCount = record.lightListCount;
-      record.material.lightChannelMask = record.item.lightChannelMask;
-      record.material.setModelScaleFromTransform(record.item.worldTransform);
+      _drawsAsItem(
+        record.material,
+        record.item,
+        record.lightListOffset,
+        record.lightListCount,
+      );
       record.item.applyJointsTexture(record.geometry);
       record.item.applyMorphWeights(record.geometry);
       transientDrawKey = record.item;
@@ -3600,10 +3612,12 @@ base class SceneEncoder {
       _renderPass.setTrackedDepthCompareOperation(
         _raster.compare(record.material.depthCompare),
       );
-      record.material.lightListOffset = record.lightListOffset;
-      record.material.lightListCount = record.lightListCount;
-      record.material.lightChannelMask = record.item.lightChannelMask;
-      record.material.setModelScaleFromTransform(record.item.worldTransform);
+      _drawsAsItem(
+        record.material,
+        record.item,
+        record.lightListOffset,
+        record.lightListCount,
+      );
       record.item.applyJointsTexture(record.geometry);
       record.item.applyMorphWeights(record.geometry);
       transientDrawKey = record.item;
@@ -3835,11 +3849,8 @@ final class RetainedColorDraws extends RetainedDraws {
     );
     // A material drawn by several items holds the last one's per-item values,
     // so the kept draw states its own, as the encoded opaque draw does.
-    final material = materialOf(item)
-      ..lightListOffset = item.lightListOffset
-      ..lightListCount = item.lightListCount
-      ..lightChannelMask = item.lightChannelMask
-      ..setModelScaleFromTransform(item.worldTransform);
+    final material = materialOf(item);
+    _drawsAsItem(material, item, item.lightListOffset, item.lightListCount);
     final key = transientDrawKey;
     transientDrawKey = item;
     encoder.encodeForKeep(item, geometry: geometryOf(item), material: material);
@@ -4145,11 +4156,7 @@ final class RetainedTranslucentDraws extends RetainedDraws {
       ..setTrackedDepthCompareOperation(
         encoder._raster.compare(material.depthCompare),
       );
-    material
-      ..lightListOffset = item.lightListOffset
-      ..lightListCount = item.lightListCount
-      ..lightChannelMask = item.lightChannelMask
-      ..setModelScaleFromTransform(item.worldTransform);
+    _drawsAsItem(material, item, item.lightListOffset, item.lightListCount);
     final key = transientDrawKey;
     transientDrawKey = item;
     encoder.encodeForKeep(item, geometry: item.geometry, material: material);
@@ -4262,3 +4269,23 @@ CameraReplayPass _colorReplay(
     clip: transform.storage,
   );
 };
+
+// States on [material] what the draw of [item] draws as ([Material.drawsAs]),
+// shading the light slice [lightListOffset]/[lightListCount]; the bind sets
+// its cross-fade.
+void _drawsAsItem(
+  Material material,
+  RenderItem item,
+  int lightListOffset,
+  int lightListCount,
+) {
+  final s = item.worldTransform.storage;
+  material.drawsAs(
+    lightChannelMask: item.lightChannelMask,
+    lightListCount: lightListCount,
+    lightListOffset: lightListOffset,
+    modelScaleX: math.sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]),
+    modelScaleY: math.sqrt(s[4] * s[4] + s[5] * s[5] + s[6] * s[6]),
+    modelScaleZ: math.sqrt(s[8] * s[8] + s[9] * s[9] + s[10] * s[10]),
+  );
+}

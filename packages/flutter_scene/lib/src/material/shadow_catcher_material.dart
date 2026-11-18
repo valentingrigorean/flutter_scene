@@ -297,9 +297,11 @@ class ShadowCatcherMaterial extends Material {
       ..name = name
       ..depthBias = depthBias
       ..depthLayer = depthLayer
-      ..lodFade = lodFade
-      ..lightListOffset = lightListOffset
-      ..lightListCount = lightListCount;
+      ..drawsAs(
+        lightListCount: lightListCount,
+        lightListOffset: lightListOffset,
+        lodFade: lodFade,
+      );
     prepared.bind(pass, transientsBuffer, lighting);
   }
 
@@ -313,7 +315,8 @@ class ShadowCatcherMaterial extends Material {
   /// Binds the catcher for the footprint bake draw, `catcher_mode` 2 (raw
   /// atlas visibility out) with the scene's own atlas softness (the catcher's
   /// [softness] rides the cache blur instead). The caller sets
-  /// [lightListOffset]/[lightListCount] from the baked item first.
+  /// [lightListOffset]/[lightListCount] from the baked item first
+  /// ([drawsAs]).
   ///
   /// Mode 2 stays in the parameter block until [finishBakeBind], so the bake
   /// draw's later vertex-stage bind emplaces the same bytes. GL backends hold
@@ -328,8 +331,11 @@ class ShadowCatcherMaterial extends Material {
   ) {
     final prepared = _prepared
       ..name = name
-      ..lightListOffset = lightListOffset
-      ..lightListCount = lightListCount
+      ..drawsAs(
+        lightListCount: lightListCount,
+        lightListOffset: lightListOffset,
+        lodFade: _prepared.lodFade,
+      )
       ..internalBaking = true;
     prepared.parameters.setInt('catcher_mode', 2);
     prepared.bind(pass, transientsBuffer, lighting);

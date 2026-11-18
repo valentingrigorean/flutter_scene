@@ -98,7 +98,9 @@ final class ForeignSite {
   /// The lighting the scene's own materials bind with at an
   /// [ForeignSiteKind.opaque] or [ForeignSiteKind.translucent] site, which a
   /// material drawn there binds with and picks its fragment shader by; null
-  /// at a depth or shadow site.
+  /// at a depth or shadow site. The app states its draw on such a material
+  /// with `Material.drawsAs` before it binds it, as the scene does for its
+  /// own draws.
   final Lighting? lighting;
 }
 
