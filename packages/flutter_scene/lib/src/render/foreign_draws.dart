@@ -51,6 +51,7 @@ final class ForeignSite {
     this.order = 0,
     this.layerMask = 0xFFFFFFFF,
     this.primaryView = true,
+    this.reversedDepth = false,
     this.lighting,
     this.merge,
     this.fartherThan,
@@ -99,6 +100,11 @@ final class ForeignSite {
   /// Whether the view is the frame's primary view, the one a camera replay
   /// records.
   final bool primaryView;
+
+  /// Whether the depth [pass] tests and writes is reversed, 1 at the near
+  /// plane and 0 at the far plane ([DepthRaster.reversed]), so a draw here
+  /// compares greater-or-equal; false at a shadow site.
+  final bool reversedDepth;
 
   /// The lighting the scene's own materials bind with at an
   /// [ForeignSiteKind.opaque] or [ForeignSiteKind.translucent] site, which a

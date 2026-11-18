@@ -312,6 +312,7 @@ class DepthPrepass extends RenderGraphPass {
         clip: encoder._cameraTransform.storage,
         layerMask: _layerMask,
         primaryView: _primaryView,
+        reversedDepth: encoder._raster.reversed,
       ),
     );
     if (index == null) return;

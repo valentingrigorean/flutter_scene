@@ -110,6 +110,52 @@ void main() {
     expect(disposed(handed), [true, true, true, false]);
   });
 
+  testWidgets('a disposed scene disposes the images its screen views kept', (
+    tester,
+  ) async {
+    final (scene, handed) = await sceneOnCanvas(tester);
+    for (var frame = 0; frame < 4; frame++) {
+      _render(scene);
+    }
+    expect(disposed(handed), [true, false, false, false]);
+
+    scene.dispose();
+    expect(disposed(handed), [true, true, true, true]);
+  });
+
+  testWidgets('a picture that draws an image a disposed scene kept still '
+      'draws it', (tester) async {
+    final (scene, _) = await sceneOnCanvas(tester);
+    scene.frameImageOf = (frame, viewIndex) {
+      final recorder = ui.PictureRecorder();
+      ui.Canvas(
+        recorder,
+      ).drawPaint(ui.Paint()..color = const ui.Color(0xFF00FF00));
+      final picture = recorder.endRecording();
+      final image = picture.toImageSync(1, 1);
+      picture.dispose();
+      return image;
+    };
+    final recorder = ui.PictureRecorder();
+    scene.renderViews(
+      [RenderView(camera: PerspectiveCamera(position: Vector3(0, 0, 5)))],
+      ui.Canvas(recorder),
+      region: _region,
+      pixelRatio: 1.0,
+    );
+    final picture = recorder.endRecording();
+    scene.dispose();
+
+    final drawn = await tester.runAsync(() async {
+      final image = await picture.toImage(32, 32);
+      final bytes = await image.toByteData();
+      image.dispose();
+      return bytes!;
+    });
+    picture.dispose();
+    expect(drawn!.getUint32(0), 0x00FF00FF);
+  });
+
   testWidgets('a frame into a target that presents nothing leaves the images '
       'a screen view kept', (tester) async {
     final (scene, handed) = await sceneOnCanvas(tester);

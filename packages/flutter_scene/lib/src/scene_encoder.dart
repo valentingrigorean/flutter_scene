@@ -3503,6 +3503,7 @@ base class SceneEncoder {
             : gpu.ItemSort.key,
         layerMask: _layerMask,
         primaryView: _primaryView,
+        reversedDepth: _raster.reversed,
         lighting: _lighting,
         merge: merge,
         fartherThan: fartherThan,

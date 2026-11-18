@@ -200,6 +200,41 @@ void main() {
     ]);
   });
 
+  test('each site states whether the depth its pass tests is reversed: the '
+      'prepass and the colour sites as the scene\'s depth runs, a shadow site '
+      'never', () async {
+    if (!gpuAvailable()) return;
+    await Scene.initializeStaticResources();
+    for (final reversed in [true, false]) {
+      final sites = <String, Set<bool>>{};
+      final scene = Scene()
+        ..maxGpuFramesInFlight = 0
+        ..reversedDepth = reversed
+        ..directionalLight = DirectionalLight(castsShadow: true)
+        ..add(_slab('wall', [], 0));
+      // Ambient occlusion reads the prepass.
+      scene.ambientOcclusion.enabled = true;
+      scene.foreignDraws = ForeignDraws(
+        draw: (site) {
+          (sites[site.kind.name] ??= {}).add(site.reversedDepth);
+          return null;
+        },
+        opaqueOrders: [2],
+        translucentOrders: [0],
+        castsStaticShadows: () => true,
+        staticSignatureIn: (_) => 1,
+      );
+      _frame(scene);
+      scene.dispose();
+      expect(sites, {
+        'prepass': {reversed},
+        'opaque': {reversed},
+        'translucent': {reversed},
+        'staticTile': {false},
+      }, reason: 'reversedDepth $reversed');
+    }
+  });
+
   test('the static shadow cache holds the app\'s static casters: a cascade '
       'is drawn only when its cached tile is rendered, and again once the '
       'app\'s fingerprint in it changes', () async {

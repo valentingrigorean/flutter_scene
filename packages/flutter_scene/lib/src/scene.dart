@@ -1027,8 +1027,9 @@ base class Scene implements SceneGraph {
   /// Where the GPU backend can free memory at once (wgpu, WebGPU, WebGL) it
   /// does so at this call, and work already submitted keeps what it reads;
   /// elsewhere the memory frees once the textures are collected. The images
-  /// last handed to a canvas are kept, since they may still be on screen.
-  /// The scene graph is left as it is.
+  /// each screen view last handed to a canvas are disposed: a picture that
+  /// draws one, on screen or queued, holds the image itself until it is
+  /// done with it. The scene graph is left as it is.
   ///
   /// A pending [captureRenderGraph] completes with a [StateError], and a
   /// [warmUp] in progress stops. A later [render], [renderViews], [warmUp],
@@ -1040,7 +1041,11 @@ base class Scene implements SceneGraph {
       return;
     }
     _disposed = true;
-    // Not disposed, since the last pictures may still be on screen.
+    for (final images in _presentedImages) {
+      for (final image in images) {
+        image.dispose();
+      }
+    }
     _presentedImages.clear();
     surface.dispose();
     _taaState?.dispose();
