@@ -859,7 +859,10 @@ base class Scene implements SceneGraph {
   /// painting (a web frame may still be queued when the next one paints), so
   /// the newest few may still be drawn; anything older belongs to a picture
   /// that has been replaced. Disposing frees a web image's bitmap without
-  /// waiting for the collector.
+  /// waiting for the collector. A frame a presenting [RenderTexture] shows
+  /// in place of the screen views replaces a picture too, so each one
+  /// disposes the oldest image a view keeps: a scene whose frames moved from
+  /// the canvas to a presenter holds none of the canvas's after that many.
   static const int _keptPresentedImages = 3;
 
   /// [texture] as a `ui.Image` for view [viewIndex]'s canvas, made by
@@ -879,6 +882,16 @@ base class Scene implements SceneGraph {
       images.removeAt(0).dispose();
     }
     return image;
+  }
+
+  // Disposes the oldest image each screen view keeps. A frame that a
+  // presenting target shows in place of the screen views hands a canvas no
+  // image, and replaces a picture as a canvas frame does: after
+  // [_keptPresentedImages] of them no picture draws an image a view keeps.
+  void _agePresentedImages() {
+    for (final images in _presentedImages) {
+      if (images.isNotEmpty) images.removeAt(0).dispose();
+    }
   }
 
   /// Notifies when the scene wants painting again outside any repaint the
@@ -3685,6 +3698,10 @@ base class Scene implements SceneGraph {
             ? null
             : _viewDrawArea(ui.Offset.zero & _warmUpSize!, view.viewport).size,
       );
+    }
+
+    if (ordered.isEmpty && textureViews.any((view) => view.target!.presents)) {
+      _agePresentedImages();
     }
 
     _sharedShadowAtlas = null;
