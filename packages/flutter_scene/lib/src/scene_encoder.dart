@@ -4128,6 +4128,9 @@ final class RetainedTranslucentDraws extends RetainedDraws {
     activeRenderCounters
       ..colorItemsKept += keptCount - _submitted
       ..colorItemsEncoded += encoded.length + _submitted;
+    // A frame that encodes a translucent draw is not one another camera
+    // replays, whether or not the pass keeps any.
+    CameraReplay.recording?.refuseWhere(!keepsForAnyCamera);
     encoder.keptTranslucent = _drawn.isEmpty ? null : this;
   }
 

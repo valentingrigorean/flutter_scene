@@ -14,9 +14,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter_scene/scene.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
-import 'package:flutter_scene/src/render/debug_view.dart' show DebugViewFrame;
 import 'package:flutter_scene/src/render/pass_pipeline_state.dart';
-import 'package:flutter_scene/src/render/uniform_slots.dart';
 import 'package:flutter_scene/src/render/viewport_camera.dart';
 import 'package:flutter_scene/src/scene_encoder.dart'
     show SceneEncoder, itemSortKeyAtDepth;
@@ -24,6 +22,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:vector_math/vector_math.dart';
 
 import 'support/gpu_available.dart';
+import 'support/sheet_material.dart';
 
 // The app's pass index: the last of the scene's item set.
 const _pass = ForeignDraws.firstPass + ForeignDraws.passes - 1;
@@ -38,52 +37,6 @@ PerspectiveCamera _cameraAt(double x) => PerspectiveCamera(
 );
 
 final _camera = _cameraAt(0);
-
-// A translucent material the scene keeps as an item, or encodes each frame
-// where [kept] is false.
-//
-// The test shader bundle compiles the debug views in, and a draw that takes
-// part in them is not kept. This one takes no part and binds the block
-// their shader declares itself, from a buffer that outlives the frame, so
-// the software GPU of the tester draws it.
-class _Sheet extends UnlitMaterial {
-  _Sheet(Vector4 color, {this.kept = true}) {
-    baseColorFactor = color;
-    alphaMode = AlphaMode.blend;
-  }
-
-  final bool kept;
-
-  static gpu.BufferView? _noDebugView;
-
-  @override
-  bool get colorRetainable => kept && super.colorRetainable;
-
-  @override
-  bool get participatesInDebugViews => false;
-
-  @override
-  void bind(
-    gpu.RenderPass pass,
-    TransientWriter transientsBuffer,
-    Lighting lighting,
-  ) {
-    super.bind(pass, transientsBuffer, lighting);
-    final slot = fragmentShaderForLighting(
-      lighting,
-    ).cachedUniformSlot('DebugViewInfo');
-    if (slot.sizeInBytes == null) return;
-    final bytes = ByteData.sublistView(DebugViewFrame.inactive);
-    pass.bindUniform(
-      slot,
-      _noDebugView ??= gpu.BufferView(
-        gpu.gpuContext.createDeviceBufferWithCopy(bytes),
-        offsetInBytes: 0,
-        lengthInBytes: bytes.lengthInBytes,
-      ),
-    );
-  }
-}
 
 final _red = Vector4(1, 0, 0, 0.5);
 final _green = Vector4(0, 1, 0, 0.5);
@@ -165,7 +118,7 @@ class _App {
         false,
         cameraTransform: Matrix4.fromFloat32List(site.clip),
       );
-      final material = _Sheet(color);
+      final material = SheetMaterial(color);
       final item = RenderItem(geometry: _geometry, material: material)
         ..worldTransform.setTranslationRaw(0, 0, z);
       recorder
@@ -222,7 +175,7 @@ Scene _scene(Map<double, Vector4> sheets, {required bool kept}) {
   // Every frame renders: none waits on the GPU's pacing.
   final scene = Scene()..maxGpuFramesInFlight = 0;
   for (final MapEntry(key: z, value: color) in sheets.entries) {
-    scene.add(_node(z, _Sheet(color, kept: kept)));
+    scene.add(_node(z, SheetMaterial(color, kept: kept)));
   }
   addTearDown(scene.dispose);
   return scene;
@@ -316,7 +269,7 @@ void main() {
     await Scene.initializeStaticResources();
     // The first frames of a process build their pipelines, and a scene
     // keeps no draw meanwhile.
-    final warmUp = Scene()..add(_node(-50, _Sheet(_red)));
+    final warmUp = Scene()..add(_node(-50, SheetMaterial(_red)));
     for (var frame = 0; frame < 2; frame++) {
       await _centre(warmUp);
     }
@@ -404,7 +357,7 @@ void main() {
 
     // The scene's two draws share a material, so the second binds only what
     // it takes the pass to have lost to the app's draws between them.
-    final red = _Sheet(_red, kept: false);
+    final red = SheetMaterial(_red, kept: false);
     final app = _App(apps);
     final scene = Scene()
       ..maxGpuFramesInFlight = 0
@@ -436,7 +389,7 @@ void main() {
     expect(near, isNot(far));
 
     final app = _App({-50.0: _blue});
-    final sheet = _node(-40, _Sheet(_red));
+    final sheet = _node(-40, SheetMaterial(_red));
     final scene = Scene()
       ..maxGpuFramesInFlight = 0
       ..add(sheet)
@@ -453,7 +406,7 @@ void main() {
     for (final z in places) {
       if (z != -40 && z != -60) {
         // A draw that changes frame after frame is encoded.
-        sheet.mesh = Mesh(_geometry, _Sheet(_red));
+        sheet.mesh = Mesh(_geometry, SheetMaterial(_red));
       }
       sheet.localTransform = Matrix4.translationValues(0, 0, z);
       app.sites.clear();
