@@ -5,6 +5,7 @@ library;
 import 'dart:typed_data';
 
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/gpu/shared/item_passes.dart';
 import 'package:flutter_scene/src/material/material.dart';
 import 'package:flutter_scene/src/render/camera_replay.dart';
 import 'package:flutter_scene/src/render/draw_recorder.dart';
@@ -135,7 +136,7 @@ final class KeptPassDraw {
       _key = shaped;
       final recorder = createTrackedRecorder(_items, target);
       record(recorder);
-      final id = _items.keep(recorder, id: _id, passes: 1 << _index);
+      final id = _items.keep(recorder, id: _id, passes: itemPassBit(_index));
       _id = id ?? 0;
       _refused = id == null;
       if (_refused && _skipping) _key = null;
@@ -146,7 +147,7 @@ final class KeptPassDraw {
           _id,
           () => _recordedOn(_items, target, record),
           kind: 'the draw of pass $_index, taken as kept by its key',
-          passes: 1 << _index,
+          passes: itemPassBit(_index),
         ),
       );
     }
@@ -264,7 +265,7 @@ final class KeptPassItems {
             was.id,
             () => _recordedOn(_items, target, draw.record),
             kind: 'draw $order of pass $_index, taken as kept by its key',
-            passes: 1 << _index,
+            passes: itemPassBit(_index),
             order: order,
           ),
         );
@@ -276,7 +277,7 @@ final class KeptPassItems {
       final id = _items.keep(
         recorder,
         id: was?.id ?? 0,
-        passes: 1 << _index,
+        passes: itemPassBit(_index),
         order: order,
       );
       if (id == null) {

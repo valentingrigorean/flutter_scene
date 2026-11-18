@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart'
     show debugPrint, internal, kDebugMode, visibleForTesting;
 import 'package:flutter_scene/src/draw_revision.dart';
 import 'package:flutter_scene/src/gpu/gpu.dart' as gpu;
+import 'package:flutter_scene/src/gpu/shared/item_passes.dart';
 import 'package:flutter_scene/src/gpu/shared/shader_library_sources.dart'
     show knownShaderLibraries;
 import 'package:flutter_scene/src/shader_reflection/shader_reflection.dart'
@@ -3738,7 +3739,7 @@ final class RetainedColorDraws extends RetainedDraws {
   int passesOf(RenderItem item) {
     final order = item.renderOrder;
     (_members[order] ??= LinkedHashSet.identity()).add(item);
-    return 1 << _passOf[order]!;
+    return itemPassBit(_passOf[order]!);
   }
 
   bool _keepsTranslucent = false;
@@ -4001,7 +4002,7 @@ final class RetainedTranslucentDraws extends RetainedDraws {
   int passesOf(RenderItem item) {
     final order = item.renderOrder;
     (_members[order] ??= LinkedHashSet.identity()).add(item);
-    return 1 << _passOf[order]!;
+    return itemPassBit(_passOf[order]!);
   }
 
   @override
